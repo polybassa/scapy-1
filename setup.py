@@ -46,6 +46,7 @@ setup(
     extras_require={
         'basic': ["ipython"],
         'complete': [
+            'argparse',
             'ipython',
             'pyx',
             'cryptography>=2.0',

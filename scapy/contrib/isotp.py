@@ -39,7 +39,7 @@ from scapy.consts import LINUX
 __all__ = ["ISOTP", "ISOTPHeader", "ISOTPHeaderEA", "ISOTP_SF", "ISOTP_FF",
            "ISOTP_CF", "ISOTP_FC", "ISOTPSniffer", "ISOTPSoftSocket",
            "ISOTPSocket", "ISOTPSocketImplementation", "ISOTPMessageBuilder",
-           "isotpscan"]
+           "ISOTPScan"]
 
 USE_CAN_ISOTP_KERNEL_MODULE = False
 if six.PY3 and LINUX:
@@ -1616,6 +1616,7 @@ if USE_CAN_ISOTP_KERNEL_MODULE:
 # ###################################################################
 # #################### ISOTPSCAN ####################################
 # ###################################################################
+#TODO: Add KeepAwakeThread as independent class for sending messages periodically
 class KeepAwakeThread(Thread):
     def __init__(self, socket, pkt, interval=0.5):
         """ Thread to send packets periodically
@@ -1822,7 +1823,7 @@ def scan_extended(socket, scan_range=range(0x7ff), scan_block_size=100, noise_id
     return return_values
 
 
-def isotpscan(socket, scan_range=range(0x7ff), extended_addressing=False, noise_listen_time=10,
+def ISOTPScan(socket, scan_range=range(0x7ff), extended_addressing=False, noise_listen_time=10,
               output_format=None, can_interface="can0"):
     # Listen for default messages on CAN-bus
     print("Filtering background noise...")

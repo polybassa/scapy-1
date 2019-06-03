@@ -15,8 +15,9 @@ from scapy.layers.can import CAN
 if six.PY2:
     conf.contribs['CANSocket'] = {'use-python-can': True}
 
+from scapy.utils import PeriodicSenderThread
 from scapy.contrib.cansocket import CANSocket
-from scapy.contrib.isotp import ISOTPScan, KeepAwakeThread
+from scapy.contrib.isotp import ISOTPScan
 
 if "python_can" in CANSocket.__module__:
     #todo use argparse parameter for iface and add example (socketcan, vector, ...) to help
@@ -88,8 +89,8 @@ def main():
         dummy_pkt = CAN(identifier=0x123,
                         data=b'\xaa\xbb\xcc\xdd\xee\xff\xaa\xbb')
         cansocket_keep_awake = new_can_socket(awake_interface)
-        awake_thread = KeepAwakeThread(cansocket_keep_awake,
-                                       dummy_pkt)
+        awake_thread = PeriodicSenderThread(cansocket_keep_awake,
+                                            dummy_pkt)
         awake_thread.start()
 
     # scan normal IDs

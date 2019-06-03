@@ -16,7 +16,9 @@ import time
 import subprocess
 
 from scapy.all import *
+from scapy.utils import PeriodicSenderThread
 import scapy.modules.six as six
+
 
 if six.PY2:
     conf.contribs['CANSocket'] = {'use-python-can': True}
@@ -47,7 +49,7 @@ load_contrib("isotp")
 load_contrib("cansocket")
 load_layer("can")
 
-from scapy.contrib.isotp import KeepAwakeThread, send_multiple_ext, send_multiple, filter_periodic_packets, scan, scan_extended, ISOTPScan
+from scapy.contrib.isotp import send_multiple_ext, send_multiple, filter_periodic_packets, scan, scan_extended, ISOTPScan
 
 
 = Setup vcan0
@@ -64,11 +66,11 @@ CanSocket_send = new_can_socket("vcan0")
 CanSocket_recv = new_can_socket("vcan0")
 
 
-= Test KeepAwakeThread()
+= Test PeriodicSenderThread()
 ~ needs_root linux
 t_out = 1
 dummy_pkt = CAN(identifier=0x123, data=b'\xaa\xff\xff\xff\xff\xff\xff\xee')
-thread = KeepAwakeThread(CanSocket_send, dummy_pkt, interval=0.1)
+thread = PeriodicSenderThread(CanSocket_send, dummy_pkt, interval=0.1)
 thread.start()
 packets = CanSocket_recv.sniff(timeout=t_out)
 thread.stop()

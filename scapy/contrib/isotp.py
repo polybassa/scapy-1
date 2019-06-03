@@ -1697,11 +1697,11 @@ def get_isotp_packet(identifier=0x0, extended=False):
     """
 
     if extended:
-        pkt = ISOTPHeaderEA() / ISOTP_FF()
+        pkt = ISOTPHeaderEA()/ISOTP_FF()
         pkt.extended_address = 0
         pkt.data = b'\x00\x00\x00\x00\x00'
     else:
-        pkt = ISOTPHeader() / ISOTP_FF()
+        pkt = ISOTPHeader()/ISOTP_FF()
         pkt.data = b'\x00\x00\x00\x00\x00\x00'
 
     pkt.identifier = identifier
@@ -1758,7 +1758,10 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet):
     and not in noise_ids
     append it to id_list
     """
-    if packet.identifier in noise_ids or packet.flags != 0:
+    if packet.flags != 0:
+        return
+
+    if noise_ids is not None and packet.identifier in noise_ids:
         return
 
     try:
@@ -1774,7 +1777,7 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet):
               packet.__repr__())
 
 
-def scan(socket, scan_range=range(0x7ff + 1), noise_ids=[]):
+def scan(socket, scan_range=range(0x7ff + 1), noise_ids=None):
     """Scan and return dictionary of detections
 
     Args:
@@ -1797,7 +1800,7 @@ def scan(socket, scan_range=range(0x7ff + 1), noise_ids=[]):
 
 
 def scan_extended(socket, scan_range=range(0x7ff + 1), scan_block_size=100,
-                  noise_ids=[]):
+                  noise_ids=None):
     """Scan with extended addresses and return dictionary of detections
 
     Args:

@@ -25,7 +25,7 @@ if "python_can" in CANSocket.__module__:
         CANSocket(iface=python_can.interface.Bus(bustype='socketcan',
                                                  channel=iface))
 else:
-    new_can_socket = lambda iface: CANSocket(iface)
+    new_can_socket = CANSocket
 
 
 def main():

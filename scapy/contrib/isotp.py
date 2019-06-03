@@ -1770,7 +1770,8 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet):
             if isinstance(id_list, list):
                 id_list.append(id_value)
     except Exception as e:
-        print("[!] Unknown message Exception: " + str(e) + " on packet:" + packet.__repr__())
+        print("[!] Unknown message Exception: " + str(e) + " on packet:" +
+              packet.__repr__())
 
 
 def scan(socket, scan_range=range(0x7ff + 1), noise_ids=[]):
@@ -1787,13 +1788,16 @@ def scan(socket, scan_range=range(0x7ff + 1), noise_ids=[]):
     """
     return_values = dict()
     for value in scan_range:
-        socket.sniff(prn=lambda pkt: get_isotp_fc(value, return_values, noise_ids, False, pkt),
+        socket.sniff(prn=lambda pkt: get_isotp_fc(value, return_values,
+                                                  noise_ids, False, pkt),
                      timeout=0.1,
-                     started_callback=lambda: socket.send(get_isotp_packet(value)))
+                     started_callback=lambda: socket.send(
+                         get_isotp_packet(value)))
     return return_values
 
 
-def scan_extended(socket, scan_range=range(0x7ff + 1), scan_block_size=100, noise_ids=[]):
+def scan_extended(socket, scan_range=range(0x7ff + 1), scan_block_size=100,
+                  noise_ids=[]):
     """Scan with extended addresses and return dictionary of detections
 
     Args:
@@ -1830,16 +1834,21 @@ def scan_extended(socket, scan_range=range(0x7ff + 1), scan_block_size=100, nois
         # remove duplicate IDs
         id_list = list(set(id_list))
         for extended_id in id_list:
-            for ext_id in range(extended_id, min(extended_id + scan_block_size, 256)):
+            for ext_id in range(extended_id, min(extended_id + scan_block_size,
+                                                 256)):
                 pkt.extended_address = ext_id
                 full_id = (extended_id << 8) + ext_id
-                socket.sniff(prn=lambda pkt: get_isotp_fc(full_id, return_values, noise_ids, True, pkt),
+                socket.sniff(prn=lambda pkt: get_isotp_fc(full_id,
+                                                          return_values,
+                                                          noise_ids,
+                                                          True, pkt),
                              timeout=0.1,
                              started_callback=lambda: socket.send(pkt))
     return return_values
 
 
-def ISOTPScan(socket, scan_range=range(0x7ff + 1), extended_addressing=False, noise_listen_time=10,
+def ISOTPScan(socket, scan_range=range(0x7ff + 1), extended_addressing=False,
+              noise_listen_time=10,
               output_format=None, can_interface="can0"):
     # Listen for default messages on CAN-bus
     # TODO: add verbose parameter for printing
@@ -1916,15 +1925,17 @@ def generate_code_output(found_packets, can_interface):
             result = "ISOTPSocket(" + can_interface + ", sid=" + \
                      hex(send_id) + ", did=" + \
                      hex(found_packets[pack][0].identifier)
-            result += ", padding=" + str(found_packets[pack][0].length == 8) + ", "
+            result += ", padding=" + str(found_packets[pack][0].length == 8) \
+                      + ", "
             result += "extended_addr=" + hex(send_ext) + \
                       ", extended_rx_addr=" + hex(ext_id) + "]"
         else:
             result = "ISOTPSocket(" + can_interface + ", sid=" + \
                      hex(pack) + \
                      ", did=" + \
-                     hex(found_packets[pack][0].identifier)
-            result += ", padding=" + str(found_packets[pack][0].length == 8) + ", basecls=ISOTP)"
+                     hex(int(found_packets[pack][0].identifier))
+            result += ", padding=" + str(found_packets[pack][0].length == 8) \
+                      + ", basecls=ISOTP)"
     return result
 
 

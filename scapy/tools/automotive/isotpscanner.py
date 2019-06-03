@@ -52,14 +52,14 @@ def main():
     #Todo: Add an optional string parameter for the keep alive interface
     #Todo: If nothing specified, we use the same interface for keepAlive and scan
     parser.add_argument("-e", "--extended", action="store_true",
-                        help="Include extended ID's to scan.")
+                        help="Include extended IDs to scan.")
     parser.add_argument("-k", "--keep_alive", type=str,
                         help="'Keep alive' - \
                             Send a periodic dummy-packet to the "
                              "specified interface.")
     parser.add_argument("-eo", "--extended_only", action="store_true",
                         help="Scan only with \
-                            extended ID's.")
+                            extended IDs.")
     parser.add_argument("-p", "--piso", action="store_true",
                         help="Print 'Copy&Paste'-ready ISOTPSockets.")
 
@@ -79,20 +79,20 @@ def main():
     # Seconds to listen to noise
     noise_listen_time = 10
 
-    dummy_pkt = CAN(identifier=0x123, data=b'\xaa\xbb\xcc\xdd\xee\xff\xaa\xbb')
-
     # Interface for communication
     cansocket_communication = new_can_socket(scan_interface)
 
     # Keep ECU awake
     awake_thread = None
     if keep_awake:
+        dummy_pkt = CAN(identifier=0x123,
+                        data=b'\xaa\xbb\xcc\xdd\xee\xff\xaa\xbb')
         cansocket_keep_awake = new_can_socket(awake_interface)
         awake_thread = KeepAwakeThread(cansocket_keep_awake,
                                        dummy_pkt)
         awake_thread.start()
 
-    # scan normal ID's
+    # scan normal IDs
     if not extended_only:
         print("Start scan (" + hex(args.startID) + " - " +
               hex(args.endID) + ")")
@@ -103,9 +103,9 @@ def main():
                            output_format="code" if piso else "text")
         print("Scan: " + result)
 
-    # scan extended ID's
+    # scan extended IDs
     if extended or extended_only:
-        print("Start scan with extended ID's (" + hex(args.startID) +
+        print("Start scan with extended IDs (" + hex(args.startID) +
               " - " + hex(args.endID) + ")")
         result_extended = ISOTPScan(cansocket_communication,
                                     range(args.startID, args.endID + 1),

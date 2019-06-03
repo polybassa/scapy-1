@@ -1618,39 +1618,11 @@ if USE_CAN_ISOTP_KERNEL_MODULE:
 # ###################################################################
 # #################### ISOTPSCAN ####################################
 # ###################################################################
-#TODO: Add KeepAwakeThread as independent class for sending messages periodically
-class KeepAwakeThread(Thread):
-    def __init__(self, socket, pkt, interval=0.5):
-        """ Thread to send packets periodically
-
-        Args:
-            socket: socket where packet is sent periodically
-            pkt: packet to send
-            interval: interval between two packets
-
-        Used to keep sending packets to a separate interface
-        during the scan.
-        """
-        self._pkt = pkt
-        self._socket = socket
-        self._stopped = Event()
-        self.keep_awake_interval = interval
-        Thread.__init__(self)
-
-    def run(self):
-        while not self._stopped.is_set():
-            self._socket.send(self._pkt)
-            time.sleep(self.keep_awake_interval)
-
-    def stop(self):
-        self._stopped.set()
-
-
-def send_multiple(socket, packet, scan_range, number_of_packets):
+def send_multiple(sock, packet, scan_range, number_of_packets):
     """ Send multiple packets at once
 
     Args:
-        socket: socket for can interface
+        sock: socket for can interface
         packet: packet to send
         scan_range: id range which will be scanned
         number_of_packets: number of packets send
@@ -1667,14 +1639,14 @@ def send_multiple(socket, packet, scan_range, number_of_packets):
     for i in list(scan_range)[::(number_of_packets + 1)]:
         for j in range(i, (i + number_of_packets + 1)):
             packet.identifier = j
-            socket.send(packet)
+            sock.send(packet)
 
 
-def send_multiple_ext(socket, ext_id, packet, number_of_packets):
+def send_multiple_ext(sock, ext_id, packet, number_of_packets):
     """ Send multiple packets with extended adresses at once
 
     Args:
-        socket: socket for can interface
+        sock: socket for can interface
         ext_id: extended id. First id to send.
         packet: packet to send
         number_of_packets: number of packets send
@@ -1688,7 +1660,7 @@ def send_multiple_ext(socket, ext_id, packet, number_of_packets):
     end_id = min(ext_id + number_of_packets, 255)
     for i in range(ext_id, end_id + 1):
         packet.extended_address = i
-        socket.send(packet)
+        sock.send(packet)
 
 
 def get_isotp_packet(identifier=0x0, extended=False):
@@ -1738,7 +1710,7 @@ def filter_periodic_packets(packet_list):
             continue
 
         tg = [p1.time - p2.time for p1, p2 in zip(pkt_lst[1:], pkt_lst[:-1])]
-        if all([abs(t1 - t2) < 0.001 for t1, t2 in zip(tg[1:], tg[:-1])]):
+        if all(abs(t1 - t2) < 0.001 for t1, t2 in zip(tg[1:], tg[:-1])):
             delete_list.add(idn)
 
     for key in packet_list.copy():
@@ -1752,7 +1724,8 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet):
     Args:
             id_value: packet id of send packet
             id_list: list of received IDs
-            noise_ids: list of packet IDs which will not be considered when received during scan
+            noise_ids: list of packet IDs which will not be considered when
+                       received during scan
             extended: boolean if extended scan
             packet: received packet
 
@@ -1779,13 +1752,15 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet):
               packet.__repr__())
 
 
-def scan(socket, scan_range=range(0x7ff + 1), noise_ids=None):
+def scan(sock, scan_range=range(0x7ff + 1), noise_ids=None):
     """Scan and return dictionary of detections
 
     Args:
-            socket: socket for can interface
-            scan_range: hexadecimal range of IDs to scan. Default is 0x0 - 0x7ff
-            noise_ids: list of packet IDs which will not be considered when received during scan
+            sock: socket for can interface
+            scan_range: hexadecimal range of IDs to scan.
+                        Default is 0x0 - 0x7ff
+            noise_ids: list of packet IDs which will not be considered when
+                       received during scan
 
     ISOTP-Scan - NO extended IDs
     found_packets = Dictionary with Send-to-ID as
@@ -1793,23 +1768,25 @@ def scan(socket, scan_range=range(0x7ff + 1), noise_ids=None):
     """
     return_values = dict()
     for value in scan_range:
-        socket.sniff(prn=lambda pkt: get_isotp_fc(value, return_values,
-                                                  noise_ids, False, pkt),
-                     timeout=0.1,
-                     started_callback=lambda: socket.send(
-                         get_isotp_packet(value)))
+        sock.sniff(prn=lambda pkt: get_isotp_fc(value, return_values,
+                                                noise_ids, False, pkt),
+                   timeout=0.1,
+                   started_callback=lambda: sock.send(
+                       get_isotp_packet(value)))
     return return_values
 
 
-def scan_extended(socket, scan_range=range(0x7ff + 1), scan_block_size=100,
+def scan_extended(sock, scan_range=range(0x7ff + 1), scan_block_size=100,
                   noise_ids=None):
     """Scan with extended addresses and return dictionary of detections
 
     Args:
-            socket: socket for can interface
-            scan_range: hexadecimal range of IDs to scan. Default is 0x0 - 0x7ff
+            sock: socket for can interface
+            scan_range: hexadecimal range of IDs to scan.
+                        Default is 0x0 - 0x7ff
             scan_block_size: count of packets send at once
-            noise_ids: list of packet IDs which will not be considered when received during scan
+            noise_ids: list of packet IDs which will not be considered when
+                       received during scan
 
     If an answer-packet found -> slow scan with
     single packages with extended ID 0 - 255
@@ -1826,14 +1803,13 @@ def scan_extended(socket, scan_range=range(0x7ff + 1), scan_block_size=100,
         for extended_id in range(0, 256, scan_block_size):
             # the sniff function actually only gets like 3
             # valid answer-packets out of the 100 packets (load)
-            socket.sniff(prn=lambda p: get_isotp_fc(extended_id, id_list,
-                                                    noise_ids, True, p),
-                         timeout=0.3,
-                         started_callback=send_multiple_ext(socket,
-                                                            extended_id,
-                                                            pkt,
-                                                            scan_block_size))
-            # without sleep it's to fast for the socket
+            sock.sniff(prn=lambda p: get_isotp_fc(extended_id, id_list,
+                                                  noise_ids, True, p),
+                       timeout=0.3,
+                       started_callback=send_multiple_ext(sock, extended_id,
+                                                          pkt,
+                                                          scan_block_size))
+            # without sleep it's to fast for the sock
             time.sleep(1)
 
         # remove duplicate IDs
@@ -1843,36 +1819,38 @@ def scan_extended(socket, scan_range=range(0x7ff + 1), scan_block_size=100,
                                                  256)):
                 pkt.extended_address = ext_id
                 full_id = (extended_id << 8) + ext_id
-                socket.sniff(prn=lambda pkt: get_isotp_fc(full_id,
-                                                          return_values,
-                                                          noise_ids,
-                                                          True, pkt),
-                             timeout=0.1,
-                             started_callback=lambda: socket.send(pkt))
+                sock.sniff(prn=lambda pkt: get_isotp_fc(full_id, return_values,
+                                                        noise_ids, True, pkt),
+                           timeout=0.1,
+                           started_callback=lambda: sock.send(pkt))
     return return_values
 
 
-def ISOTPScan(socket, scan_range=range(0x7ff + 1), extended_addressing=False,
+def ISOTPScan(sock, scan_range=range(0x7ff + 1), extended_addressing=False,
               noise_listen_time=10,
-              output_format=None, can_interface="can0"):
-    # Listen for default messages on CAN-bus
-    # TODO: add verbose parameter for printing
-    print("Filtering background noise...")
-    # TODO: add reason for dummy_pkt as comment
+              output_format=None,
+              can_interface="can0",
+              verbose=False):
+
+    if verbose:
+        print("Filtering background noise...")
+
+    # Send dummy packet. In most cases, this triggers activity on the bus.
     dummy_pkt = CAN(identifier=0x123, data=b'\xaa\xbb\xcc\xdd\xee\xff\xaa\xbb')
 
-    background_pkts = socket.sniff(timeout=noise_listen_time,
-                                   started_callback=lambda:
-                                   socket.send(dummy_pkt))
+    background_pkts = sock.sniff(timeout=noise_listen_time,
+                                 started_callback=lambda:
+                                 sock.send(dummy_pkt))
 
     noise_ids = list(set([pkt.identifier for pkt in background_pkts]))
 
     if extended_addressing:
-        found_packets = scan_extended(socket, scan_range, noise_ids=noise_ids)
+        found_packets = scan_extended(sock, scan_range, noise_ids=noise_ids)
     else:
-        found_packets = scan(socket, scan_range, noise_ids)
+        found_packets = scan(sock, scan_range, noise_ids)
 
     filter_periodic_packets(found_packets)
+
     if output_format == "text":
         return generate_text_output(found_packets)
     elif output_format == "code":
@@ -1945,12 +1923,13 @@ def generate_code_output(found_packets, can_interface):
 
 
 def generate_isotp_list(found_packets, can_interface):
+    # TODO: Support extended addressing
     socket_list = []
     for pack in found_packets:
         source_id = pack
         dest_id = found_packets[pack][0].identifier
         pad = True if found_packets[pack][0].length == 8 else False
-        new_socket = ISOTPSocket(can_interface, sid=source_id, did=dest_id,
-                                 padding=pad, basecls=ISOTP)
-        socket_list.append(new_socket)
+        socket_list.append(ISOTPSocket(can_interface, sid=source_id,
+                                       did=dest_id, padding=pad,
+                                       basecls=ISOTP))
     return socket_list

@@ -1,5 +1,4 @@
 % Regression tests for ISOTPScan
-~ python3_only
 
 # More information at http://www.secdev.org/projects/UTscapy/
 
@@ -42,12 +41,14 @@ else:
 
 = Load module
 ~ conf command needs_root linux
+
 conf.contribs['ISOTP'] = {'use-can-isotp-kernel-module': True}
 load_contrib("isotp")
 load_contrib("cansocket")
 load_layer("can")
 
 from scapy.contrib.isotp import KeepAwakeThread, send_multiple_ext, send_multiple, filter_periodic_packets, scan, scan_extended, ISOTPScan
+
 
 = Setup vcan0
 ~ conf command needs_root linux
@@ -65,18 +66,18 @@ CanSocket_recv = new_can_socket("vcan0")
 
 = Test KeepAwakeThread()
 ~ needs_root linux
-t_out = 5
+t_out = 1
 dummy_pkt = CAN(identifier=0x123, data=b'\xaa\xff\xff\xff\xff\xff\xff\xee')
-thread = KeepAwakeThread(CanSocket_send, dummy_pkt)
+thread = KeepAwakeThread(CanSocket_send, dummy_pkt, interval=0.1)
 thread.start()
 packets = CanSocket_recv.sniff(timeout=t_out)
 thread.stop()
-assert t_out * 2 - 1 <= len(packets) <= t_out * 2 + 1
+assert t_out / 0.1 - 1 <= len(packets) <= t_out / 0.1 + 1
 
 
 = Test send_multiple()
 ~ needs_root linux
-pkt = ISOTPHeader() / ISOTP_FF()
+pkt = ISOTPHeader()/ISOTP_FF()
 pkt.identifier = 0x0
 pkt.message_size = 100
 pkt.data = b'\x00\x00\x00\x00\x00\x00'
@@ -90,7 +91,7 @@ def counter():
 
 thread = threading.Thread(target=counter)
 thread.start()
-send_multiple(CanSocket_send, pkt, range(0, 200+1), number_of_packets)
+send_multiple(CanSocket_send, pkt, range(200+1), number_of_packets)
 thread.join()
 print(str(count) + " == " + str(number_of_packets))
 assert count == number_of_packets
@@ -286,7 +287,7 @@ def make_noise(pkt):
         time.sleep(1)
 
 pkt = CAN(identifier=0x701, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
-thread_noise = threading.Thread(target=make_noise, args=(pkt))
+thread_noise = threading.Thread(target=make_noise, args=pkt)
 thread_noise.start()
 
 thread1 = threading.Thread(target=isotpserver, args=[2])
@@ -309,7 +310,7 @@ assert text == result
 
 
 = Test ISOTPScan(output_format=None)
-~ needs_root linux test
+~ needs_root linux test python3_only
 done = False
 can_interface = get_can_socket("vcan0")
 
@@ -341,11 +342,11 @@ thread2.join()
 done = True
 thread_noise.join()
 
-for x in result:
-    x.close()
-
 assert len(result) == 2
 assert 0x602 == result[0].src
 assert 0x702 == result[0].dst
 assert 0x603 == result[1].src
 assert 0x703 == result[1].dst
+
+for x in result:
+    del x

@@ -1923,7 +1923,7 @@ def generate_code_output(found_packets, can_interface):
 
 
 def generate_isotp_list(found_packets, can_interface):
-    # TODO: Support extended addressing
+    #TODO: Support extended addressing
     socket_list = []
     for pack in found_packets:
         source_id = pack

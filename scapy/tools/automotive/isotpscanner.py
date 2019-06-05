@@ -11,19 +11,21 @@ import argparse
 import scapy.modules.six as six
 from scapy.config import conf
 from scapy.layers.can import CAN
+from scapy.consts import LINUX
 
-if six.PY2:
+
+if six.PY2 or not LINUX:
     conf.contribs['CANSocket'] = {'use-python-can': True}
 
 from scapy.utils import PeriodicSenderThread
-from scapy.contrib.cansocket import CANSocket
+from scapy.contrib.cansocket import CANSocket, PYTHON_CAN
 from scapy.contrib.isotp import ISOTPScan
 
-if "python_can" in CANSocket.__module__:
+if PYTHON_CAN:
     #todo use argparse parameter for iface and add example (socketcan, vector, ...) to help
-    import can as python_can
+    import can
     new_can_socket = lambda iface: \
-        CANSocket(iface=python_can.interface.Bus(bustype='socketcan',
+        CANSocket(iface=can.interface.Bus(bustype='socketcan',
                                                  channel=iface))
 else:
     new_can_socket = CANSocket
@@ -41,7 +43,8 @@ def main():
                                                  "ISOTP-Addresses.",
                                      prog="ISOTP Scanner",
                                      usage="ISOTPScanner.py startID endID "
-                                           "interface [-flags]")
+                                           "interface [-flags]",
+                                     epilog="python2 -m scapy.tools.automotive.isotpscanner 0 1 \"can.interface.Bus(bustype='pcan', channel='PCAN_USBBUS1', bitrate=250000)\"")
     parser.add_argument("startID", type=lambda x: int(x, 16),
                         help="Start scan at this ID (hex)"),
     parser.add_argument("endID", type=lambda x: int(x, 16),

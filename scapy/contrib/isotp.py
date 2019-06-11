@@ -1818,7 +1818,7 @@ def scan_extended(sock, scan_range=range(0x7ff + 1), scan_block_size=100,
             for ext_id in range(extended_id, min(extended_id + scan_block_size,
                                                  256)):
                 pkt.extended_address = ext_id
-                full_id = (extended_id << 8) + ext_id
+                full_id = (value << 8) + ext_id
                 sock.sniff(prn=lambda pkt: get_isotp_fc(full_id, return_values,
                                                         noise_ids, True, pkt),
                            timeout=0.1,
@@ -1923,13 +1923,23 @@ def generate_code_output(found_packets, can_interface):
 
 
 def generate_isotp_list(found_packets, can_interface):
-    #TODO: Support extended addressing
     socket_list = []
     for pack in found_packets:
-        source_id = pack
-        dest_id = found_packets[pack][0].identifier
-        pad = True if found_packets[pack][0].length == 8 else False
-        socket_list.append(ISOTPSocket(can_interface, sid=source_id,
-                                       did=dest_id, padding=pad,
-                                       basecls=ISOTP))
+        # if extended ID
+        if pack > 0x7FF:
+            source_id = int(pack / 256)
+            dest_id = found_packets[pack][0].identifier
+            source_ext = int(pack - (source_id * 256))
+            dest_ext = found_packets[pack][0].data[0]
+            pad = True if found_packets[pack][0].length == 8 else False
+            socket_list.append(ISOTPSocket(can_interface, sid=source_id, extended_addr=source_ext,
+                                           did=dest_id, extended_rx_addr=dest_ext, padding=pad,
+                                           basecls=ISOTP))
+        else:
+            source_id = pack
+            dest_id = found_packets[pack][0].identifier
+            pad = True if found_packets[pack][0].length == 8 else False
+            socket_list.append(ISOTPSocket(can_interface, sid=source_id,
+                                           did=dest_id, padding=pad,
+                                           basecls=ISOTP))
     return socket_list

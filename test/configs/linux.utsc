@@ -2,7 +2,8 @@
   "testfiles": [
     "test/*.uts",
     "scapy/contrib/*.uts",
-    "test/tls/tests_tls_netaccess.uts"
+    "test/tls/tests_tls_netaccess.uts",
+    "scapy/tools/automotive/*.uts"
   ],
   "remove_testfiles": [
     "test/windows.uts",

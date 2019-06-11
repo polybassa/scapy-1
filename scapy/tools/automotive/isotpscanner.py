@@ -17,8 +17,8 @@ from scapy.consts import LINUX
 if six.PY2 or not LINUX:
     conf.contribs['CANSocket'] = {'use-python-can': True}
 
-from scapy.contrib.cansocket import CANSocket, PYTHON_CAN # noqa: E402
-from scapy.contrib.isotp import ISOTPScan # noqa: E402
+from scapy.contrib.cansocket import CANSocket, PYTHON_CAN  # noqa: E402
+from scapy.contrib.isotp import ISOTPScan  # noqa: E402
 
 
 def main():
@@ -67,8 +67,8 @@ def main():
     scan_interface = args.interface
     if "can.interface.Bus" in scan_interface:
         if PYTHON_CAN:
-            import can # noqa: 401
-            iface = eval(scan_interface) # noqa: E841
+            import can  # noqa: 401
+            iface = eval(scan_interface)  # noqa: E841
 
             def new_can_socket(iface):
                 return CANSocket(iface=iface)

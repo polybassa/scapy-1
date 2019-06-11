@@ -1671,11 +1671,11 @@ def get_isotp_packet(identifier=0x0, extended=False):
     """
 
     if extended:
-        pkt = ISOTPHeaderEA()/ISOTP_FF()
+        pkt = ISOTPHeaderEA() / ISOTP_FF()
         pkt.extended_address = 0
         pkt.data = b'\x00\x00\x00\x00\x00'
     else:
-        pkt = ISOTPHeader()/ISOTP_FF()
+        pkt = ISOTPHeader() / ISOTP_FF()
         pkt.data = b'\x00\x00\x00\x00\x00\x00'
 
     pkt.identifier = identifier
@@ -1815,12 +1815,14 @@ def scan_extended(sock, scan_range=range(0x7ff + 1), scan_block_size=100,
         # remove duplicate IDs
         id_list = list(set(id_list))
         for extended_id in id_list:
-            for ext_id in range(extended_id, min(extended_id + scan_block_size,
-                                                 256)):
+            for ext_id in range(extended_id, min(extended_id +
+                                                 scan_block_size, 256)):
                 pkt.extended_address = ext_id
                 full_id = (value << 8) + ext_id
-                sock.sniff(prn=lambda pkt: get_isotp_fc(full_id, return_values,
-                                                        noise_ids, True, pkt),
+                sock.sniff(prn=lambda pkt: get_isotp_fc(full_id,
+                                                        return_values,
+                                                        noise_ids, True,
+                                                        pkt),
                            timeout=0.1,
                            started_callback=lambda: sock.send(pkt))
     return return_values
@@ -1836,7 +1838,8 @@ def ISOTPScan(sock, scan_range=range(0x7ff + 1), extended_addressing=False,
         print("Filtering background noise...")
 
     # Send dummy packet. In most cases, this triggers activity on the bus.
-    dummy_pkt = CAN(identifier=0x123, data=b'\xaa\xbb\xcc\xdd\xee\xff\xaa\xbb')
+    dummy_pkt = CAN(identifier=0x123,
+                    data=b'\xaa\xbb\xcc\xdd\xee\xff\xaa\xbb')
 
     background_pkts = sock.sniff(timeout=noise_listen_time,
                                  started_callback=lambda:
@@ -1862,7 +1865,7 @@ def ISOTPScan(sock, scan_range=range(0x7ff + 1), extended_addressing=False,
 def generate_text_output(found_packets):
     if len(found_packets) != 0:
         text = "\nFound " + str(len(found_packets)) + \
-                          " ISOTP-FlowControl Packet(s):"
+               " ISOTP-FlowControl Packet(s):"
         for pack in found_packets:
             # if extended ID
             if pack > 0x7FF:
@@ -1932,8 +1935,11 @@ def generate_isotp_list(found_packets, can_interface):
             source_ext = int(pack - (source_id * 256))
             dest_ext = found_packets[pack][0].data[0]
             pad = True if found_packets[pack][0].length == 8 else False
-            socket_list.append(ISOTPSocket(can_interface, sid=source_id, extended_addr=source_ext,
-                                           did=dest_id, extended_rx_addr=dest_ext, padding=pad,
+            socket_list.append(ISOTPSocket(can_interface, sid=source_id,
+                                           extended_addr=source_ext,
+                                           did=dest_id,
+                                           extended_rx_addr=dest_ext,
+                                           padding=pad,
                                            basecls=ISOTP))
         else:
             source_id = pack

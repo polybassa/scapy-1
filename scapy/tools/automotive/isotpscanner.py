@@ -11,16 +11,14 @@ from argparse import RawTextHelpFormatter
 
 import scapy.modules.six as six
 from scapy.config import conf
-from scapy.layers.can import CAN
 from scapy.consts import LINUX
 
 
 if six.PY2 or not LINUX:
     conf.contribs['CANSocket'] = {'use-python-can': True}
 
-from scapy.utils import PeriodicSenderThread
-from scapy.contrib.cansocket import CANSocket, PYTHON_CAN
-from scapy.contrib.isotp import ISOTPScan
+from scapy.contrib.cansocket import CANSocket, PYTHON_CAN # noqa: E402
+from scapy.contrib.isotp import ISOTPScan # noqa: E402
 
 
 def main():
@@ -31,14 +29,22 @@ def main():
                                                  "ISOTP-Sockets.",
                                      formatter_class=RawTextHelpFormatter,
                                      prog="ISOTP Scanner",
-                                     usage="ISOTPScanner.py interface startID endID [-flags] ",
+                                     usage="ISOTPScanner.py interface "
+                                           "startID endID [-flags] ",
                                      epilog="Example of use:\n\n"
                                             "Python2 or Windows:\n"
-                                            "python2 -m scapy.tools.automotive.isotpscanner "
-                                            "\"can.interface.Bus(bustype='pcan', channel='PCAN_USBBUS1', bitrate=250000)"
+                                            "python2 -m "
+                                            "scapy.tools.automotive."
+                                            "isotpscanner "
+                                            "\"can.interface."
+                                            "Bus(bustype='pcan', "
+                                            "channel='PCAN_USBBUS1', "
+                                            "bitrate=250000)"
                                             " 0 1 \"\n\n"
                                             "Python3 on Linux:\n"
-                                            "python3 -m scapy.tools.automotive.isotpscanner can0 0 1")
+                                            "python3 -m scapy.tools."
+                                            "automotive.isotpscanner"
+                                            " can0 0 1")
     parser.add_argument("interface", type=str,
                         help="CAN interface for the scan.\n"
                              "Depends on used interpreter and system,\n"
@@ -61,8 +67,9 @@ def main():
     scan_interface = args.interface
     if "can.interface.Bus" in scan_interface:
         if PYTHON_CAN:
-            import can
-            iface = eval(scan_interface)
+            import can # noqa: 401
+            iface = eval(scan_interface) # noqa: E841
+
             def new_can_socket(iface):
                 return CANSocket(iface=iface)
         else:
@@ -105,7 +112,6 @@ def main():
                                     extended_addressing=True,
                                     noise_listen_time=args.noise_listen_time,
                                     output_format="code" if piso else "text")
-                                    #output_format=None)
         print("Extended scan: " + str(result_extended))
 
 

@@ -1687,7 +1687,8 @@ def filter_periodic_packets(packet_list):
     """ Filter for periodic packets
 
     Args:
-        packet_list: Dictionary with Send-to-ID as key and a tuple (received packet, Recv_ID)
+        packet_list: Dictionary with Send-to-ID as key and a tuple
+        (received packet, Recv_ID)
 
     ISOTP-Filter for periodic packets (same ID, always same timegap)
     Deletes periodic packets in packet_list

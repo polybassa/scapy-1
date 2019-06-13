@@ -64,23 +64,21 @@ def main():
 
     args = parser.parse_args()
 
+    new_can_socket = lambda iface: CANSocket(iface=iface)
+
     scan_interface = args.interface
     if "can.interface.Bus" in scan_interface:
         if PYTHON_CAN:
             import can  # noqa: 401
-            iface = eval(scan_interface)  # noqa: E841
-
-            def new_can_socket(iface):
-                return CANSocket(iface=iface)
+            scan_interface = eval(scan_interface)
         else:
             print("Wrong interface type.")
-            return
+            exit(-1)
     else:
         if PYTHON_CAN:
             print("Wrong interface type.")
-        else:
-            def new_can_socket(iface):
-                return CANSocket(iface)
+            exit(-1)
+
 
     if args.extended:
         extended = True

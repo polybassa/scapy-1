@@ -1,4 +1,5 @@
 % Regression tests for ISOTPScan
+~ vcan_socket
 
 # More information at http://www.secdev.org/projects/UTscapy/
 

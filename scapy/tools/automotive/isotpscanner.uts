@@ -9,7 +9,7 @@
 ~ conf
 
 load_layer("can")
-import threading, time, six, subprocess
+import threading, time, six, subprocess, sys
 from six.moves.queue import Queue
 from subprocess import call
 
@@ -115,7 +115,8 @@ load_contrib("isotp")
 
 = Test wrong usage
 ~ needs_root linux
-result = subprocess.Popen("python -m scapy.tools.automotive.isotpscanner", stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
+print(sys.executable)
+result = subprocess.Popen("%s $PWD/scapy/tools/automotive/isotpscanner.py" % sys.executable, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
 returncode = result.wait()
 assert returncode != 0
 std_out, std_err = result.communicate()

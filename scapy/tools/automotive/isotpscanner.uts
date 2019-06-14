@@ -126,12 +126,13 @@ assert expected_output in plain_str(std_err)
 
 = Test show help
 ~ needs_root linux
-result = subprocess.Popen("python -m scapy.tools.automotive.isotpscanner --help", stdout=subprocess.PIPE, shell=True)
+result = subprocess.Popen("%s $PWD/scapy/tools/automotive/isotpscanner.py --help" % sys.executable, stdout=subprocess.PIPE, shell=True)
 if result.wait() == 0:
-    output = result.communicate()
+    std_out, std_err = result.communicate()
+    assert std_err == None
     expected_output = plain_str(b'Scan for open ISOTP-Sockets')
-    print(output)
-    assert expected_output in plain_str(output[0])
+    print(std_out)
+    assert expected_output in plain_str(std_out)
 
 
 = Test wrong socket for Python2 or Windows
@@ -140,13 +141,14 @@ if six.PY2:
     version = subprocess.Popen("python --version", stdout=subprocess.PIPE, shell=True)
     if 0 == version.wait():
         print(version.communicate())
-    result = subprocess.Popen("python -m scapy.tools.automotive.isotpscanner vcan0 0x600 0x600", stdout=subprocess.PIPE, shell=True)
+    result = subprocess.Popen("%s $PWD/scapy/tools/automotive/isotpscanner.py vcan0 0x600 0x600" % sys.executable, stdout=subprocess.PIPE, shell=True)
     if result.wait() == 0:
         expected_output = plain_str(b'Wrong interface')
-        output = result.communicate()
-        print(output)
+        std_out, std_err = result.communicate()
+        assert std_err == None
+        print(std_out)
         print(expected_output)
-        assert expected_output in plain_str(output)
+        assert expected_output in plain_str(std_out)
 
 
 = Test wrong socket for Python3 on Linux
@@ -155,13 +157,14 @@ if six.PY3:
     version = subprocess.Popen("python --version", stdout=subprocess.PIPE, shell=True)
     if 0 == version.wait():
         print(version.communicate())
-    result = subprocess.Popen("python -m scapy.tools.automotive.isotpscanner \"can.interface.Bus(bustype=\'socketcan\', channel=\'vcan0\', bitrate=250000)\" 0x600 0x600", stdout = subprocess.PIPE, shell=True)
+    result = subprocess.Popen("%s $PWD/scapy/tools/automotive/isotpscanner.py \"can.interface.Bus(bustype=\'socketcan\', channel=\'vcan0\', bitrate=250000)\" 0x600 0x600" % sys.executable, stdout = subprocess.PIPE, shell=True)
     if result.wait() == 0:
         expected_output = plain_str(b'Wrong interface')
-        output = result.communicate()
-        print(output)
+        std_out, std_err = result.communicate()
+        assert std_err == None
+        print(std_out)
         print(expected_output)
-        assert expected_output in plain_str(output)
+        assert expected_output in plain_str(std_out)
 
 
 = Test standard scan
@@ -175,7 +178,7 @@ def isotpserver():
 sniffer = threading.Thread(target=isotpserver)
 sniffer.start()
 time.sleep(0.1)
-result = subprocess.Popen("python -m scapy.tools.automotive.isotpscanner vcan0 0x600 0x600", stdout=subprocess.PIPE, shell=True)
+result = subprocess.Popen("%s $PWD/scapy/tools/automotive/isotpscanner.py vcan0 0x600 0x600" % sys.executable, stdout=subprocess.PIPE, shell=True)
 returncode = result.wait()
 
 send = subprocess.Popen(['cansend', 'vcan0', '600#01aa'])
@@ -183,10 +186,11 @@ assert 0 == send.wait()
 assert returncode == 0
 
 expected_output = [b'0x600', b'0x700']
-output = result.communicate()
-print(output)
+std_out, std_err = result.communicate()
+assert std_err == None
+print(std_out)
 for out in expected_output:
-    assert plain_str(out) in plain_str(output[0])
+    assert plain_str(out) in plain_str(std_out)
 
 
 = Test extended scan
@@ -200,7 +204,7 @@ def isotpserver():
 sniffer = threading.Thread(target=isotpserver)
 sniffer.start()
 time.sleep(0.1)
-result = subprocess.Popen("python -m scapy.tools.automotive.isotpscanner vcan0 0x601 0x601 -e", stdout=subprocess.PIPE, shell=True)
+result = subprocess.Popen("%s $PWD/scapy/tools/automotive/isotpscanner.py vcan0 0x601 0x601 -e" % sys.executable, stdout=subprocess.PIPE, shell=True)
 returncode = result.wait()
 
 send = subprocess.Popen(['cansend', 'vcan0', '601#BB01aa'])
@@ -208,10 +212,11 @@ assert 0 == send.wait()
 assert returncode == 0
 
 expected_output = [b'0x601', b'0xbb', b'0x700', b'0xaa']
-output = result.communicate()
-print(output)
+std_out, std_err = result.communicate()
+assert std_err == None
+print(std_out)
 for out in expected_output:
-    assert plain_str(out) in plain_str(output)
+    assert plain_str(out) in plain_str(std_out)
 
 
 = Test extended only scan
@@ -225,7 +230,7 @@ def isotpserver():
 sniffer = threading.Thread(target=isotpserver)
 sniffer.start()
 time.sleep(0.1)
-result = subprocess.Popen("python -m scapy.tools.automotive.isotpscanner vcan0 0x601 0x601 -eo", stdout=subprocess.PIPE, shell=True)
+result = subprocess.Popen("%s $PWD/scapy/tools/automotive/isotpscanner.py vcan0 0x601 0x601 -eo" % sys.executable, stdout=subprocess.PIPE, shell=True)
 returncode = result.wait()
 
 send = subprocess.Popen(['cansend', 'vcan0', '601#BB01aa'])
@@ -233,10 +238,11 @@ assert 0 == send.wait()
 assert returncode == 0
 
 expected_output = [b'0x601', b'0xbb', b'0x700', b'0xaa']
-output = result.communicate()
-print(output)
+std_out, std_err = result.communicate()
+assert std_err == None
+print(std_out)
 for out in expected_output:
-    assert plain_str(out) in plain_str(output)
+    assert plain_str(out) in plain_str(std_out)
 
 
 = Test scan with piso flag
@@ -250,7 +256,7 @@ def isotpserver():
 sniffer = threading.Thread(target=isotpserver)
 sniffer.start()
 time.sleep(0.1)
-result = subprocess.Popen("python -m scapy.tools.automotive.isotpscanner vcan0 0x601 0x601 -eo -p", stdout=subprocess.PIPE, shell=True)
+result = subprocess.Popen("%s $PWD/scapy/tools/automotive/isotpscanner.py vcan0 0x601 0x601 -eo -p" % sys.executable, stdout=subprocess.PIPE, shell=True)
 returncode = result.wait()
 
 send = subprocess.Popen(['cansend', 'vcan0', '601#BB01aa'])
@@ -258,7 +264,8 @@ assert 0 == send.wait()
 assert returncode == 0
 
 expected_output = [b'sid=0x601', b'did=0x700', b'padding=False', b'extended_addr=0xbb', b'extended_rx_addr=0xaa']
-output = result.communicate()
-print(output)
+std_out, std_err = result.communicate()
+assert std_err == None
+print(std_out)
 for out in expected_output:
-    assert plain_str(out) in plain_str(output)
+    assert plain_str(out) in plain_str(std_out)

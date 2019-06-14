@@ -1,93 +1,21 @@
-% Regression tests for ISOTPScan
-~ vcan_socket
-
-# More information at http://www.secdev.org/projects/UTscapy/
-
-
-############
-############
-+ Configuration of CAN virtual sockets
-
-= Load os
-~ conf command needs_root linux
-
-import os
-import threading
-import time
-import subprocess
-
-from scapy.all import *
-from scapy.utils import PeriodicSenderThread
-import scapy.modules.six as six
-
-
-if six.PY2:
-    conf.contribs['CANSocket'] = {'use-python-can': True}
-else:
-    conf.contribs['ISOTP'] = {'use-can-isotp-kernel-module': True}
-
-from scapy.contrib.isotp import ISOTPHeader, ISOTP_FF, ISOTPHeaderEA, ISOTPSocket
-from scapy.contrib.cansocket import CANSocket
-
-if "python_can" in CANSocket.__module__:
-    import can as python_can
-    new_can_socket = lambda iface: \
-        CANSocket(iface=python_can.interface.Bus(bustype='socketcan', channel=iface))
-else:
-    new_can_socket = lambda iface: CANSocket(iface)
-
-if six.PY2:
-    get_can_socket = lambda iface: new_can_socket(iface)
-else:
-    get_can_socket = lambda iface: iface
-
-
-= Load module
-~ conf command needs_root linux
-
-conf.contribs['ISOTP'] = {'use-can-isotp-kernel-module': True}
-load_contrib("isotp")
-load_contrib("cansocket")
-load_layer("can")
-
-from scapy.contrib.isotp import send_multiple_ext, send_multiple, filter_periodic_packets, scan, scan_extended, ISOTPScan
-
-
-= Setup vcan0
-~ conf command needs_root linux vcan_socket
-
-bashCommand = "/bin/bash -c 'sudo modprobe vcan; sudo ip link add name vcan0 type vcan; sudo ip link set dev vcan0 up;'"
-
-0 == os.system(bashCommand)
-
-
-= init sockets
-~ needs_root linux vcan_socket
-CanSocket_send = new_can_socket("vcan0")
-CanSocket_recv = new_can_socket("vcan0")
-
-
-
-
+% ISOTPScan Tests
+~ vcan_socket linux needs_root
+* Tests for ISOTPScan
 
 + Configuration
 ~ conf
 
 = Imports
-~ conf
 
 load_layer("can")
 import threading, time, six, subprocess
-from six.moves.queue import Queue
 from subprocess import call
+from scapy.contrib.isotp import send_multiple_ext, send_multiple, filter_periodic_packets, scan, scan_extended
 
-
-= Definition of constants, utility functions and mock classes
-~ conf
+= Definition of constants, utility functions
 
 iface0 = "vcan0"
 iface1 = "vcan1"
-
 
 # function to exit when the can-isotp kernel module is not available
 ISOTP_KERNEL_MODULE_AVAILABLE = False
@@ -100,7 +28,6 @@ def exit_if_no_isotp_module():
 
 
 = Initialize a virtual CAN interface
-~ needs_root linux conf
 if 0 != call("cansend %s 000#" % iface0, shell=True):
     # vcan0 is not enabled
     if 0 != call("sudo modprobe vcan", shell=True):
@@ -155,14 +82,12 @@ def drain_bus(iface=iface0, assert_empty=True):
 print("CAN sockets should work now")
 
 
-# Verify that a CAN socket can be created and closed
-~ conf linux needs_root
-s = new_can_socket(iface0)
+= Verify that a CAN socket can be created and closed
+s = new_can_socket0()
 s.close()
 
 
 = Check if can-isotp and can-utils are installed on this system
-~ linux
 p = subprocess.Popen('lsmod | grep "^can_isotp"', stdout=subprocess.PIPE, shell=True)
 if p.wait() == 0:
     if b"can_isotp" in p.stdout.read():
@@ -181,110 +106,102 @@ conf.contribs['ISOTP'] = {'use-can-isotp-kernel-module': False}
 load_contrib("isotp")
 
 
-
++ Test internal functions
 
 = Test send_multiple()
-~ needs_root linux vcan_socket
-pkt = ISOTPHeader()/ISOTP_FF()
-pkt.identifier = 0x0
-pkt.message_size = 100
-pkt.data = b'\x00\x00\x00\x00\x00\x00'
+pkt = ISOTPHeader(identifier=0x100)/ISOTP_FF(message_size=100, data=b'\x00\x00\x00\x00\x00')
 number_of_packets = 100
-count = 0
 
 drain_bus(iface0)
-def counter():
-    global count
-    pkts = CanSocket_recv.sniff(timeout=1, count=100)
-    count = len(pkts)
+def sender():
+    send_multiple(new_can_socket0(), pkt, range(200 + 1), number_of_packets)
 
-thread = threading.Thread(target=counter)
-thread.start()
-send_multiple(CanSocket_send, pkt, range(200+1), number_of_packets)
+thread = threading.Thread(target=sender)
+pkts = new_can_socket0().sniff(timeout=4, count=number_of_packets, started_callback=thread.start)
 thread.join()
-print(str(count) + " == " + str(number_of_packets))
-assert count == number_of_packets
+assert len(pkts) == number_of_packets
 
 
 = Test send_multiple_ext()
-~ needs_root linux vcan_socket
-pkt = ISOTPHeaderEA() / ISOTP_FF()
-pkt.identifier = 0x0
-pkt.message_size = 100
-pkt.extended_address = 0
-pkt.data = b'\x00\x00\x00\x00\x00'
+pkt = ISOTPHeaderEA(identifier=0x100, extended_address=1)/ISOTP_FF(message_size=100, data=b'\x00\x00\x00\x00\x00')
 number_of_packets = 100
-count = 0
 
 drain_bus(iface0)
-def counter():
-    global count
-    pkts = CanSocket_recv.sniff(timeout=1, count=100)
-    count = len(pkts)
+def sender():
+    send_multiple_ext(new_can_socket0(), 0, pkt, number_of_packets)
 
-thread = threading.Thread(target=counter)
-thread.start()
-time.sleep(0.2)
-send_multiple_ext(CanSocket_send, 0, pkt, number_of_packets)
+thread = threading.Thread(target=sender)
+pkts = new_can_socket0().sniff(timeout=4, count=number_of_packets, started_callback=thread.start)
 thread.join()
-
-print(str(count) + " == " + str(number_of_packets))
-assert count == number_of_packets
+assert len(pkts) == number_of_packets
 
 
 = Test filter_periodic_packets() with periodic packets
-~ needs_root linux vcan_socket
-
 drain_bus(iface0)
-received_packets = {}
-done = False
-pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
-CanSocket_recv = new_can_socket(iface0)
 
 def send_periodic(pkt):
-    global done
-    while not done:
-        CanSocket_send.send(pkt)
+    s = new_can_socket0()
+    for _ in range(10):
+        s.send(pkt)
         time.sleep(0.1)
 
+pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
 thread = threading.Thread(target=send_periodic, args=(pkt))
-thread.start()
-packets = CanSocket_recv.sniff(timeout=1)
-done = True
+packets = new_can_socket0().sniff(timeout=1, started_callback=thread.start)
 thread.join()
+received_packets = {}
 
 for i in range(0, len(packets)):
     received_packets[i] = (packets[i], packets[i].identifier)
 
 filter_periodic_packets(received_packets)
-
 assert len(received_packets) == 0
 
 
-= Test filter_periodic_packets() with nonperiodic packets
-~ needs_root linux vcan_socket
+= Test filter_periodic_packets() with periodic packets and one outlier
 drain_bus(iface0)
-received_packets = {}
-done = False
+
+def send_periodic(pkt):
+    s = new_can_socket0()
+    outlier = CAN(identifier=pkt.identifier+1, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+    s.send(outlier)
+    time.sleep(0.1)
+    for _ in range(10):
+        s.send(pkt)
+        time.sleep(0.1)
+
 pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
-CanSocket_recv = new_can_socket(iface0)
+thread = threading.Thread(target=send_periodic, args=(pkt))
+packets = new_can_socket0().sniff(timeout=1, started_callback=thread.start)
+thread.join()
+received_packets = {}
+
+for i in range(len(packets)):
+    received_packets[i] = (packets[i], packets[i].identifier)
+
+filter_periodic_packets(received_packets)
+assert len(received_packets) == 1
+
+
+= Test filter_periodic_packets() with nonperiodic packets
+drain_bus(iface0)
+pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
 
 def send_aperiodic(pkt):
-    global done
     gaptime = 0.1
-    while not done:
-        CanSocket_send.send(pkt)
+    s = new_can_socket0()
+    for _ in range(10):
+        s.send(pkt)
         time.sleep(gaptime)
-        gaptime = gaptime + 0.1
+        gaptime += 0.1
 
 thread = threading.Thread(target=send_aperiodic, args=(pkt))
-thread.start()
-packets = CanSocket_recv.sniff(timeout=2)
-#todo: replace done with Threading Event or Signal
-done = True
+packets = new_can_socket0().sniff(timeout=2, started_callback=thread.start)
 thread.join()
+received_packets = {}
 
-for i in range(0, len(packets)): received_packets[i] = (packets[i], packets[i].identifier)
+for i in range(len(packets)):
+    received_packets[i] = (packets[i], packets[i].identifier)
 
 packets_before = len(received_packets)
 filter_periodic_packets(received_packets)
@@ -293,51 +210,41 @@ assert packets_before == packets_after
 
 
 = Test scan()
-~ needs_root linux vcan_socket
-noise = [0x701]
-
 drain_bus(iface0)
-def isotpserver(i):
-    with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i) as isotpsock1:
-        isotpsock1.sniff(timeout=100 ,count=1)
+def isotpserver(idx):
+    with ISOTPSocket(new_can_socket0(), sid=0x700+idx, did=0x600+idx) as sock:
+        sock.sniff(timeout=100 ,count=1)
 
-thread1 = threading.Thread(target=isotpserver, args=[1])
-thread2 = threading.Thread(target=isotpserver, args=[2])
-thread3 = threading.Thread(target=isotpserver, args=[3])
-thread1.start()
-thread2.start()
-thread3.start()
-time.sleep(0.1)
-found_packets = scan(CanSocket_send, range(0x5ff, 0x604+1), noise)
-subprocess.call(['cansend', 'vcan0', '601#01aa'])
-subprocess.call(['cansend', 'vcan0', '602#01aa'])
-subprocess.call(['cansend', 'vcan0', '603#01aa'])
-thread1.join()
-thread2.join()
-thread3.join()
-print(len(found_packets))
-# One packet is noise
+listen_sockets = list()
+for i in range(1, 4):
+    listen_sockets.append(threading.Thread(target=isotpserver, args=[i]))
+    listen_sockets[-1].start()
+
+found_packets = scan(new_can_socket0(), range(0x5ff, 0x610), noise_ids=[0x701])
+assert 0 == subprocess.call(['cansend', iface0, '601#01aa'])
+assert 0 == subprocess.call(['cansend', iface0, '602#01aa'])
+assert 0 == subprocess.call(['cansend', iface0, '603#01aa'])
+
+for thread in listen_sockets:
+    thread.join()
+
 assert len(found_packets) == 2
-1 == 1
 
 
 = Test scan_extended()
-~ needs_root linux vcan_socket
 recvpacket = CAN(flags=0, identifier=0x700, length=4, data=b'\xaa0\x00\x00')
 
 drain_bus(iface0)
 def isotpserver():
-    with ISOTPSocket(get_can_socket("vcan0"), sid=0x700, did=0x601, extended_addr=0xaa, extended_rx_addr=0xbb) as s:
+    with ISOTPSocket(new_can_socket0(), sid=0x700, did=0x601, extended_addr=0xaa, extended_rx_addr=0xbb) as s:
         s.sniff(timeout=100, count=1)
 
 thread = threading.Thread(target=isotpserver)
 thread.start()
 time.sleep(0.1)
-found_packets = scan_extended(CanSocket_send, [0x601])
+found_packets = scan_extended(new_can_socket0(), [0x601])
 assert 0 == subprocess.call(['cansend', 'vcan0', '601#BB01aa'])
 thread.join()
-print(str(found_packets[list(found_packets.keys())[0]][0]))
-print(str(recvpacket))
 fpkt = found_packets[list(found_packets.keys())[0]][0]
 rpkt = recvpacket
 
@@ -347,19 +254,18 @@ assert fpkt.identifier == rpkt.identifier
 
 
 = Test ISOTPScan(output_format=text)
-~ needs_root linux vcan_socket
 done = False
 
 drain_bus(iface0)
 def isotpserver(i):
-    with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i) as isotpsock1:
+    with ISOTPSocket(new_can_socket0(), sid=0x700+i, did=0x600+i) as isotpsock1:
         isotpsock1.sniff(timeout=100 ,count=1)
 
 def make_noise(pkt):
     global done
     while not done:
-        CanSocket_send.send(pkt)
-        time.sleep(1)
+        new_can_socket0().send(pkt)
+        time.sleep(0.1)
 
 pkt = CAN(identifier=0x701, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
 thread_noise = threading.Thread(target=make_noise, args=(pkt))
@@ -370,7 +276,7 @@ thread2 = threading.Thread(target=isotpserver, args=[3])
 thread1.start()
 thread2.start()
 time.sleep(0.1)
-result = ISOTPScan(CanSocket_send, range(0x5ff, 0x604+1), output_format="text")
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), output_format="text")
 assert 0 == subprocess.call(['cansend', 'vcan0', '601#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '603#01aa'])
@@ -389,19 +295,18 @@ assert "No Padding" in result
 
 
 = Test ISOTPScan(output_format=code)
-~ needs_root linux vcan_socket
 done = False
 
 drain_bus(iface0)
 def isotpserver(i):
-    with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i) as isotpsock1:
+    with ISOTPSocket(new_can_socket0(), sid=0x700+i, did=0x600+i) as isotpsock1:
         isotpsock1.sniff(timeout=100 ,count=1)
 
 def make_noise(pkt):
     global done
     while not done:
-        CanSocket_send.send(pkt)
-        time.sleep(1)
+        new_can_socket0().send(pkt)
+        time.sleep(0.1)
 
 pkt = CAN(identifier=0x701, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
 thread_noise = threading.Thread(target=make_noise, args=pkt)
@@ -412,7 +317,7 @@ thread2 = threading.Thread(target=isotpserver, args=[3])
 thread1.start()
 thread2.start()
 time.sleep(0.1)
-result = ISOTPScan(CanSocket_send, range(0x5ff, 0x604+1), output_format="code")
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), output_format="code")
 assert 0 == subprocess.call(['cansend', 'vcan0', '601#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '603#01aa'])
@@ -427,20 +332,17 @@ assert text == result
 
 
 = Test ISOTPScan(output_format=None)
-~ needs_root linux test python3_only vcan_socket
-done = False
-can_interface = get_can_socket("vcan0")
+~ python3_only
 
 drain_bus(iface0)
 def isotpserver(i):
-    with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i) as isotpsock1:
+    with ISOTPSocket(new_can_socket0(), sid=0x700+i, did=0x600+i) as isotpsock1:
         isotpsock1.sniff(timeout=100 ,count=1)
 
 def make_noise(pkt):
-    global done
-    while not done:
-        CanSocket_send.send(pkt)
-        time.sleep(1)
+    for _ in range(40):
+        new_can_socket0().send(pkt)
+        time.sleep(0.1)
 
 pkt = CAN(identifier=0x701, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
 thread_noise = threading.Thread(target=make_noise, args=pkt)
@@ -451,13 +353,13 @@ thread2 = threading.Thread(target=isotpserver, args=[3])
 thread1.start()
 thread2.start()
 time.sleep(0.1)
-result = ISOTPScan(CanSocket_send, range(0x5ff, 0x604+1), can_interface=can_interface)
+
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), can_interface=new_can_socket0())
 assert 0 == subprocess.call(['cansend', 'vcan0', '601#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '603#01aa'])
 thread1.join()
 thread2.join()
-done = True
 thread_noise.join()
 
 assert len(result) == 2
@@ -467,24 +369,25 @@ assert 0x603 == result[1].src
 assert 0x703 == result[1].dst
 
 for x in result:
-    del x
+    x.close()
 
+print(result)
 
 = Test extended ISOTPScan(output_format=None)
-~ needs_root linux python3_only vcan_socket
+~ python3_only
+
 done = False
-can_interface = get_can_socket("vcan0")
 
 drain_bus(iface0)
 def isotpserver(i):
-    with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i, extended_addr=0x11, extended_rx_addr=0x22) as isotpsock1:
+    with ISOTPSocket(new_can_socket0(), sid=0x700+i, did=0x600+i, extended_addr=0x11, extended_rx_addr=0x22) as isotpsock1:
         isotpsock1.sniff(timeout=100 ,count=1)
 
 def make_noise(pkt):
     global done
     while not done:
-        CanSocket_send.send(pkt)
-        time.sleep(1)
+        new_can_socket0().send(pkt)
+        time.sleep(0.1)
 
 pkt = CAN(identifier=0x701, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
 thread_noise = threading.Thread(target=make_noise, args=pkt)
@@ -495,7 +398,7 @@ thread2 = threading.Thread(target=isotpserver, args=[3])
 thread1.start()
 thread2.start()
 time.sleep(0.1)
-result = ISOTPScan(CanSocket_send, range(0x5ff, 0x604+1), extended_addressing=True, can_interface=can_interface)
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), extended_addressing=True, can_interface=new_can_socket0())
 assert 0 == subprocess.call(['cansend', 'vcan0', '601#2201aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#2201aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '603#2201aa'])

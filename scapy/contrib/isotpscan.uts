@@ -235,12 +235,12 @@ assert count == number_of_packets
 = Test filter_periodic_packets() with periodic packets
 ~ needs_root linux vcan_socket
 
+drain_bus(iface0)
 received_packets = {}
 done = False
 pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
-CanSocket_recv = new_can_socket("vcan0")
+CanSocket_recv = new_can_socket(iface0)
 
-drain_bus(iface0)
 def send_periodic(pkt):
     global done
     while not done:
@@ -257,17 +257,18 @@ for i in range(0, len(packets)):
     received_packets[i] = (packets[i], packets[i].identifier)
 
 filter_periodic_packets(received_packets)
+
 assert len(received_packets) == 0
 
 
 = Test filter_periodic_packets() with nonperiodic packets
 ~ needs_root linux vcan_socket
+drain_bus(iface0)
 received_packets = {}
 done = False
 pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
-CanSocket_recv = new_can_socket("vcan0")
+CanSocket_recv = new_can_socket(iface0)
 
-drain_bus(iface0)
 def send_aperiodic(pkt):
     global done
     gaptime = 0.1

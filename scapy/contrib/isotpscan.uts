@@ -67,15 +67,120 @@ CanSocket_send = new_can_socket("vcan0")
 CanSocket_recv = new_can_socket("vcan0")
 
 
-= Test PeriodicSenderThread()
-~ needs_root linux vcan_socket
-t_out = 1
-dummy_pkt = CAN(identifier=0x123, data=b'\xaa\xff\xff\xff\xff\xff\xff\xee')
-thread = PeriodicSenderThread(CanSocket_send, dummy_pkt, interval=0.1)
-thread.start()
-packets = CanSocket_recv.sniff(timeout=t_out)
-thread.stop()
-assert t_out / 0.1 - 1 <= len(packets) <= t_out / 0.1 + 1
+
+
+
++ Configuration
+~ conf
+
+= Imports
+~ conf
+
+load_layer("can")
+import threading, time, six, subprocess
+from six.moves.queue import Queue
+from subprocess import call
+
+
+= Definition of constants, utility functions and mock classes
+~ conf
+
+iface0 = "vcan0"
+iface1 = "vcan1"
+
+
+# function to exit when the can-isotp kernel module is not available
+ISOTP_KERNEL_MODULE_AVAILABLE = False
+def exit_if_no_isotp_module():
+    if not ISOTP_KERNEL_MODULE_AVAILABLE:
+        err = "TEST SKIPPED: can-isotp not available"
+        subprocess.call("printf \"%s\r\n\" > /dev/stderr" % err, shell=True)
+        warning("Can't test ISOTP native socket because kernel module is not loaded")
+        exit(0)
+
+
+= Initialize a virtual CAN interface
+~ needs_root linux conf
+if 0 != call("cansend %s 000#" % iface0, shell=True):
+    # vcan0 is not enabled
+    if 0 != call("sudo modprobe vcan", shell=True):
+        raise Exception("modprobe vcan failed")
+    if 0 != call("sudo ip link add name %s type vcan" % iface0, shell=True):
+        print("add %s failed: Maybe it was already up?" % iface0)
+    if 0 != call("sudo ip link set dev %s up" % iface0, shell=True):
+        raise Exception("could not bring up %s" % iface0)
+
+if 0 != call("cansend %s 000#" % iface0, shell=True):
+    raise Exception("cansend doesn't work")
+
+if 0 != call("cansend %s 000#" % iface1, shell=True):
+    # vcan1 is not enabled
+    if 0 != call("sudo modprobe vcan", shell=True):
+        raise Exception("modprobe vcan failed")
+    if 0 != call("sudo ip link add name %s type vcan" % iface1, shell=True):
+        print("add %s failed: Maybe it was already up?" % iface1)
+    if 0 != call("sudo ip link set dev %s up" % iface1, shell=True):
+        raise Exception("could not bring up %s" % iface1)
+
+if 0 != call("cansend %s 000#" % iface1, shell=True):
+    raise Exception("cansend doesn't work")
+
+print("CAN should work now")
+
+
+if six.PY3:
+    from scapy.contrib.cansocket_native import *
+else:
+    from scapy.contrib.cansocket_python_can import *
+
+
+if "python_can" in CANSocket.__module__:
+    import can as python_can
+    new_can_socket = lambda iface: CANSocket(iface=python_can.interface.Bus(bustype='socketcan', channel=iface, bitrate=250000))
+    new_can_socket0 = lambda: CANSocket(iface=python_can.interface.Bus(bustype='socketcan', channel=iface0, bitrate=250000), timeout=0.01)
+    new_can_socket1 = lambda: CANSocket(iface=python_can.interface.Bus(bustype='socketcan', channel=iface1, bitrate=250000), timeout=0.01)
+else:
+    new_can_socket = lambda iface: CANSocket(iface)
+    new_can_socket0 = lambda: CANSocket(iface0)
+    new_can_socket1 = lambda: CANSocket(iface1)
+
+# utility function for draining a can interface, asserting that no packets are there
+def drain_bus(iface=iface0, assert_empty=True):
+    s = new_can_socket(iface)
+    pkts = s.sniff(timeout=0.1)
+    if assert_empty:
+        assert len(pkts) == 0
+    s.close()
+
+print("CAN sockets should work now")
+
+
+# Verify that a CAN socket can be created and closed
+~ conf linux needs_root
+s = new_can_socket(iface0)
+s.close()
+
+
+= Check if can-isotp and can-utils are installed on this system
+~ linux
+p = subprocess.Popen('lsmod | grep "^can_isotp"', stdout=subprocess.PIPE, shell=True)
+if p.wait() == 0:
+    if b"can_isotp" in p.stdout.read():
+        p = subprocess.Popen("isotpsend -s1 -d0 %s" % iface0, stdin=subprocess.PIPE, shell=True)
+        p.stdin.write(b"01")
+        p.stdin.close()
+        r = p.wait()
+        if r == 0:
+            ISOTP_KERNEL_MODULE_AVAILABLE = True
+
+
++ Syntax check
+
+= Import isotp
+conf.contribs['ISOTP'] = {'use-can-isotp-kernel-module': False}
+load_contrib("isotp")
+
+
 
 
 = Test send_multiple()
@@ -87,6 +192,7 @@ pkt.data = b'\x00\x00\x00\x00\x00\x00'
 number_of_packets = 100
 count = 0
 
+drain_bus(iface0)
 def counter():
     global count
     pkts = CanSocket_recv.sniff(timeout=1, count=100)
@@ -110,6 +216,7 @@ pkt.data = b'\x00\x00\x00\x00\x00'
 number_of_packets = 100
 count = 0
 
+drain_bus(iface0)
 def counter():
     global count
     pkts = CanSocket_recv.sniff(timeout=1, count=100)
@@ -133,6 +240,7 @@ done = False
 pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
 CanSocket_recv = new_can_socket("vcan0")
 
+drain_bus(iface0)
 def send_periodic(pkt):
     global done
     while not done:
@@ -159,6 +267,7 @@ done = False
 pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
 CanSocket_recv = new_can_socket("vcan0")
 
+drain_bus(iface0)
 def send_aperiodic(pkt):
     global done
     gaptime = 0.1
@@ -186,6 +295,7 @@ assert packets_before == packets_after
 ~ needs_root linux vcan_socket
 noise = [0x701]
 
+drain_bus(iface0)
 def isotpserver(i):
     with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i) as isotpsock1:
         isotpsock1.sniff(timeout=100 ,count=1)
@@ -214,6 +324,7 @@ assert len(found_packets) == 2
 ~ needs_root linux vcan_socket
 recvpacket = CAN(flags=0, identifier=0x700, length=4, data=b'\xaa0\x00\x00')
 
+drain_bus(iface0)
 def isotpserver():
     with ISOTPSocket(get_can_socket("vcan0"), sid=0x700, did=0x601, extended_addr=0xaa, extended_rx_addr=0xbb) as s:
         s.sniff(timeout=100, count=1)
@@ -238,6 +349,7 @@ assert fpkt.identifier == rpkt.identifier
 ~ needs_root linux vcan_socket
 done = False
 
+drain_bus(iface0)
 def isotpserver(i):
     with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i) as isotpsock1:
         isotpsock1.sniff(timeout=100 ,count=1)
@@ -279,6 +391,7 @@ assert "No Padding" in result
 ~ needs_root linux vcan_socket
 done = False
 
+drain_bus(iface0)
 def isotpserver(i):
     with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i) as isotpsock1:
         isotpsock1.sniff(timeout=100 ,count=1)
@@ -317,6 +430,7 @@ assert text == result
 done = False
 can_interface = get_can_socket("vcan0")
 
+drain_bus(iface0)
 def isotpserver(i):
     with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i) as isotpsock1:
         isotpsock1.sniff(timeout=100 ,count=1)
@@ -360,6 +474,7 @@ for x in result:
 done = False
 can_interface = get_can_socket("vcan0")
 
+drain_bus(iface0)
 def isotpserver(i):
     with ISOTPSocket(get_can_socket("vcan0"), sid=0x700+i, did=0x600+i, extended_addr=0x11, extended_rx_addr=0x22) as isotpsock1:
         isotpsock1.sniff(timeout=100 ,count=1)

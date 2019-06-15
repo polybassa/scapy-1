@@ -332,16 +332,15 @@ assert text == result
 
 
 = Test ISOTPScan(output_format=None)
-~ python3_only
-
 drain_bus(iface0)
 def isotpserver(i):
-    with ISOTPSocket(new_can_socket0(), sid=0x700+i, did=0x600+i) as isotpsock1:
-        isotpsock1.sniff(timeout=100 ,count=1)
+    with ISOTPSocket(new_can_socket0(), sid=0x700+i, did=0x600+i) as s:
+        s.sniff(timeout=100 ,count=1)
 
 def make_noise(pkt):
+    s = new_can_socket0()
     for _ in range(40):
-        new_can_socket0().send(pkt)
+        s.send(pkt)
         time.sleep(0.1)
 
 pkt = CAN(identifier=0x701, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
@@ -354,7 +353,8 @@ thread1.start()
 thread2.start()
 time.sleep(0.1)
 
-result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), can_interface=new_can_socket0())
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), can_interface=iface0)
+
 assert 0 == subprocess.call(['cansend', 'vcan0', '601#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '603#01aa'])
@@ -368,25 +368,29 @@ assert 0x702 == result[0].dst
 assert 0x603 == result[1].src
 assert 0x703 == result[1].dst
 
-for x in result:
-    x.close()
+for s in result:
+    # This helps to close ISOTPSoftSockets
+    assert 0 == subprocess.call(['cansend', 'vcan0', '702#01aa'])
+    assert 0 == subprocess.call(['cansend', 'vcan0', '703#01aa'])
+    s.close()
+    assert 0 == subprocess.call(['cansend', 'vcan0', '702#01aa'])
+    assert 0 == subprocess.call(['cansend', 'vcan0', '703#01aa'])
 
-print(result)
+for s in result:
+    del s
 
-= Test extended ISOTPScan(output_format=None)
-~ python3_only
 
-done = False
+= Test ISOTPScan(output_format=None) 2
 
 drain_bus(iface0)
 def isotpserver(i):
-    with ISOTPSocket(new_can_socket0(), sid=0x700+i, did=0x600+i, extended_addr=0x11, extended_rx_addr=0x22) as isotpsock1:
-        isotpsock1.sniff(timeout=100 ,count=1)
+    with ISOTPSocket(iface0, sid=0x700+i, did=0x600+i) as s:
+        s.sniff(timeout=100 ,count=1)
 
 def make_noise(pkt):
-    global done
-    while not done:
-        new_can_socket0().send(pkt)
+    s = new_can_socket0()
+    for _ in range(40):
+        s.send(pkt)
         time.sleep(0.1)
 
 pkt = CAN(identifier=0x701, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
@@ -398,13 +402,64 @@ thread2 = threading.Thread(target=isotpserver, args=[3])
 thread1.start()
 thread2.start()
 time.sleep(0.1)
+
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), can_interface=iface0)
+
+assert 0 == subprocess.call(['cansend', 'vcan0', '601#01aa'])
+assert 0 == subprocess.call(['cansend', 'vcan0', '602#01aa'])
+assert 0 == subprocess.call(['cansend', 'vcan0', '603#01aa'])
+
+thread1.join()
+thread2.join()
+thread_noise.join()
+
+assert len(result) == 2
+assert 0x602 == result[0].src
+assert 0x702 == result[0].dst
+assert 0x603 == result[1].src
+assert 0x703 == result[1].dst
+
+for s in result:
+    # This helps to close ISOTPSoftSockets
+    assert 0 == subprocess.call(['cansend', 'vcan0', '702#01aa'])
+    assert 0 == subprocess.call(['cansend', 'vcan0', '703#01aa'])
+    s.close()
+    assert 0 == subprocess.call(['cansend', 'vcan0', '702#01aa'])
+    assert 0 == subprocess.call(['cansend', 'vcan0', '703#01aa'])
+
+for s in result:
+    del s
+
+
+= Test extended ISOTPScan(output_format=None)
+drain_bus(iface0)
+
+def isotpserver(i):
+    with ISOTPSocket(new_can_socket0(), sid=0x700+i, did=0x600+i, extended_addr=0x11, extended_rx_addr=0x22) as s:
+        s.sniff(timeout=100 ,count=1)
+
+def make_noise(pkt):
+    s = new_can_socket0()
+    for _ in range(500):
+        s.send(pkt)
+        time.sleep(0.1)
+
+pkt = CAN(identifier=0x701, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+thread_noise = threading.Thread(target=make_noise, args=pkt)
+thread_noise.start()
+
+thread1 = threading.Thread(target=isotpserver, args=[2])
+thread2 = threading.Thread(target=isotpserver, args=[3])
+thread1.start()
+thread2.start()
+time.sleep(0.1)
+
 result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), extended_addressing=True, can_interface=new_can_socket0())
-assert 0 == subprocess.call(['cansend', 'vcan0', '601#2201aa'])
+
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#2201aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '603#2201aa'])
 thread1.join()
 thread2.join()
-done = True
 thread_noise.join()
 
 assert len(result) == 2
@@ -417,5 +472,15 @@ assert 0x703 == result[1].dst
 assert 0x22 == result[1].exsrc
 assert 0x11 == result[1].exdst
 
-for x in result:
-    del x
+
+for s in result:
+    # This helps to close ISOTPSoftSockets
+    assert 0 == subprocess.call(['cansend', 'vcan0', '702#1101aa'])
+    assert 0 == subprocess.call(['cansend', 'vcan0', '703#1101aa'])
+    s.close()
+    assert 0 == subprocess.call(['cansend', 'vcan0', '702#1101aa'])
+    assert 0 == subprocess.call(['cansend', 'vcan0', '703#1101aa'])
+
+for s in result:
+    del s
+

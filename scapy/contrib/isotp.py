@@ -1851,7 +1851,7 @@ def ISOTPScan(sock, scan_range=range(0x7ff + 1), extended_addressing=False,
     if extended_addressing:
         found_packets = scan_extended(sock, scan_range, noise_ids=noise_ids)
     else:
-        found_packets = scan(sock, scan_range, noise_ids)
+        found_packets = scan(sock, scan_range, noise_ids=noise_ids)
 
     filter_periodic_packets(found_packets)
 

@@ -281,7 +281,7 @@ thread2 = threading.Thread(target=isotpserver, args=[3])
 thread1.start()
 thread2.start()
 time.sleep(0.1)
-result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), output_format="text")
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), output_format="text", noise_listen_time=1)
 assert 0 == subprocess.call(['cansend', 'vcan0', '601#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '603#01aa'])
@@ -322,7 +322,7 @@ thread2 = threading.Thread(target=isotpserver, args=[3])
 thread1.start()
 thread2.start()
 time.sleep(0.1)
-result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), output_format="code")
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), output_format="code", noise_listen_time=1)
 assert 0 == subprocess.call(['cansend', 'vcan0', '601#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '603#01aa'])
@@ -344,7 +344,7 @@ def isotpserver(i):
 
 def make_noise(pkt):
     s = new_can_socket0()
-    for _ in range(40):
+    for _ in range(20):
         s.send(pkt)
         time.sleep(0.1)
 
@@ -358,7 +358,8 @@ thread1.start()
 thread2.start()
 time.sleep(0.1)
 
-result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), can_interface=new_can_socket0())
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), can_interface=new_can_socket0(), noise_listen_time=1)
+result = sorted(result, key=lambda x:x.src)
 
 assert 0 == subprocess.call(['cansend', 'vcan0', '601#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#01aa'])
@@ -393,7 +394,7 @@ def isotpserver(i):
 
 def make_noise(pkt):
     s = new_can_socket0()
-    for _ in range(40):
+    for _ in range(20):
         s.send(pkt)
         time.sleep(0.1)
 
@@ -407,7 +408,8 @@ thread1.start()
 thread2.start()
 time.sleep(0.1)
 
-result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x6A0), can_interface=new_can_socket0())
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x6A0), can_interface=new_can_socket0(), noise_listen_time=1)
+result = sorted(result, key=lambda x:x.src)
 
 assert 0 == subprocess.call(['cansend', 'vcan0', '609#01aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '608#01aa'])
@@ -443,7 +445,7 @@ def isotpserver(i):
 
 def make_noise(pkt):
     s = new_can_socket0()
-    for _ in range(500):
+    for _ in range(20):
         s.send(pkt)
         time.sleep(0.1)
 
@@ -457,7 +459,8 @@ thread1.start()
 thread2.start()
 time.sleep(0.1)
 
-result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), extended_addressing=True, can_interface=new_can_socket0())
+result = ISOTPScan(new_can_socket0(), range(0x5ff, 0x604+1), extended_addressing=True, can_interface=new_can_socket0(), noise_listen_time=1)
+result = sorted(result, key=lambda x:x.src)
 
 assert 0 == subprocess.call(['cansend', 'vcan0', '602#2201aa'])
 assert 0 == subprocess.call(['cansend', 'vcan0', '603#2201aa'])
@@ -491,7 +494,7 @@ drain_bus(iface0)
 
 rnd = RandNum(0x0, 0x100)
 
-ids = [rnd._fix() for _ in range(10)]
+ids = set([rnd._fix() for _ in range(10)])
 
 def isotpserver(i):
     with ISOTPSocket(new_can_socket0(), sid=0x100+i, did=i) as s:
@@ -499,7 +502,7 @@ def isotpserver(i):
 
 def make_noise(pkt):
     s = new_can_socket0()
-    for _ in range(40):
+    for _ in range(20):
         s.send(pkt)
         time.sleep(0.1)
 
@@ -511,7 +514,8 @@ threads = [threading.Thread(target=isotpserver, args=[x]) for x in ids]
 _ = [t.start() for t in threads]
 time.sleep(0.1)
 
-result = ISOTPScan(new_can_socket0(), range(0x000, 0x101), can_interface=new_can_socket0())
+result = ISOTPScan(new_can_socket0(), range(0x000, 0x101), can_interface=new_can_socket0(), noise_listen_time=1)
+result = sorted(result, key=lambda x:x.src)
 
 for i in ids:
     ret = subprocess.call(['cansend', 'vcan0', '%03x#01aa' % i])
@@ -520,7 +524,7 @@ for i in ids:
 _ = [t.join() for t in threads]
 thread_noise.join()
 
-assert len(result) == 10
+assert len(result) == len(ids)
 ids = sorted(ids)
 for i, s in zip(ids, result):
     assert i == s.src

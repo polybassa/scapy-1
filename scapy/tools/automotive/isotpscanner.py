@@ -47,7 +47,7 @@ def main():
                              "Depends on used interpreter and system,\n"
                              "see examples below. Any python-can interface can"
                              "be provided. Please see: "
-                             "https://python-can.readthedocs.io for futher "
+                             "https://python-can.readthedocs.io for further "
                              "interface examples.")
     parser.add_argument("startID", type=lambda x: int(x, 16),
                         help="Start scan at this ID (hex)"),

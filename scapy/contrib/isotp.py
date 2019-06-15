@@ -1934,7 +1934,7 @@ def generate_isotp_list(found_packets, can_interface):
             source_id = int(pack / 256)
             dest_id = found_packets[pack][0].identifier
             source_ext = int(pack - (source_id * 256))
-            dest_ext = found_packets[pack][0].data[0]
+            dest_ext = orb(found_packets[pack][0].data[0])
             pad = True if found_packets[pack][0].length == 8 else False
             socket_list.append(ISOTPSocket(can_interface, sid=source_id,
                                            extended_addr=source_ext,

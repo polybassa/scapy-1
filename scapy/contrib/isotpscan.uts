@@ -102,7 +102,12 @@ if p.wait() == 0:
 + Syntax check
 
 = Import isotp
-conf.contribs['ISOTP'] = {'use-can-isotp-kernel-module': False}
+if not ISOTP_KERNEL_MODULE_AVAILABLE:
+    conf.contribs['ISOTP'] = {'use-can-isotp-kernel-module': False}
+else:
+    conf.contribs['ISOTP'] = {'use-can-isotp-kernel-module': True}
+
+
 load_contrib("isotp")
 
 

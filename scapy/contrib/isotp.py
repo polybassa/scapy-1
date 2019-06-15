@@ -1643,7 +1643,7 @@ def send_multiple(sock, packet, scan_range, number_of_packets):
 
 
 def send_multiple_ext(sock, ext_id, packet, number_of_packets):
-    """ Send multiple packets with extended adresses at once
+    """ Send multiple packets with extended addresses at once
 
     Args:
         sock: socket for can interface

@@ -25,30 +25,30 @@ def main():
     extended = False
     extended_only = False
     piso = False
-    parser = argparse.ArgumentParser(description="Scan for open "
-                                                 "ISOTP-Sockets.",
-                                     formatter_class=RawTextHelpFormatter,
-                                     prog="ISOTP Scanner",
-                                     usage="ISOTPScanner.py interface "
-                                           "startID endID [-flags] ",
-                                     epilog="Example of use:\n\n"
-                                            "Python2 or Windows:\n"
-                                            "python2 -m "
-                                            "scapy.tools.automotive."
-                                            "isotpscanner "
-                                            "\"can.interface."
-                                            "Bus(bustype='pcan', "
-                                            "channel='PCAN_USBBUS1', "
-                                            "bitrate=250000)"
-                                            " 0 1 \"\n\n"
-                                            "Python3 on Linux:\n"
-                                            "python3 -m scapy.tools."
-                                            "automotive.isotpscanner"
-                                            " can0 0 1")
+    parser = argparse.ArgumentParser(
+        description="Scan for open ISOTP-Sockets.",
+        formatter_class=RawTextHelpFormatter,
+        prog="ISOTPScanner",
+        usage="\tISOTPScanner.py interface startID endID [-flags] \n"
+              "\tpython -m scapy.tools.automotive.isotpscanner interface "
+              "startID endID [-flags]",
+        epilog="Example of use:\n\n"
+               "Python2 or Windows:\n"
+               "python2 -m scapy.tools.automotive.isotpscanner "
+               "\"can.interface.Bus(bustype='pcan', channel='PCAN_USBBUS1', "
+               "bitrate=250000)\" 0 100 \n"
+               "python2 -m scapy.tools.automotive.isotpscanner "
+               "\"can.interface.Bus(bustype='socketcan', channel='can0', "
+               "bitrate=250000)\" 0 100 \n\n"
+               "Python3 on Linux:\n"
+               "python3 -m scapy.tools.automotive.isotpscanner can0 0 100")
     parser.add_argument("interface", type=str,
                         help="CAN interface for the scan.\n"
                              "Depends on used interpreter and system,\n"
-                             "see examples below.")
+                             "see examples below. Any python-can interface can"
+                             "be provided. Please see: "
+                             "https://python-can.readthedocs.io for futher "
+                             "interface examples.")
     parser.add_argument("startID", type=lambda x: int(x, 16),
                         help="Start scan at this ID (hex)"),
     parser.add_argument("endID", type=lambda x: int(x, 16),
@@ -64,8 +64,6 @@ def main():
 
     args = parser.parse_args()
 
-    new_can_socket = lambda iface: CANSocket(iface=iface)
-
     scan_interface = args.interface
     if "can.interface.Bus" in scan_interface:
         if PYTHON_CAN:
@@ -79,7 +77,6 @@ def main():
             print("Wrong interface type.")
             exit(-1)
 
-
     if args.extended:
         extended = True
     if args.extended_only:
@@ -88,7 +85,7 @@ def main():
         piso = True
 
     # Interface for communication
-    cansocket_communication = new_can_socket(scan_interface)
+    cansocket_communication = CANSocket(iface=scan_interface)
 
     # scan normal IDs
     if not extended_only:

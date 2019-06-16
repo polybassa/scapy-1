@@ -1872,7 +1872,7 @@ def generate_text_output(found_packets):
             if pack > 0x7FF:
                 send_id = int(pack / 256)
                 send_ext = pack - (send_id * 256)
-                ext_id = hex(found_packets[pack][0].data[0])
+                ext_id = hex(orb(found_packets[pack][0].data[0]))
                 text += "\nSend to ID:             " + hex(send_id) + \
                         "\nSend to extended ID:    " + hex(send_ext) + \
                         "\nReceived ID:            " + \

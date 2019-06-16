@@ -8,7 +8,6 @@
 = Imports
 load_layer("can")
 import threading, time, six, subprocess, sys
-from six.moves.queue import Queue
 from subprocess import call
 
 
@@ -107,6 +106,8 @@ conf.contribs['ISOTP'] = {'use-can-isotp-kernel-module': False}
 load_contrib("isotp")
 
 
++ Usage tests
+
 = Test wrong usage
 print(sys.executable)
 result = subprocess.Popen("%s $PWD/scapy/tools/automotive/isotpscanner.py" % sys.executable, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
@@ -162,6 +163,8 @@ if six.PY3:
         print(expected_output)
         assert expected_output in plain_str(std_out)
 
+
++ Scan tests
 
 = Test standard scan
 drain_bus(iface0)

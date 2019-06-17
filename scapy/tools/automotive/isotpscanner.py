@@ -25,6 +25,7 @@ def main():
     extended = False
     extended_only = False
     piso = False
+    verbose = False
     parser = argparse.ArgumentParser(
         description="Scan for open ISOTP-Sockets.",
         formatter_class=RawTextHelpFormatter,
@@ -48,7 +49,7 @@ def main():
     parser.add_argument("interface", type=str,
                         help="CAN interface for the scan.\n"
                              "Depends on used interpreter and system,\n"
-                             "see examples below. Any python-can interface can"
+                             "see examples below. Any python-can interface can "
                              "be provided. Please see: "
                              "https://python-can.readthedocs.io for further "
                              "interface examples.")
@@ -64,6 +65,8 @@ def main():
                         help="Scan only with extended IDs.")
     parser.add_argument("-p", "--piso", action="store_true",
                         help="Print 'Copy&Paste'-ready ISOTPSockets.")
+    parser.add_argument("-v", "--verbose", action="store_true",
+                        help="Display information during scan.")
 
     args = parser.parse_args()
 
@@ -102,6 +105,8 @@ def main():
         extended_only = True
     if args.piso:
         piso = True
+    if args.verbose:
+        verbose = True
 
     # Interface for communication
     cansocket_communication = CANSocket(iface=scan_interface)
@@ -114,7 +119,8 @@ def main():
                            range(args.startID, args.endID + 1),
                            extended_addressing=False,
                            noise_listen_time=args.noise_listen_time,
-                           output_format="code" if piso else "text")
+                           output_format="code" if piso else "text",
+                           verbose=verbose)
         print("Scan: " + str(result))
 
     # scan extended IDs
@@ -125,7 +131,8 @@ def main():
                                     range(args.startID, args.endID + 1),
                                     extended_addressing=True,
                                     noise_listen_time=args.noise_listen_time,
-                                    output_format="code" if piso else "text")
+                                    output_format="code" if piso else "text",
+                                    verbose=verbose)
         print("Extended scan: " + str(result_extended))
 
 

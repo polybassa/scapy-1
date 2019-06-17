@@ -1843,7 +1843,7 @@ def scan_extended(sock, scan_range=range(0x800), scan_block_size=100,
 
 
 def ISOTPScan(sock, scan_range=range(0x7ff + 1), extended_addressing=False,
-              noise_listen_time=10,
+              noise_listen_time=2,
               output_format=None,
               can_interface="can0",
               verbose=False):
@@ -1884,8 +1884,8 @@ def generate_text_output(found_packets):
         text = "\nFound " + str(len(found_packets)) + \
                " ISOTP-FlowControl Packet(s):"
         for pack in found_packets:
-            # if extended ID
-            if pack > 0x7FF:
+            extended_id = pack > 0x7ff
+            if extended_id:
                 send_id = int(pack / 256)
                 send_ext = pack - (send_id * 256)
                 ext_id = hex(orb(found_packets[pack][0].data[0]))
@@ -1902,8 +1902,8 @@ def generate_text_output(found_packets):
                         hex(found_packets[pack][0].identifier) + \
                         "\nMessage:       " + found_packets[pack][0].__repr__()
 
-            # if padding
-            if found_packets[pack][0].length == 8:
+            padding = found_packets[pack][0].length == 8
+            if padding:
                 text += "\nPadding enabled"
             else:
                 text += "\nNo Padding"
@@ -1921,7 +1921,8 @@ def generate_code_output(found_packets, can_interface):
         return result
 
     for pack in found_packets:
-        if pack > 0x7FF:
+        extended_id = pack > 0x7ff
+        if extended_id:
             send_id = int(pack / 256)
             send_ext = pack - (send_id * 256)
             ext_id = orb(found_packets[pack][0].data[0])
@@ -1945,13 +1946,16 @@ def generate_code_output(found_packets, can_interface):
 def generate_isotp_list(found_packets, can_interface):
     socket_list = []
     for pack in found_packets:
-        # if extended ID
-        if pack > 0x7FF:
-            source_id = int(pack / 256)
-            dest_id = found_packets[pack][0].identifier
+        extended_id = pack > 0x7ff
+        pkt = found_packets[pack][0]
+
+        dest_id = pkt.identifier
+        pad = True if pkt.length == 8 else False
+
+        if extended_id:
+            source_id = pack >> 8
             source_ext = int(pack - (source_id * 256))
-            dest_ext = orb(found_packets[pack][0].data[0])
-            pad = True if found_packets[pack][0].length == 8 else False
+            dest_ext = orb(pkt.data[0])
             socket_list.append(ISOTPSocket(can_interface, sid=source_id,
                                            extended_addr=source_ext,
                                            did=dest_id,
@@ -1960,8 +1964,6 @@ def generate_isotp_list(found_packets, can_interface):
                                            basecls=ISOTP))
         else:
             source_id = pack
-            dest_id = found_packets[pack][0].identifier
-            pad = True if found_packets[pack][0].length == 8 else False
             socket_list.append(ISOTPSocket(can_interface, sid=source_id,
                                            did=dest_id, padding=pad,
                                            basecls=ISOTP))

@@ -483,7 +483,7 @@ threads = [threading.Thread(target=isotpserver, args=[x]) for x in ids]
 _ = [t.start() for t in threads]
 time.sleep(0.1)
 
-result = ISOTPScan(new_can_socket0(), range(0x000, 0x101), can_interface=new_can_socket0(), noise_listen_time=1)
+result = ISOTPScan(new_can_socket0(), range(0x000, 0x101), can_interface=new_can_socket0(), noise_listen_time=1, verbose=True)
 result = sorted(result, key=lambda x:x.src)
 
 for i in ids:

@@ -1683,12 +1683,13 @@ def get_isotp_packet(identifier=0x0, extended=False):
     return pkt
 
 
-def filter_periodic_packets(packet_list):
+def filter_periodic_packets(packet_list, verbose=False):
     """ Filter for periodic packets
 
     Args:
         packet_list: Dictionary with Send-to-ID as key and a tuple
         (received packet, Recv_ID)
+        verbose: Displays further information
 
     ISOTP-Filter for periodic packets (same ID, always same timegap)
     Deletes periodic packets in packet_list
@@ -1712,6 +1713,9 @@ def filter_periodic_packets(packet_list):
 
         tg = [p1.time - p2.time for p1, p2 in zip(pkt_lst[1:], pkt_lst[:-1])]
         if all(abs(t1 - t2) < 0.001 for t1, t2 in zip(tg[1:], tg[:-1])):
+            if verbose:
+                print("[i] Identifier 0x%03x seems to be periodic. "
+                      "Filtered.")
             delete_list.add(idn)
 
     for key in packet_list.copy():
@@ -1719,7 +1723,8 @@ def filter_periodic_packets(packet_list):
             del packet_list[key]
 
 
-def get_isotp_fc(id_value, id_list, noise_ids, extended, packet):
+def get_isotp_fc(id_value, id_list, noise_ids, extended, packet,
+                 verbose=False):
     """Callback for sniff function when packet received
 
     Args:
@@ -1729,6 +1734,7 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet):
                        received during scan
             extended: boolean if extended scan
             packet: received packet
+            verbose: displays information during scan
 
     If received packet is a FlowControl
     and not in noise_ids
@@ -1742,8 +1748,11 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet):
 
     try:
         index = 1 if extended else 0
-        isotp_pci = int(orb(packet.data[index])) >> 4
+        isotp_pci = orb(packet.data[index]) >> 4
         if isotp_pci == 3:
+            if verbose:
+                print("[+] Found flow-control frame from identifier 0x%03x" %
+                      packet.identifier)
             if isinstance(id_list, dict):
                 id_list[id_value] = (packet, packet.identifier)
             if isinstance(id_list, list):
@@ -1753,7 +1762,7 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet):
               packet.__repr__())
 
 
-def scan(sock, scan_range=range(0x7ff + 1), noise_ids=None):
+def scan(sock, scan_range=range(0x800), noise_ids=None, verbose=False):
     """Scan and return dictionary of detections
 
     Args:
@@ -1762,6 +1771,7 @@ def scan(sock, scan_range=range(0x7ff + 1), noise_ids=None):
                         Default is 0x0 - 0x7ff
             noise_ids: list of packet IDs which will not be considered when
                        received during scan
+            verbose: displays information during scan
 
     ISOTP-Scan - NO extended IDs
     found_packets = Dictionary with Send-to-ID as
@@ -1770,15 +1780,16 @@ def scan(sock, scan_range=range(0x7ff + 1), noise_ids=None):
     return_values = dict()
     for value in scan_range:
         sock.sniff(prn=lambda pkt: get_isotp_fc(value, return_values,
-                                                noise_ids, False, pkt),
+                                                noise_ids, False, pkt,
+                                                verbose),
                    timeout=0.1,
                    started_callback=lambda: sock.send(
                        get_isotp_packet(value)))
     return return_values
 
 
-def scan_extended(sock, scan_range=range(0x7ff + 1), scan_block_size=100,
-                  noise_ids=None):
+def scan_extended(sock, scan_range=range(0x800), scan_block_size=100,
+                  noise_ids=None, verbose=False):
     """Scan with extended addresses and return dictionary of detections
 
     Args:
@@ -1788,6 +1799,7 @@ def scan_extended(sock, scan_range=range(0x7ff + 1), scan_block_size=100,
             scan_block_size: count of packets send at once
             noise_ids: list of packet IDs which will not be considered when
                        received during scan
+            verbose: displays information during scan
 
     If an answer-packet found -> slow scan with
     single packages with extended ID 0 - 255
@@ -1805,7 +1817,8 @@ def scan_extended(sock, scan_range=range(0x7ff + 1), scan_block_size=100,
             # the sniff function actually only gets like 3
             # valid answer-packets out of the 100 packets (load)
             sock.sniff(prn=lambda p: get_isotp_fc(extended_id, id_list,
-                                                  noise_ids, True, p),
+                                                  noise_ids, True, p,
+                                                  verbose),
                        timeout=0.3,
                        started_callback=send_multiple_ext(sock, extended_id,
                                                           pkt,
@@ -1823,7 +1836,7 @@ def scan_extended(sock, scan_range=range(0x7ff + 1), scan_block_size=100,
                 sock.sniff(prn=lambda pkt: get_isotp_fc(full_id,
                                                         return_values,
                                                         noise_ids, True,
-                                                        pkt),
+                                                        pkt, verbose),
                            timeout=0.1,
                            started_callback=lambda: sock.send(pkt))
     return return_values
@@ -1834,6 +1847,7 @@ def ISOTPScan(sock, scan_range=range(0x7ff + 1), extended_addressing=False,
               output_format=None,
               can_interface="can0",
               verbose=False):
+    #TODO docstring
 
     if verbose:
         print("Filtering background noise...")
@@ -1849,11 +1863,13 @@ def ISOTPScan(sock, scan_range=range(0x7ff + 1), extended_addressing=False,
     noise_ids = list(set([pkt.identifier for pkt in background_pkts]))
 
     if extended_addressing:
-        found_packets = scan_extended(sock, scan_range, noise_ids=noise_ids)
+        found_packets = scan_extended(sock, scan_range, noise_ids=noise_ids,
+                                      verbose=verbose)
     else:
-        found_packets = scan(sock, scan_range, noise_ids=noise_ids)
+        found_packets = scan(sock, scan_range, noise_ids=noise_ids,
+                             verbose=verbose)
 
-    filter_periodic_packets(found_packets)
+    filter_periodic_packets(found_packets, verbose)
 
     if output_format == "text":
         return generate_text_output(found_packets)

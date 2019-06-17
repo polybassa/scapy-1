@@ -120,6 +120,7 @@ def main():
                            extended_addressing=False,
                            noise_listen_time=args.noise_listen_time,
                            output_format="code" if piso else "text",
+                           can_interface=args.interface,
                            verbose=verbose)
         print("Scan: " + str(result))
 
@@ -132,6 +133,7 @@ def main():
                                     extended_addressing=True,
                                     noise_listen_time=args.noise_listen_time,
                                     output_format="code" if piso else "text",
+                                    can_interface=args.interface,
                                     verbose=verbose)
         print("Extended scan: " + str(result_extended))
 

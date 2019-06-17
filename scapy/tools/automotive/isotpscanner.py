@@ -76,6 +76,7 @@ def main():
             import can  # noqa: 401
             try:
                 scan_interface = eval(scan_interface)
+                interface_string = "CANSocket(" + args.interface + ")"
             except Exception as e:
                 print("Check your interface string.\n"
                       "ISOTPScanner.py -h for usage examples.\n")
@@ -90,6 +91,8 @@ def main():
             print("Wrong interface type.\n"
                   "ISOTPScanner.py -h for usage examples.")
             exit(-1)
+        else:
+            interface_string = "CANSocket(\"" + args.interface + "\")"
 
     if args.endID >= 0x800:
         print("endID must be < 0x800.")
@@ -120,7 +123,7 @@ def main():
                            extended_addressing=False,
                            noise_listen_time=args.noise_listen_time,
                            output_format="code" if piso else "text",
-                           can_interface="\"" + args.interface + "\"",
+                           can_interface=interface_string,
                            verbose=verbose)
         print("Scan: " + str(result))
 
@@ -133,7 +136,7 @@ def main():
                                     extended_addressing=True,
                                     noise_listen_time=args.noise_listen_time,
                                     output_format="code" if piso else "text",
-                                    can_interface="\"" + args.interface + "\"",
+                                    can_interface=interface_string,
                                     verbose=verbose)
         print("Extended scan: " + str(result_extended))
 

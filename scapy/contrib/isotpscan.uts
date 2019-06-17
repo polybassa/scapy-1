@@ -55,6 +55,8 @@ if 0 != call("cansend %s 000#" % iface1, shell=True):
 print("CAN should work now")
 
 
+= Import CANSocket
+
 if six.PY3:
     from scapy.contrib.cansocket_native import *
 else:
@@ -142,77 +144,44 @@ assert len(pkts) == number_of_packets
 
 
 = Test filter_periodic_packets() with periodic packets
-drain_bus(iface0)
-
-def send_periodic(pkt):
-    s = new_can_socket0()
-    for _ in range(10):
-        s.send(pkt)
-        time.sleep(0.1)
-
 pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
-thread = threading.Thread(target=send_periodic, args=(pkt))
-packets = new_can_socket0().sniff(timeout=1, started_callback=thread.start)
-thread.join()
-received_packets = {}
-
-for i in range(0, len(packets)):
-    received_packets[i] = (packets[i], packets[i].identifier)
+received_packets = dict()
+for i in range(40):
+    temp_pkt = pkt.copy()
+    temp_pkt.time = i / 1000
+    received_packets[i] = (temp_pkt, temp_pkt.identifier)
 
 filter_periodic_packets(received_packets)
 assert len(received_packets) == 0
 
 
 = Test filter_periodic_packets() with periodic packets and one outlier
-drain_bus(iface0)
-
-def send_periodic(pkt):
-    s = new_can_socket0()
-    outlier = CAN(identifier=pkt.identifier+1, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
-    s.send(outlier)
-    time.sleep(0.1)
-    for _ in range(10):
-        s.send(pkt)
-        time.sleep(0.1)
+outlier = CAN(identifier=300, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+outlier.time = 50 / 1000
 
 pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
-thread = threading.Thread(target=send_periodic, args=(pkt))
-packets = new_can_socket0().sniff(timeout=1, started_callback=thread.start)
-thread.join()
-received_packets = {}
+received_packets = dict()
+for i in range(40):
+    temp_pkt = pkt.copy()
+    temp_pkt.time = i / 1000
+    received_packets[i] = (temp_pkt, temp_pkt.identifier)
 
-for i in range(len(packets)):
-    received_packets[i] = (packets[i], packets[i].identifier)
+received_packets[40] = (outlier, outlier.identifier)
 
 filter_periodic_packets(received_packets)
 assert len(received_packets) == 1
 
 
 = Test filter_periodic_packets() with nonperiodic packets
-drain_bus(iface0)
 pkt = CAN(identifier=0x200, length=8, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+received_packets = dict()
+for i in range(40):
+    temp_pkt = pkt.copy()
+    temp_pkt.time = (i * i) / 1000
+    received_packets[i] = (temp_pkt, temp_pkt.identifier)
 
-def send_aperiodic(pkt):
-    gaptime = 0.1
-    s = new_can_socket0()
-    for _ in range(10):
-        s.send(pkt)
-        time.sleep(gaptime)
-        gaptime += 0.1
-
-thread = threading.Thread(target=send_aperiodic, args=(pkt))
-packets = new_can_socket0().sniff(timeout=2, started_callback=thread.start)
-thread.join()
-received_packets = {}
-
-for i in range(len(packets)):
-    received_packets[i] = (packets[i], packets[i].identifier)
-
-packets_before = len(received_packets)
 filter_periodic_packets(received_packets)
-packets_after = len(received_packets)
-assert packets_before == packets_after
-
+assert len(received_packets) == 40
 
 = Test scan()
 drain_bus(iface0)

@@ -125,7 +125,12 @@ def main():
                            output_format="code" if piso else "text",
                            can_interface=interface_string,
                            verbose=verbose)
-        print("Scan: " + str(result))
+        if piso:
+            result = "import can\n" \
+                     "conf.contribs['CANSocket'] = {'use-python-can': %s}\n" \
+                     "load_contrib('cansocket')\n" \
+                     "load_contrib('isotp')\n" % PYTHON_CAN + result
+        print("Scan: \n" + str(result))
 
     # scan extended IDs
     if extended or extended_only:
@@ -138,7 +143,12 @@ def main():
                                     output_format="code" if piso else "text",
                                     can_interface=interface_string,
                                     verbose=verbose)
-        print("Extended scan: " + str(result_extended))
+        if piso:
+            result_extended = "import can\n" \
+                     "conf.contribs['CANSocket'] = {'use-python-can': %s}\n" \
+                     "load_contrib('cansocket')\n" \
+                     "load_contrib('isotp')\n" % PYTHON_CAN + result_extended
+        print("Extended scan: \n" + str(result_extended))
 
 
 if __name__ == '__main__':

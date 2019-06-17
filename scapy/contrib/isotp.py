@@ -1749,7 +1749,8 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet,
     try:
         index = 1 if extended else 0
         isotp_pci = orb(packet.data[index]) >> 4
-        if isotp_pci == 3:
+        isotp_fc = orb(packet.data[index]) & 0x0f
+        if isotp_pci == 3 and isotp_fc in [0, 1, 2]:
             if verbose:
                 print("[+] Found flow-control frame from identifier 0x%03x" %
                       packet.identifier)
@@ -1757,6 +1758,8 @@ def get_isotp_fc(id_value, id_list, noise_ids, extended, packet,
                 id_list[id_value] = (packet, packet.identifier)
             if isinstance(id_list, list):
                 id_list.append(id_value)
+        else:
+            noise_ids.append(packet.identifier)
     except Exception as e:
         print("[!] Unknown message Exception: " + str(e) + " on packet:" +
               packet.__repr__())

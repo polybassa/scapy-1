@@ -38,6 +38,9 @@ def main():
                "\"can.interface.Bus(bustype='pcan', channel='PCAN_USBBUS1', "
                "bitrate=250000)\" 0 100 \n"
                "python2 -m scapy.tools.automotive.isotpscanner "
+               "\"can.interface.Bus(bustype='vector', channel=0, "
+               "bitrate=250000)\" 0 100 \n"
+               "python2 -m scapy.tools.automotive.isotpscanner "
                "\"can.interface.Bus(bustype='socketcan', channel='can0', "
                "bitrate=250000)\" 0 100 \n\n"
                "Python3 on Linux:\n"
@@ -68,14 +71,30 @@ def main():
     if "can.interface.Bus" in scan_interface:
         if PYTHON_CAN:
             import can  # noqa: 401
-            scan_interface = eval(scan_interface)
+            try:
+                scan_interface = eval(scan_interface)
+            except Exception as e:
+                print("Check your interface string.\n"
+                      "ISOTPScanner.py -h for usage examples.\n")
+                print(e)
+                exit(-1)
         else:
-            print("Wrong interface type.")
+            print("Wrong interface type.\n"
+                  "ISOTPScanner.py -h for usage examples.")
             exit(-1)
     else:
         if PYTHON_CAN:
-            print("Wrong interface type.")
+            print("Wrong interface type.\n"
+                  "ISOTPScanner.py -h for usage examples.")
             exit(-1)
+
+    if args.endID >= 0x800:
+        print("endID must be < 0x800.")
+        exit(-1)
+
+    if args.endID < args.startID:
+        print("startID must be smaller than endID.")
+        exit(-1)
 
     if args.extended:
         extended = True

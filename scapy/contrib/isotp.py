@@ -1847,7 +1847,28 @@ def ISOTPScan(sock, scan_range=range(0x7ff + 1), extended_addressing=False,
               output_format=None,
               can_interface="can0",
               verbose=False):
-    #TODO docstring
+
+    """Scan for ISO TP ID's and return foundings in needed format
+
+    Args:
+            sock: socket for can interface
+            scan_range: hexadecimal range of IDs to scan.
+                        Default is 0x0 - 0x7ff
+            extended_addressing: scan extended addresses too
+            noise_listen_time: seconds to listen for default
+                               communication on the bus
+            output_format: defines the format of the returned
+                           result (text, code or sockets)
+            can_interface: interface used in returned code/sockets
+            verbose: displays information during scan
+
+    Scan for ISO TP ID's in defined range and return found ID's
+    in defined format. The format can be:
+    text: human readable output
+    code: python code for copy&paste
+    sockets: if output format is 'None', ISOTPSockets will be
+             created and returned in a list
+    """
 
     if verbose:
         print("Filtering background noise...")

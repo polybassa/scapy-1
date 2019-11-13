@@ -1,0 +1,189 @@
+% Regression tests for Simulated ECUs, UDS- and GMLAN Scanners
+
+~ disabled  # These tests take too long for CI
+
++ Configuration
+~ conf
+
+= Imports
+import scapy.modules.six as six
+
+if six.PY3:
+    exec(open("test/contrib/automotive/interface_mockup.py").read())
+else:
+    execfile("test/contrib/automotive/interface_mockup.py")
+
+
+############
+############
++ Load general modules
+
+= Load contribution layer
+
+load_contrib("automotive.uds", globals_dict=globals())
+load_contrib("automotive.gm.gmlan", globals_dict=globals())
+load_contrib("automotive.gm.gmlanscan", globals_dict=globals())
+load_contrib("automotive.uds_scan", globals_dict=globals())
+load_contrib("automotive.ecu", globals_dict=globals())
+
+from scapy.layers.can import *
+from scapy.contrib.automotive.ecu import Ecu
+from scapy.contrib.isotp import ISOTPMessageBuilder
+
+conf.contribs['GMLAN']['GMLAN_ECU_AddressingScheme'] = 4
+
+= Load packets from candump
+
+pkts = rdcandump("test/contrib/automotive/uds_ecu_dump.log.gz")
+assert len(pkts)
+
+= Create UDS messages from packets
+
+builder = ISOTPMessageBuilder(basecls=UDS, use_ext_addr=False, did=[0x651, 0x641])
+msgs = list()
+
+for p in pkts:
+    if p.data == b"ECURESET":
+        msgs.append(p)
+    else:
+        builder.feed(p)
+        if len(builder):
+            msgs.append(builder.pop())
+
+assert len(msgs)
+
+= Create ECU-Clone from packets
+
+mEcu = Ecu(logging=False, verbose=False, store_supported_responses=True)
+
+for p in msgs:
+    if isinstance(p, CAN) and p.data == b"ECURESET":
+        mEcu.reset()
+    else:
+        mEcu.update(p)
+
+assert len(mEcu.supported_responses)
+
+= Simulate ECU and run Scanner
+
+with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, basecls=UDS) as ecu, \
+        new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as tester:
+    answering_machine = EcuAnsweringMachine(supported_responses=mEcu.supported_responses, main_socket=ecu, basecls=UDS, verbose=False)
+    def reset():
+        answering_machine.state.reset()
+        answering_machine.state["session"] = 1
+    sim = threading.Thread(target=answering_machine, kwargs={'timeout': 500, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
+    sim.start()
+    scanner = UDS_Scanner(tester, reset_handler=reset,
+                          test_cases=[UDS_ServiceEnumerator, UDS_DSCEnumerator,
+                                      UDS_SA_XOR_Enumerator, UDS_WDBISelectiveEnumerator, UDS_TPEnumerator],
+                          UDS_DSCEnumerator_kwargs={"timeout": 0.1, "overwrite_timeout": False, "scan_range": range(10)},
+                          UDS_ServiceEnumerator_kwargs={"retry_if_busy_returncode": False},
+                          UDS_RDBIEnumerator_kwargs={"scan_range": range(0xf800, 0x10000)},
+                          UDS_SA_XOR_Enumerator_kwargs={"scan_range": range(10)},
+                          delay_state_change=0, timeout=0.1, verbose=True)
+    scanner.scan()
+    tester.send(b"\xff\xff\xff")
+    sim.join(timeout=2)
+    assert scanner.scan_completed
+
+scanner.show_testcases_status()
+scanner.show_testcases()
+assert len(scanner.state_paths) > 3
+
+= Unpickle scanner
+
+import pickle
+import gzip
+
+with gzip.open("test/contrib/automotive/uds_ecu_scanner.pkl.gz", "rb") as f:
+    backup_scanner = pickle.load(f)  # type: UDS_Scanner
+
+assert len(backup_scanner.configuration.test_cases) == len(scanner.configuration.test_cases)
+# assert len(backup_scanner.state_paths) == len(scanner.state_paths)
+
+= Create clone from Scanner
+
+resps = scanner.supported_responses
+print(resps)
+assert len(resps)
+
+for r in resps:
+    assert r in mEcu.supported_responses
+
+= Pickle scanner
+
+f = io.BytesIO()
+
+pickle.dump(scanner, f)
+# If no exception during dump happen.. we reach this line
+assert True
+
+= Load packets from candump
+pkts = rdcandump("test/contrib/automotive/gmlan_ecu_dump.log.gz")
+assert len(pkts)
+
+= Create GMLAN messages from packets
+builder = ISOTPMessageBuilder(basecls=GMLAN, use_ext_addr=False, did=[0x247, 0x647])
+msgs = list()
+
+for p in pkts:
+    if p.data == b"ECURESET":
+        msgs.append(p)
+    else:
+        builder.feed(p)
+        if len(builder):
+            msgs.append(builder.pop())
+
+assert len(msgs)
+
+= Create ECU-Clone from packets
+
+mEcu = Ecu(logging=False, verbose=False, store_supported_responses=True)
+
+for p in msgs:
+    if isinstance(p, CAN) and p.data == b"ECURESET":
+        mEcu.reset()
+    else:
+        mEcu.update(p)
+
+assert len(mEcu.supported_responses)
+
+
+= Simulate ECU and run Scanner
+
+def securityAccess_Algorithm1(seed):
+    return 0xffff & ~seed
+
+keyfunction = securityAccess_Algorithm1
+
+with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x341, did=0x741, basecls=GMLAN) as ecu, \
+        new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x741, did=0x341, basecls=GMLAN) as tester:
+    answering_machine = EcuAnsweringMachine(supported_responses=mEcu.supported_responses, main_socket=ecu, basecls=GMLAN, verbose=False)
+    def reset():
+        answering_machine.state.reset()
+        answering_machine.state["session"] = 1
+    sim = threading.Thread(target=answering_machine, kwargs={'timeout': 1000, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
+    sim.start()
+    es = [GMLAN_ServiceEnumerator, GMLAN_TPEnumerator, GMLAN_IDOEnumerator,
+          GMLAN_PMEnumerator, GMLAN_RNOEnumerator, GMLAN_DNCEnumerator,
+          GMLAN_RDEnumerator, GMLAN_SA1Enumerator,
+          GMLAN_WDBISelectiveEnumerator]
+    scanner = GMLAN_Scanner(
+        tester, reset_handler=reset, test_cases=es,
+        GMLAN_SA1Enumerator_kwargs={"verbose": False, "keyfunction": keyfunction, "timeout": 12})
+    scanner.scan()
+    tester.send(b"\xff\xff\xff")
+    sim.join(timeout=2)
+
+print(scanner.state_paths)
+scanner.show_testcases_status()
+scanner.show_testcases()
+assert len(scanner.state_paths) > 3
+assert scanner.scan_completed
+
+= Create clone from Scanner
+
+resps = scanner.supported_responses
+print(resps)
+assert len(resps)

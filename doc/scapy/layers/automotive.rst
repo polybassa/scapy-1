@@ -913,47 +913,47 @@ Usage example:
 .. image:: ../graphics/animations/animation-scapy-gmlan.svg
 
 
-ECU Utility examples
+Ecu Utility examples
 ====================
 
-The ECU utility can be used to analyze the internal states of an ECU under investigation.
+The Ecu utility can be used to analyze the internal states of an Ecu under investigation.
 This utility depends heavily on the support of the used protocol. ``UDS`` is supported.
 
-Log all commands applied to an ECU
+Log all commands applied to an Ecu
 ----------------------------------
 
-This example shows the logging mechanism of an ECU object. The log of an ECU is a dictionary of applied UDS commands. The key for this dictionary is the UDS service name. The value consists of a list of tuples, containing a timestamp and a log value
+This example shows the logging mechanism of an Ecu object. The log of an Ecu is a dictionary of applied UDS commands. The key for this dictionary is the UDS service name. The value consists of a list of tuples, containing a timestamp and a log value
 
 Usage example::
 
-    ecu = ECU(verbose=False, store_supported_responses=False)
+    ecu = Ecu(verbose=False, store_supported_responses=False)
     ecu.update(PacketList(msgs))
     print(ecu.log)
     timestamp, value = ecu.log["DiagnosticSessionControl"][0]
 
 
 
-Trace all commands applied to an ECU
+Trace all commands applied to an Ecu
 ------------------------------------
 
-This example shows the trace mechanism of an ECU object. Traces of the current state of the ECU object and the received message are printed on stdout. Some messages, depending on the protocol, will change the internal state of the ECU.
+This example shows the trace mechanism of an Ecu object. Traces of the current state of the Ecu object and the received message are printed on stdout. Some messages, depending on the protocol, will change the internal state of the Ecu.
 
 Usage example::
 
-    ecu = ECU(verbose=True, logging=False, store_supported_responses=False)
+    ecu = Ecu(verbose=True, logging=False, store_supported_responses=False)
     ecu.update(PacketList(msgs))
     print(ecu.current_session)
 
 
 
-Generate supported responses of an ECU
+Generate supported responses of an Ecu
 --------------------------------------
 
-This example shows a mechanism to clone a real world ECU by analyzing a list of Packets.
+This example shows a mechanism to clone a real world Ecu by analyzing a list of Packets.
 
 Usage example::
 
-    ecu = ECU(verbose=False, logging=False, store_supported_responses=True)
+    ecu = Ecu(verbose=False, logging=False, store_supported_responses=True)
     ecu.update(PacketList(msgs))
     supported_responses = ecu.supported_responses
     unanswered_packets = ecu.unanswered_packets
@@ -973,7 +973,7 @@ Usage example::
         udsmsgs = sniff(session=ISOTPSession, session_kwargs={"use_ext_addr":False, "basecls":UDS}, count=50, opened_socket=sock)
 
 
-    ecu = ECU()
+    ecu = Ecu()
     ecu.update(udsmsgs)
     print(ecu.log)
     print(ecu.supported_responses)
@@ -981,14 +981,14 @@ Usage example::
 
 
 
-Analyze on the fly with ECUSession
+Analyze on the fly with EcuSession
 ----------------------------------
 
-This example shows the usage of an ECUSession in sniff. An ISOTPSocket or any socket like object which returns entire messages of the right protocol can be used. An ``ECUSession`` is used as supersession in an ``ISOTPSession``. To obtain the ``ECU`` object from an ``ECUSession``, the ``ECUSession`` has to be created outside of sniff.
+This example shows the usage of an EcuSession in sniff. An ISOTPSocket or any socket like object which returns entire messages of the right protocol can be used. An ``EcuSession`` is used as supersession in an ``ISOTPSession``. To obtain the ``Ecu`` object from an ``EcuSession``, the ``EcuSession`` has to be created outside of sniff.
 
 Usage example::
 
-    session = ECUSession()
+    session = EcuSession()
 
     with PcapReader("test/contrib/automotive/ecu_trace.pcap") as sock:
         udsmsgs = sniff(session=ISOTPSession, session_kwargs={"supersession": session, "use_ext_addr":False, "basecls":UDS}, count=50, opened_socket=sock)

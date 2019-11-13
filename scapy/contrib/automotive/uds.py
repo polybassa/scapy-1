@@ -1347,6 +1347,10 @@ class UDS_TesterPresentSender(PeriodicSenderThread):
         PeriodicSenderThread.__init__(self, sock, pkt, interval)
 
 
+def UDS_Scan(sock, reset_handler):
+    print("hello")
+
+
 def UDS_SessionEnumerator(sock, session_range=range(0x100), reset_wait=1.5):
     """ Enumerates session ID's in given range
         and returns list of UDS()/UDS_DSC() packets

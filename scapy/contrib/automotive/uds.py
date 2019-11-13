@@ -9,7 +9,6 @@
 import struct
 import time
 
-from itertools import product
 from scapy.fields import ByteEnumField, StrField, ConditionalField, \
     BitEnumField, BitField, XByteField, FieldListField, \
     XShortField, X3BytesField, XIntField, ByteField, \
@@ -20,6 +19,7 @@ from scapy.config import conf
 from scapy.error import log_loading
 from scapy.utils import PeriodicSenderThread
 from scapy.contrib.isotp import ISOTP
+from scapy.contrib.automotive.ecu import EcuStateModifier, EcuState
 from scapy.compat import Dict, Union, Tuple, Any
 
 """
@@ -143,7 +143,7 @@ class UDS_DSC(Packet):
 bind_layers(UDS, UDS_DSC, service=0x10)
 
 
-class UDS_DSCPR(Packet):
+class UDS_DSCPR(Packet, EcuStateModifier):
     name = 'DiagnosticSessionControlPositiveResponse'
     fields_desc = [
         ByteEnumField('diagnosticSessionType', 0,
@@ -155,9 +155,9 @@ class UDS_DSCPR(Packet):
         return other.__class__ == UDS_DSC and \
             other.diagnosticSessionType == self.diagnosticSessionType
 
-    @staticmethod
-    def modifies_ecu_state(pkt, ecu):
-        ecu.current_session = pkt.diagnosticSessionType
+    def modify_ecu_state(self, state):
+        # type: (EcuState) -> None
+        state.session = self.diagnosticSessionType
 
     @staticmethod
     def get_log(pkt):
@@ -193,7 +193,7 @@ class UDS_ER(Packet):
 bind_layers(UDS, UDS_ER, service=0x11)
 
 
-class UDS_ERPR(Packet):
+class UDS_ERPR(Packet, EcuStateModifier):
     name = 'ECUResetPositiveResponse'
     fields_desc = [
         ByteEnumField('resetType', 0, UDS_ER.resetTypes),
@@ -204,9 +204,10 @@ class UDS_ERPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_ER
 
-    @staticmethod
-    def modifies_ecu_state(_, ecu):
-        ecu.reset()
+    def modify_ecu_state(self, state):
+        # type: (EcuState) -> None
+        state.reset()
+        state.session = 1
 
     @staticmethod
     def get_log(pkt):
@@ -241,7 +242,7 @@ class UDS_SA(Packet):
 bind_layers(UDS, UDS_SA, service=0x27)
 
 
-class UDS_SAPR(Packet):
+class UDS_SAPR(Packet, EcuStateModifier):
     name = 'SecurityAccessPositiveResponse'
     fields_desc = [
         ByteField('securityAccessType', 0),
@@ -253,10 +254,10 @@ class UDS_SAPR(Packet):
         return other.__class__ == UDS_SA \
             and other.securityAccessType == self.securityAccessType
 
-    @staticmethod
-    def modifies_ecu_state(pkt, ecu):
-        if pkt.securityAccessType % 2 == 0:
-            ecu.current_security_level = pkt.securityAccessType
+    def modify_ecu_state(self, state):
+        # type: (EcuState) -> None
+        if self.securityAccessType % 2 == 0:
+            state.security_level = self.securityAccessType
 
     @staticmethod
     def get_log(pkt):
@@ -317,7 +318,7 @@ class UDS_CC(Packet):
 bind_layers(UDS, UDS_CC, service=0x28)
 
 
-class UDS_CCPR(Packet):
+class UDS_CCPR(Packet, EcuStateModifier):
     name = 'CommunicationControlPositiveResponse'
     fields_desc = [
         ByteEnumField('controlType', 0, UDS_CC.controlTypes)
@@ -327,9 +328,9 @@ class UDS_CCPR(Packet):
         return other.__class__ == UDS_CC \
             and other.controlType == self.controlType
 
-    @staticmethod
-    def modifies_ecu_state(pkt, ecu):
-        ecu.communication_control = pkt.controlType
+    def modify_ecu_state(self, state):
+        # type: (EcuState) -> None
+        state.communication_control = self.controlType
 
     @staticmethod
     def get_log(pkt):
@@ -355,7 +356,7 @@ class UDS_TP(Packet):
 bind_layers(UDS, UDS_TP, service=0x3E)
 
 
-class UDS_TPPR(Packet):
+class UDS_TPPR(Packet, EcuStateModifier):
     name = 'TesterPresentPositiveResponse'
     fields_desc = [
         ByteField('zeroSubFunction', 0)
@@ -363,6 +364,10 @@ class UDS_TPPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_TP
+
+    def modify_ecu_state(self, state):
+        # type: (EcuState) -> None
+        state.tp = 1
 
     @staticmethod
     def get_log(pkt):
@@ -707,7 +712,7 @@ bind_layers(UDS, UDS_RDBPI, service=0x2A)
 
 
 # TODO: Implement correct scaling here, instead of using just the dataRecord
-class UDS_RDBPIPR(Packet):
+class UDS_RDBPIPR(Packet, EcuStateModifier):
     name = 'ReadDataByPeriodicIdentifierPositiveResponse'
     fields_desc = [
         ByteField('periodicDataIdentifier', 0),
@@ -717,6 +722,10 @@ class UDS_RDBPIPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_RDBPI \
             and other.periodicDataIdentifier == self.periodicDataIdentifier
+
+    def modify_ecu_state(self, state):
+        # type: (EcuState) -> None
+        state.pdid = self.periodicDataIdentifier
 
 
 bind_layers(UDS, UDS_RDBPIPR, service=0x6A)
@@ -1455,68 +1464,3 @@ class UDS_TesterPresentSender(PeriodicSenderThread):
             for p in self._pkts:
                 self._socket.sr1(p, timeout=0.3, verbose=False)
                 time.sleep(self._interval)
-
-
-def UDS_SessionEnumerator(sock, session_range=range(0x100), reset_wait=1.5):
-    """ Enumerates session ID's in given range
-        and returns list of UDS()/UDS_DSC() packets
-        with valid session types
-
-    Args:
-        sock: socket where packets are sent
-        session_range: range for session ID's
-        reset_wait: wait time in sec after every packet
-    """
-    pkts = (req for tup in
-            product(UDS() / UDS_DSC(diagnosticSessionType=session_range),
-                    UDS() / UDS_ER(resetType='hardReset')) for req in tup)
-    results, _ = sock.sr(pkts, timeout=len(session_range) * reset_wait * 2 + 1,
-                         verbose=False, inter=reset_wait)
-    return [req for req, res in results if req is not None and
-            req.service != 0x11 and
-            (res.service == 0x50 or
-             res.negativeResponseCode not in [0x10, 0x11, 0x12])]
-
-
-def UDS_ServiceEnumerator(sock, session="DefaultSession",
-                          filter_responses=True):
-    """ Enumerates every service ID
-        and returns list of tuples. Each tuple contains
-        the session and the respective positive response
-
-    Args:
-        sock: socket where packet is sent periodically
-        session: session in which the services are enumerated
-    """
-    pkts = (UDS(service=x) for x in set(x & ~0x40 for x in range(0x100)))
-    found_services = sock.sr(pkts, timeout=5, verbose=False)
-    return [(session, p) for _, p in found_services[0] if
-            p.service != 0x7f or
-            (p.negativeResponseCode not in [0x10, 0x11] or not
-            filter_responses)]
-
-
-def getTableEntry(tup):
-    """ Helping function for make_lined_table.
-        Returns the session and response code of tup.
-
-    Args:
-        tup: tuple with session and UDS response package
-
-    Example:
-        make_lined_table([('DefaultSession', UDS()/UDS_SAPR(),
-                           'ExtendedDiagnosticSession', UDS()/UDS_IOCBI())],
-                           getTableEntry)
-    """
-    session, pkt = tup
-    if pkt.service == 0x7f:
-        return (session,
-                "0x%02x: %s" % (pkt.requestServiceId,
-                                pkt.sprintf("%UDS_NR.requestServiceId%")),
-                pkt.sprintf("%UDS_NR.negativeResponseCode%"))
-    else:
-        return (session,
-                "0x%02x: %s" % (pkt.service & ~0x40,
-                                pkt.get_field('service').
-                                i2s[pkt.service & ~0x40]),
-                "PositiveResponse")

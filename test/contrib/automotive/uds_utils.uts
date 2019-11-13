@@ -19,77 +19,491 @@ else:
 
 = Load contribution layer
 load_contrib("automotive.uds", globals_dict=globals())
+load_contrib("automotive.uds_scan", globals_dict=globals())
+load_contrib("automotive.enumerator", globals_dict=globals())
+load_contrib("automotive.ecu", globals_dict=globals())
+
+from scapy.contrib.automotive.enumerator import _AutomotiveTestCaseFilteredScanResult, _AutomotiveTestCaseScanResult
+
+import logging
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setLevel(logging.DEBUG)
+log_interactive.addHandler(handler)
+log_interactive.setLevel(logging.DEBUG)
+
+
+= Define answers method
+
+def defaultNegativeResponse(resp, req):
+    resp.requestServiceId = req.service
+    return True
+
++ Basic Tests
+
+= Test UDS Enumerator
+
+pkts = [
+    _AutomotiveTestCaseScanResult("s1", UDS(b"\x20abcd"), UDS(b"\x60abcd"), 1.0, 1.9),
+    _AutomotiveTestCaseScanResult("s2", UDS(b"\x20abcd"), None, 2.0, None),
+    _AutomotiveTestCaseScanResult("s1", UDS(b"\x21abcd"), UDS(b"\x7fabcd"), 3.0, 3.1),
+    _AutomotiveTestCaseScanResult("s2", UDS(b"\x21abcd"), UDS(b"\x61abcd"), 4.0, 4.5),
+]
+
+e = UDS_ServiceEnumerator()
+for p in pkts:
+    p.req.time = p.req_ts
+    p.req.sent_time = p.req_ts
+    if p.resp is not None:
+        p.resp.time = p.resp_ts
+    e._store_result(p.state, p.req, p.resp)
+
+= AutomotiveTestCase not completed check
+
+assert e.completed == False
+
+= AutomotiveTestCase stats check
+
+stat_list = e._compute_statistics()
+
+stats = {label: value for state, label, value in stat_list if state == "all"}
+print(stats)
+
+assert stats["num_answered"] == '3'
+assert stats["num_unanswered"] == '1'
+assert stats["answertime_max"] == '0.9'
+assert stats["answertime_min"] == '0.1'
+assert stats["answertime_avg"] == '0.5'
+assert stats["num_negative_resps"] == '1'
+
+= Enumerator pickle
+
+f = io.BytesIO()
+
+pickle.dump(e, f)
+
+unp = pickle.loads(f.getvalue())
+
+assert unp.completed == False
+assert unp.results == e.results
 
 = Test Session Enumerator
 drain_bus(iface0)
 drain_bus(iface1)
 
-packet = ISOTP('Request')
-succ = False
+started = threading.Event()
+g = Graph()
+g.add_edge(EcuState(session=1), EcuState(session=1))
 
-with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, basecls=UDS) as sendSock, \
-     new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as recvSock:
-    def answer(pkt):
+def answer(pkt):
+    if pkt.service < 0xff:
         pkt.service = pkt.service + 0x40
         recvSock.send(pkt)
+
+with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, basecls=UDS) as sendSock, \
+        new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as recvSock:
     def sniffer():
-        global sniffed, succ
-        sniffed = 0
-        pkts = recvSock.sniff(timeout=10, prn=answer)
-        sniffed = len(pkts)
-        succ = True
+        recvSock.sniff(timeout=5, prn=answer, started_callback=started.set, stop_filter=lambda p: bytes(p)[0] == 0xff)
     threadSniffer = threading.Thread(target=sniffer)
     threadSniffer.start()
-    sessions = UDS_SessionEnumerator(sendSock, session_range=range(3))
-    threadSniffer.join(timeout=30)
+    started.wait(timeout=5)
+    session_scanner = UDS_DSCEnumerator()
+    for _ in range(5):
+        session_scanner.execute(sendSock, EcuState(session=1), session_range=range(1,4), timeout=0.1, overwrite_timeout=False)
+        edge = session_scanner.get_new_edge(None, None)
+        if edge:
+            g.add_edge(*edge)
+    sendSock.send(b"\xff")
+    threadSniffer.join(timeout=5)
 
-assert sniffed == 3*2
-assert succ
+session_scanner.show()
+
+assert len(session_scanner._results) == 3
+assert session_scanner.has_completed(EcuState(session=1)) == True
+assert EcuState(session=1) in g.nodes
+assert EcuState(session=2, tp=1) in g.nodes
+assert EcuState(session=3, tp=1) in g.nodes
+
+= UDS_DSCEnumerator pickle
+
+f = io.BytesIO()
+
+pickle.dump(session_scanner, f)
+del session_scanner
+unp = pickle.loads(f.getvalue())
+
+assert len(unp._results) == 3
+assert unp.has_completed(EcuState(session=1)) == True
 
 
-= Test Service Enumerator
+= Test Staged Session Enumerator
+
 drain_bus(iface0)
 drain_bus(iface1)
 
-packet = ISOTP('Request')
-succ = False
+started = threading.Event()
+g = Graph()
+g.add_edge(EcuState(session=1), EcuState(session=1))
+config = {"state_graph": g, "UDS_DSCEnumerator":
+    {"session_range": range(1,4), "timeout": 0.1, "overwrite_timeout": False}}
+
+def answer(pkt):
+    if pkt.service < 0xff:
+        pkt.service = pkt.service + 0x40
+        recvSock.send(pkt)
+
+def connector(src, dst):
+    pkts = [s.req for s in src.results_with_positive_response]
+    max_session = max([p.diagnosticSessionType for p in pkts])
+    return {"session_range": range(1, max_session)}
 
 with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, basecls=UDS) as sendSock, \
-     new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as recvSock:
-    def answer(pkt):
-        pkt.service = pkt.service + 0x40
-        if pkt.service == 0x7f:
-            pkt = UDS()/UDS_NR(requestServiceId=0x3f)
-        recvSock.send(pkt)
+        new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as recvSock:
     def sniffer():
-        global sniffed, succ
-        sniffed = 0
-        pkts = recvSock.sniff(timeout=10, prn=answer)
-        sniffed = len(pkts)
-        succ = True
+        recvSock.sniff(timeout=5, prn=answer, started_callback=started.set, stop_filter=lambda p: bytes(p)[0] == 0xff)
     threadSniffer = threading.Thread(target=sniffer)
     threadSniffer.start()
-    services = UDS_ServiceEnumerator(sendSock)
-    threadSniffer.join(timeout=30)
+    started.wait(timeout=10)
+    staged_enumerators =  StagedAutomotiveTestCase([UDS_DSCEnumerator(), UDS_DSCEnumerator()], [None, connector])
+    for _ in range(15):
+        if staged_enumerators.has_completed(EcuState(session=1)):
+            continue
+        staged_enumerators.pre_execute(sendSock, config)
+        staged_enumerators.execute(sendSock, EcuState(session=1))
+        staged_enumerators.post_execute(sendSock, config)
+        edge = staged_enumerators.get_new_edge(None, None)
+        if edge:
+            g.add_edge(*edge)
+    sendSock.send(b"\xff")
+    threadSniffer.join(timeout=10)
 
-assert sniffed == 128
-assert succ
+staged_enumerators.show()
+
+print(g.nodes)
+
+assert len(staged_enumerators[0].results) == 3
+assert len(staged_enumerators[1].results) == 2
+assert staged_enumerators[0].has_completed(EcuState(session=1))
+assert staged_enumerators[1].has_completed(EcuState(session=1))
+assert staged_enumerators.completed
+assert EcuState(session=1) in g.nodes
+assert EcuState(session=2, tp=1) in g.nodes
+assert EcuState(session=3, tp=1) in g.nodes
+
+= Staged Session Enumerator pickle
+
+f = io.BytesIO()
+
+pickle.dump(staged_enumerators, f)
+del staged_enumerators
+unp = pickle.loads(f.getvalue())
+
+assert len(unp[0].results) == 3
+assert len(unp[1].results) == 2
+assert unp[0].has_completed(EcuState(session=1))
+assert unp[1].has_completed(EcuState(session=1))
+assert unp.completed
 
 
-= Test getTableEntry
-a = ('DefaultSession', UDS()/UDS_SAPR())
-b = ('ProgrammingSession', UDS()/UDS_NR(requestServiceId=0x10, negativeResponseCode=0x13))
-c = ('ExtendedDiagnosticSession', UDS()/UDS_IOCBI())
++ Tests with EcuAnsweringMachine of UDS_DSCEnumerator
 
-res_a = getTableEntry(a)
-res_b = getTableEntry(b)
-res_c = getTableEntry(c)
+= Simple check with different Sessions and diagnosticSessionControl
+drain_bus(iface0)
 
-#make_lined_table([a, b, c], getTableEntry)
+conf.verb = -1
 
-assert res_a == ('DefaultSession', '0x27: SecurityAccess', 'PositiveResponse')
-assert res_b == ('ProgrammingSession', '0x10: DiagnosticSessionControl', 'incorrectMessageLengthOrInvalidFormat')
-assert res_c == ('ExtendedDiagnosticSession', '0x2f: InputOutputControlByIdentifier', 'PositiveResponse')
+example_responses = [ \
+     EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=1, sessionParameterRecord=b"dead")),
+     EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=2, sessionParameterRecord=b"dead")),
+     EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=3, sessionParameterRecord=b"dead")),
+     EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=4, sessionParameterRecord=b"dead")),
+     EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=5, sessionParameterRecord=b"dead")),
+     EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=6, sessionParameterRecord=b"dead")),
+     EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=7, sessionParameterRecord=b"dead")),
+     EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=8, sessionParameterRecord=b"dead")),
+     EcuResponse(responses=UDS() / UDS_ERPR(resetType="hardReset")),
+     EcuResponse(responses=UDS() / UDS_TPPR()),
+     EcuResponse(responses=UDS() / UDS_NR(negativeResponseCode=0x11, requestServiceId=0x10)),
+     EcuResponse(responses=UDS() / UDS_NR(negativeResponseCode=0x11, requestServiceId=0x10), answers=defaultNegativeResponse)
+     ]
+
+with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, basecls=UDS) as ecu, \
+        new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as tester:
+    answering_machine = EcuAnsweringMachine(supported_responses=example_responses, main_socket=ecu, basecls=UDS, verbose=False)
+    def reset():
+        answering_machine.state.reset()
+        answering_machine.state["session"] = 1
+    sim = threading.Thread(target=answering_machine, kwargs={'timeout': 200, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
+    sim.start()
+    reset()
+    scanner = UDS_Scanner(tester, reset_handler=reset, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.2, "overwrite_timeout": False}, delay_state_change=0)
+    scanner.scan()
+    scanner.scan()
+    tester.send(b"\xff\xff\xff")
+    sim.join(timeout=2)
+
+assert scanner.configuration.test_cases[0].completed
+print(scanner.state_paths)
+print(len(scanner.configuration.test_cases[0].filtered_results))
+assert len(scanner.configuration.test_cases[0].filtered_results) == 7*8
+assert EcuState(session=1) in scanner.state_graph.nodes
+assert EcuState(session=2, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=3, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=4, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=5, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=6, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=7, tp=1) in scanner.state_graph.nodes
+assert 2 == max([len(p) for p in scanner.state_paths])
+
+
+= Simple check with different Sessions and diagnosticSessionControl
+drain_bus(iface0)
+
+
+example_responses = [ \
+     EcuResponse([EcuState(session=1), EcuState(tp=[0,1], session=[1])],        responses=UDS() / UDS_DSCPR(diagnosticSessionType=1, sessionParameterRecord=b"dead")),
+     EcuResponse([EcuState(session=1), EcuState(tp=[0,1], session=[1])],        responses=UDS() / UDS_DSCPR(diagnosticSessionType=2, sessionParameterRecord=b"dead")),
+     EcuResponse([EcuState(session=1), EcuState(tp=[0,1], session=[1])],        responses=UDS() / UDS_DSCPR(diagnosticSessionType=3, sessionParameterRecord=b"dead")),
+     EcuResponse([EcuState(session=2, tp=1), EcuState(tp=1, session=4)],     responses=UDS() / UDS_DSCPR(diagnosticSessionType=4, sessionParameterRecord=b"dead")),
+     EcuResponse([EcuState(session=4, tp=1), EcuState(tp=1, session=5)],     responses=UDS() / UDS_DSCPR(diagnosticSessionType=5, sessionParameterRecord=b"dead")),
+     EcuResponse([EcuState(session=3, tp=1), EcuState(tp=1, session=4)],     responses=UDS() / UDS_DSCPR(diagnosticSessionType=6, sessionParameterRecord=b"dead")),
+     EcuResponse(EcuState(tp=1, session=3),        responses=UDS() / UDS_DSCPR(diagnosticSessionType=7, sessionParameterRecord=b"dead")),
+     EcuResponse(EcuState(tp=1, session=3),        responses=UDS() / UDS_DSCPR(diagnosticSessionType=8, sessionParameterRecord=b"dead")),
+     EcuResponse(responses=UDS() / UDS_ERPR(resetType="hardReset")),
+     EcuResponse(responses=UDS() / UDS_TPPR()),
+     EcuResponse(responses=UDS() / UDS_NR(negativeResponseCode=0x11, requestServiceId=0x10)),
+     EcuResponse(responses=UDS() / UDS_NR(negativeResponseCode=0x11, requestServiceId=0x10), answers=defaultNegativeResponse)
+     ]
+
+conf.verb = -1
+
+with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, basecls=UDS) as ecu, \
+        new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as tester:
+    answering_machine = EcuAnsweringMachine(supported_responses=example_responses, main_socket=ecu, basecls=UDS, verbose=True)
+    def reset():
+        answering_machine.state.reset()
+        answering_machine.state["session"] = 1
+    sim = threading.Thread(target=answering_machine, kwargs={'timeout': 200, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
+    sim.start()
+    scanner = UDS_Scanner(tester, reset_handler=reset, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.2, "overwrite_timeout": False}, delay_state_change=0)
+    scanner.scan()
+    scanner.scan()
+    tester.send(b"\xff\xff\xff")
+    sim.join(timeout=2)
+
+print(scanner.state_paths)
+print(scanner.configuration.test_cases[0].completed)
+assert scanner.configuration.test_cases[0].completed
+print(len(scanner.configuration.test_cases[0].filtered_results))
+assert len(scanner.configuration.test_cases[0].filtered_results) == 10
+assert EcuState(session=1) in scanner.state_graph.nodes
+assert EcuState(session=2, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=3, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=4, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=5, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=6, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=7, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=8, tp=1) in scanner.state_graph.nodes
+assert 4 == max([len(p) for p in scanner.state_paths])
+
+
+
++ Tests with EcuAnsweringMachine of UDS_ServiceEnumerator
+
+= Simple check
+drain_bus(iface0)
+
+conf.verb = -1
+
+example_responses = [ \
+    EcuResponse(EcuState(session=range(1,8), tp=[0,1]), responses=UDS(service=0x51)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x13, requestServiceId=0x10)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x22)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x23)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x27)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x31)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x34)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x3e)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x2e)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_ERPR(resetType="hardReset")),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_TPPR()),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x11, requestServiceId=0x10), answers=defaultNegativeResponse)
+     ]
+
+with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, basecls=UDS) as ecu, \
+        new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as tester:
+    answering_machine = EcuAnsweringMachine(supported_responses=example_responses, main_socket=ecu, basecls=UDS, verbose=False)
+    def reset():
+        answering_machine.state.reset()
+        answering_machine.state["session"] = 1
+        answering_machine.state["tp"] = 0
+    sim = threading.Thread(target=answering_machine, kwargs={'timeout': 100, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
+    sim.start()
+    scanner = UDS_Scanner(tester, reset_handler=reset, test_cases=[UDS_ServiceEnumerator], delay_state_change=0, timeout=0.1, retry_if_busy_returncode=False, verbose=True)
+    scanner.scan()
+    tester.send(b"\xff\xff\xff")
+    sim.join(timeout=2)
+
+scanner.configuration.test_cases[0].show()
+assert scanner.configuration.test_cases[0].completed
+assert len(scanner.configuration.test_cases[0].filtered_results) == 9
+assert scanner.configuration.test_cases[0].filtered_results[1].resp.service == 0x51
+
+= Simple check of UDS_ServiceEnumerator with different sessions
+drain_bus(iface0)
+
+conf.verb = -1
+
+example_responses = [ \
+    EcuResponse(EcuState(session=range(1,8), tp=[0,1]), responses=UDS() / UDS_DSCPR(diagnosticSessionType=2, sessionParameterRecord=b"dead")),
+    EcuResponse(EcuState(session=range(1,8), tp=[0,1]), responses=UDS() / UDS_DSCPR(diagnosticSessionType=3, sessionParameterRecord=b"dead")),
+    EcuResponse(EcuState(session=[1], tp=[0,1]),        responses=UDS() / UDS_NR(negativeResponseCode=0x13, requestServiceId=0x28)),
+    EcuResponse(EcuState(session=[1], tp=[0,1]),        responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x22)),
+    EcuResponse(EcuState(session=[1], tp=[0,1]),        responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x23)),
+    EcuResponse(EcuState(session=[2], tp=[0,1]),        responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x27)),
+    EcuResponse(EcuState(session=[2], tp=[0,1]),        responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x31)),
+    EcuResponse(EcuState(session=[2], tp=[0,1]),        responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x34)),
+    EcuResponse(EcuState(session=[3], tp=[0,1]),        responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x3e)),
+    EcuResponse(EcuState(session=[3], tp=[0,1]),        responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x2e)),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_ERPR(resetType="hardReset")),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_TPPR()),
+    EcuResponse(EcuState(session=range(255), tp=[0,1]), responses=UDS() / UDS_NR(negativeResponseCode=0x11, requestServiceId=0x0), answers=defaultNegativeResponse)
+     ]
+
+with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, basecls=UDS) as ecu, \
+        new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as tester:
+    answering_machine = EcuAnsweringMachine(supported_responses=example_responses, main_socket=ecu, basecls=UDS, verbose=False)
+    def reset():
+        answering_machine.state.reset()
+        answering_machine.state["session"] = 1
+        answering_machine.state["tp"] = 0
+    sim = threading.Thread(target=answering_machine, kwargs={'timeout': 100, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
+    sim.start()
+    scanner = UDS_Scanner(tester, reset_handler=reset, test_cases=[UDS_ServiceEnumerator, UDS_DSCEnumerator],
+                          UDS_DSCEnumerator_kwargs={"timeout": 0.1, "overwrite_timeout": False},
+                          UDS_ServiceEnumerator_kwargs={"retry_if_busy_returncode": False}, delay_state_change=0, timeout=0.1, verbose=True)
+    scanner.scan()
+    tester.send(b"\xff\xff\xff")
+    sim.join(timeout=2)
+
+scanner.configuration.test_cases[0].show()
+assert scanner.configuration.test_cases[0].completed
+assert scanner.configuration.test_cases[1].completed
+assert EcuState(session=1) in scanner.state_graph.nodes
+assert EcuState(session=2, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=3, tp=1) in scanner.state_graph.nodes
+print(len(scanner.configuration.test_cases[0].filtered_results))
+assert len(scanner.configuration.test_cases[0].filtered_results) == 8
+
+
+= UDS_Scanner session and security level check
+
+security_seed = b"abcd"
+
+def custom_answers(resp, req):
+    global security_seed
+    if req.service != 0x27 or len(req) < 2:
+        return False
+    if req.securityAccessType == 1:
+        security_seed = bytes(RandBin(4))
+        resp.securitySeed = security_seed
+        resp.securityAccessType = 1
+        return resp.answers(req)
+    elif req.securityAccessType == 2:
+        keyfunction_I = lambda s: 0xffffffff & ~s
+        key = struct.unpack("I", req.securityKey)[0]
+        resp.securityAccessType = 2
+        return resp.answers(req) and key == keyfunction_I(struct.unpack("I", security_seed)[0])
+    elif req.securityAccessType == 7:
+        security_seed = bytes(RandBin(2))
+        resp.securitySeed = security_seed
+        resp.securityAccessType = 7
+        return resp.answers(req)
+    elif req.securityAccessType == 8:
+        keyfunction_H = lambda s: 0xffff & ~s
+        key = struct.unpack("H", req.securityKey)[0]
+        resp.securityAccessType = 8
+        return resp.answers(req) and key == keyfunction_H(struct.unpack("H", security_seed)[0])
+    return False
+
+drain_bus(iface0)
+
+conf.verb = -1
+
+example_responses = [ \
+    EcuResponse(EcuState(session=2, tp=1),          responses=UDS() / UDS_SAPR(securityAccessType=1, securitySeed=b"1234"), answers=custom_answers),
+    EcuResponse(EcuState(session=2, tp=1),          responses=UDS() / UDS_SAPR(securityAccessType=2), answers=custom_answers),
+    EcuResponse(EcuState(session=2, tp=1),          responses=UDS() / UDS_NR(negativeResponseCode=0x35, requestServiceId=0x27)),
+    EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=2, sessionParameterRecord=b"dead")),
+    EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=3, sessionParameterRecord=b"dead")),
+    EcuResponse(EcuState(session=2, tp=1, security_level=8), responses=UDS() / UDS_DSCPR(diagnosticSessionType=4, sessionParameterRecord=b"dead")),
+    EcuResponse(EcuState(session=1),        responses=UDS() / UDS_NR(negativeResponseCode=0x13, requestServiceId=0x28)),
+    EcuResponse(EcuState(session=2, tp=1, security_level=2),        responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x36)),
+    EcuResponse(EcuState(session=2, tp=1, security_level=8),        responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x36)),
+    EcuResponse(EcuState(session=4, tp=1, security_level=8),        responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x34)),
+    EcuResponse(EcuState(session=1),        responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x22)),
+    EcuResponse(EcuState(session=1),        responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x23)),
+    EcuResponse(EcuState(session=2, tp=1),        responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x27)),
+    EcuResponse(EcuState(session=2, tp=1),        responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x31)),
+    EcuResponse(EcuState(session=2, tp=1),        responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x34)),
+    EcuResponse(EcuState(session=3, tp=1),        responses=UDS() / UDS_NR(negativeResponseCode=0x22, requestServiceId=0x3e)),
+    EcuResponse(EcuState(session=3, tp=1),        responses=UDS() / UDS_NR(negativeResponseCode=0x21, requestServiceId=0x2e)),
+    EcuResponse(responses=UDS() / UDS_ERPR(resetType="hardReset")),
+    EcuResponse(responses=UDS() / UDS_TPPR()),
+    EcuResponse(responses=UDS() / UDS_NR(negativeResponseCode=0x11, requestServiceId=0x0), answers=defaultNegativeResponse)
+     ]
+
+with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, basecls=UDS) as ecu, \
+        new_can_socket0() as isocan2, ISOTPSocket(isocan2, sid=0x641, did=0x241, basecls=UDS) as tester:
+    answering_machine = EcuAnsweringMachine(supported_responses=example_responses, main_socket=ecu, basecls=UDS, verbose=False)
+    def reset():
+        answering_machine.state.reset()
+        answering_machine.state["session"] = 1
+    sim = threading.Thread(target=answering_machine, kwargs={'timeout': 100, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
+    sim.start()
+    scanner = UDS_Scanner(tester, reset_handler=reset, test_cases=[UDS_ServiceEnumerator, UDS_DSCEnumerator, UDS_SA_XOR_Enumerator],
+                          UDS_DSCEnumerator_kwargs={"timeout": 0.1, "overwrite_timeout": False},
+                          UDS_ServiceEnumerator_kwargs={"retry_if_busy_returncode": False}, delay_state_change=0, timeout=0.1, verbose=True)
+    scanner.scan()
+    tester.send(b"\xff\xff\xff")
+    sim.join(timeout=2)
+
+
+print(scanner.state_paths)
+scanner.configuration.test_cases[0].show()
+scanner.configuration.test_cases[1].show()
+scanner.configuration.test_cases[2].show()
+
+assert scanner.configuration.test_cases[0].completed
+assert scanner.configuration.test_cases[1].completed
+assert EcuState(session=1) in scanner.state_graph.nodes
+assert EcuState(session=2, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=3, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=4, tp=1, security_level=8) in scanner.state_graph.nodes
+assert EcuState(session=2, tp=1, security_level=2) in scanner.state_graph.nodes
+assert EcuState(session=2, tp=1, security_level=8) in scanner.state_graph.nodes
+print(len(scanner.configuration.test_cases[0].filtered_results))
+assert len(scanner.configuration.test_cases[0].filtered_results) == 11
+
+
+= UDS Scanner pickle
+
+f = io.BytesIO()
+
+pickle.dump(scanner, f)
+del scanner
+unp = pickle.loads(f.getvalue())
+
+assert unp.configuration.test_cases[0].completed
+assert unp.configuration.test_cases[1].completed
+assert EcuState(session=1) in unp.state_graph.nodes
+assert EcuState(session=2, tp=1) in unp.state_graph.nodes
+assert EcuState(session=3, tp=1) in unp.state_graph.nodes
+assert EcuState(session=4, tp=1, security_level=8) in unp.state_graph.nodes
+assert EcuState(session=2, tp=1, security_level=2) in unp.state_graph.nodes
+assert EcuState(session=2, tp=1, security_level=8) in unp.state_graph.nodes
+print(len(unp.configuration.test_cases[0].filtered_results))
+assert len(unp.configuration.test_cases[0].filtered_results) == 11
 
 + Cleanup
 

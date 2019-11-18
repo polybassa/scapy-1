@@ -15,7 +15,7 @@ from scapy.fields import ByteEnumField, StrField, ConditionalField, \
 from scapy.packet import Packet, bind_layers, NoPayload
 from scapy.config import conf
 from scapy.error import log_loading
-from scapy.utils import PeriodicSenderThread
+from scapy.utils import PeriodicSenderThread, make_lined_table
 from scapy.contrib.isotp import ISOTP
 
 """
@@ -1347,10 +1347,6 @@ class UDS_TesterPresentSender(PeriodicSenderThread):
         PeriodicSenderThread.__init__(self, sock, pkt, interval)
 
 
-def UDS_Scan(sock, reset_handler):
-    print("hello")
-
-
 def UDS_SessionEnumerator(sock, session_range=range(0x100), reset_wait=1.5):
     """ Enumerates session ID's in given range
         and returns list of UDS()/UDS_DSC() packets
@@ -1372,8 +1368,7 @@ def UDS_SessionEnumerator(sock, session_range=range(0x100), reset_wait=1.5):
              res.negativeResponseCode not in [0x10, 0x11, 0x12])]
 
 
-def UDS_ServiceEnumerator(sock, session="DefaultSession",
-                          filter_responses=True):
+class UDS_ServiceEnumerator:
     """ Enumerates every service ID
         and returns list of tuples. Each tuple contains
         the session and the respective positive response
@@ -1382,35 +1377,74 @@ def UDS_ServiceEnumerator(sock, session="DefaultSession",
         sock: socket where packet is sent periodically
         session: session in which the services are enumerated
     """
-    pkts = (UDS(service=x) for x in set(x & ~0x40 for x in range(0x100)))
-    found_services = sock.sr(pkts, timeout=5, verbose=False)
-    return [(session, p) for _, p in found_services[0] if
-            p.service != 0x7f or
-            (p.negativeResponseCode not in [0x10, 0x11] or not
-            filter_responses)]
+
+    def __init__(self, sock, session="DefaultSession", filter_responses=True):
+        self.sock = sock
+        self.session = session
+        self.filter = filter_responses
+        self.results = list()
+
+    def scan(self, session=None):
+        self.session = session or self.session
+        pkts = (UDS(service=x) for x in set(x & ~0x40 for x in range(0x100)))
+        res = self.sock.sr(pkts, timeout=5, verbose=False)
+        self.results += [(self.session, p) for _, p in res[0] if
+                         p.service != 0x7f or
+                         (p.negativeResponseCode not in [0x10, 0x11] or
+                          not self.filter)]
+
+    def show(self):
+        make_lined_table(self.results, self.get_table_entry)
+
+    @staticmethod
+    def get_table_entry(tup):
+        """ Helping function for make_lined_table.
+            Returns the session and response code of tup.
+
+        Args:
+            tup: tuple with session and UDS response package
+
+        Example:
+            make_lined_table([('DefaultSession', UDS()/UDS_SAPR(),
+                               'ExtendDiagnosticSession', UDS()/UDS_IOCBI())],
+                               get_table_entry)
+        """
+        session, pkt = tup
+        if pkt.service == 0x7f:
+            return (session,
+                    "0x%02x: %s" % (pkt.requestServiceId,
+                                    pkt.sprintf("%UDS_NR.requestServiceId%")),
+                    pkt.sprintf("%UDS_NR.negativeResponseCode%"))
+        else:
+            return (session,
+                    "0x%02x: %s" % (pkt.service & ~0x40,
+                                    pkt.get_field('service').
+                                    i2s[pkt.service & ~0x40]),
+                    "PositiveResponse")
 
 
-def getTableEntry(tup):
-    """ Helping function for make_lined_table.
-        Returns the session and response code of tup.
+def UDS_Scan(sock, reset_handler):
 
-    Args:
-        tup: tuple with session and UDS response package
+    def enter_extended_diagnostic_session(socket):
+        ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=3), timeout=2,
+                         verbose=False)
+        return ans is not None and ans.service != 0x7f
 
-    Example:
-        make_lined_table([('DefaultSession', UDS()/UDS_SAPR(),
-                           'ExtendedDiagnosticSession', UDS()/UDS_IOCBI())],
-                           getTableEntry)
-    """
-    session, pkt = tup
-    if pkt.service == 0x7f:
-        return (session,
-                "0x%02x: %s" % (pkt.requestServiceId,
-                                pkt.sprintf("%UDS_NR.requestServiceId%")),
-                pkt.sprintf("%UDS_NR.negativeResponseCode%"))
-    else:
-        return (session,
-                "0x%02x: %s" % (pkt.service & ~0x40,
-                                pkt.get_field('service').
-                                i2s[pkt.service & ~0x40]),
-                "PositiveResponse")
+    def enter_programming_session(socket):
+        assert enter_extended_diagnostic_session(socket)
+
+        ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=2), timeout=2,
+                         verbose=False)
+        return ans is not None and ans.service != 0x7f
+
+    services = UDS_ServiceEnumerator(sock)
+    reset_handler()
+    services.scan()
+    reset_handler()
+    assert enter_extended_diagnostic_session(sock)
+    services.scan(session="extendedDiagnosticSession")
+    reset_handler()
+    assert enter_programming_session(sock)
+    services.scan(session="programmingSession")
+    reset_handler()
+    services.show()

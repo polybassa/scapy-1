@@ -1516,6 +1516,8 @@ def UDS_Scan(sock, reset_handler):
                          verbose=False)
         if ans is not None:
             print(repr(ans))
+        else:
+            print("TIMEOUT")
         return ans is not None and ans.service != 0x7f
 
     services = UDS_ServiceEnumerator(sock)

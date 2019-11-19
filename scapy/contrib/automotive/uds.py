@@ -1510,7 +1510,7 @@ def UDS_Scan(sock, reset_handler):
         return ans is not None and ans.service != 0x7f
 
     def enter_programming_session(socket):
-        assert enter_extended_diagnostic_session(socket)
+        enter_extended_diagnostic_session(socket)
 
         ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=2), timeout=2,
                          verbose=False)

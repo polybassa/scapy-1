@@ -144,12 +144,15 @@ with ISOTPSocket(new_can_socket0(), sid=0x241, did=0x641, basecls=UDS) as sendSo
     def sniffer():
         global sniffed, succ
         sniffed = 0
-        pkts = recvSock.sniff(timeout=10, prn=answer)
+        pkts = recvSock.sniff(timeout=1, prn=answer)
         sniffed = len(pkts)
         succ = True
     threadSniffer = threading.Thread(target=sniffer)
     threadSniffer.start()
-    sessions = UDS_SessionEnumerator(sendSock, session_range=range(3))
+    session_scanner = UDS_SessionEnumerator(sendSock, session_range=range(3),
+                                            reset_handler=lambda: sendSock.sr1(UDS()/UDS_ER(),timeout=0.1,verbose=False))
+    session_scanner.scan()
+    sessions = session_scanner.results
     threadSniffer.join()
 
 assert sniffed == 3*2
@@ -173,13 +176,13 @@ with ISOTPSocket(new_can_socket0(), sid=0x241, did=0x641, basecls=UDS) as sendSo
     def sniffer():
         global sniffed, succ
         sniffed = 0
-        pkts = recvSock.sniff(timeout=10, prn=answer)
+        pkts = recvSock.sniff(timeout=5, prn=answer)
         sniffed = len(pkts)
         succ = True
     threadSniffer = threading.Thread(target=sniffer)
     threadSniffer.start()
     scanner = UDS_ServiceEnumerator(sendSock)
-    scanner.scan()
+    scanner.scan(inter=0.01)
     services = scanner.results
     threadSniffer.join()
 

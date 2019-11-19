@@ -1347,11 +1347,32 @@ class UDS_TesterPresentSender(PeriodicSenderThread):
         PeriodicSenderThread.__init__(self, sock, pkt, interval)
 
 
-def UDS_Scan(sock, reset_handler):
-    print("hello")
+class UDS_Enumerator:
+    """ Base class for Enumerators
+
+    Args:
+        sock: socket where enumeration takes place
+    """
+
+    def __init__(self, sock):
+        self.sock = sock
+        self.results = list()
+
+    def scan(self, *args, **kwargs):
+        raise NotImplementedError
+
+    def reset(self):
+        self.results = list()
+
+    def show(self):
+        make_lined_table(self.results, self.get_table_entry)
+
+    @staticmethod
+    def get_table_entry(tup):
+        raise NotImplementedError
 
 
-def UDS_SessionEnumerator(sock, session_range=range(0x100), reset_wait=1.5):
+class UDS_SessionEnumerator(UDS_Enumerator):
     """ Enumerates session ID's in given range
         and returns list of UDS()/UDS_DSC() packets
         with valid session types
@@ -1371,8 +1392,60 @@ def UDS_SessionEnumerator(sock, session_range=range(0x100), reset_wait=1.5):
             (res.service == 0x50 or
              res.negativeResponseCode not in [0x10, 0x11, 0x12])]
 
+    def __init__(self, sock, session_range=range(0x100), reset_handler=None):
+        """
+        Args:
+            sock: socket where packets are sent
+            session_range: range for session ID's
+            reset_handler:
+        """
+        UDS_Enumerator.__init__(self, sock)
+        self.range = session_range
+        self.reset_handler = reset_handler
 
-class UDS_ServiceEnumerator:
+    def scan(self, **kwargs):
+        _tm = kwargs.pop("timeout", 0.2)
+        _verb = kwargs.pop("verbose", False)
+
+        pkts = UDS() / UDS_DSC(diagnosticSessionType=self.range)
+
+        for p in pkts:
+            self.results += [(p, self.sock.sr1(p, timeout=_tm,
+                                               verbose=_verb, **kwargs))]
+            self.reset_handler()
+
+        return [req for req, res in self.results if req is not None and
+                req.service != 0x11 and
+                (res.service == 0x50 or
+                 res.negativeResponseCode not in [0x10, 0x11, 0x12])]
+
+    @staticmethod
+    def get_table_entry(tup):
+        """ Helping function for make_lined_table.
+            Returns the session and response code of tup.
+
+        Args:
+            tup: tuple with session and UDS response package
+
+        Example:
+            make_lined_table([('DefaultSession', UDS()/UDS_SAPR(),
+                               'ExtendDiagnosticSession', UDS()/UDS_IOCBI())],
+                               get_table_entry)
+        """
+        req, res = tup
+        if res.service == 0x7f:
+            return ("Session",
+                    "0x%02x: %s" % (req.diagnosticSessionType, req.sprintf(
+                        "%UDS_DSC.diagnosticSessionType%")),
+                    res.sprintf("%UDS_NR.negativeResponseCode%"))
+        else:
+            return ("Session",
+                    "0x%02x: %s" % (req.diagnosticSessionType, req.sprintf(
+                        "%UDS_DSC.diagnosticSessionType%")),
+                    "Supported")
+
+
+class UDS_ServiceEnumerator(UDS_Enumerator):
     """ Enumerates every service ID
         and returns list of tuples. Each tuple contains
         the session and the respective positive response
@@ -1383,22 +1456,22 @@ class UDS_ServiceEnumerator:
     """
 
     def __init__(self, sock, session="DefaultSession", filter_responses=True):
-        self.sock = sock
+        UDS_Enumerator.__init__(self, sock)
         self.session = session
         self.filter = filter_responses
-        self.results = list()
 
-    def scan(self, session=None):
+    def scan(self, session=None, **kwargs):
         self.session = session or self.session
+        _inter = kwargs.pop("inter", 0.1)
+        _tm = kwargs.pop("timeout", _inter * 0x100)
+        _verb = kwargs.pop("verbose", False)
         pkts = (UDS(service=x) for x in set(x & ~0x40 for x in range(0x100)))
-        res = self.sock.sr(pkts, timeout=5, verbose=False)
+        res = self.sock.sr(pkts, timeout=_tm,
+                           verbose=_verb, inter=_inter, **kwargs)
         self.results += [(self.session, p) for _, p in res[0] if
                          p.service != 0x7f or
                          (p.negativeResponseCode not in [0x10, 0x11] or
                           not self.filter)]
-
-    def show(self):
-        make_lined_table(self.results, self.get_table_entry)
 
     @staticmethod
     def get_table_entry(tup):
@@ -1452,3 +1525,7 @@ def UDS_Scan(sock, reset_handler):
     services.scan(session="programmingSession")
     reset_handler()
     services.show()
+    sessions = UDS_SessionEnumerator(sock, reset_handler=reset_handler)
+    sessions.scan()
+    print(sessions.results)
+    sessions.show()

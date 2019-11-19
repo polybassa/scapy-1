@@ -1523,6 +1523,7 @@ def UDS_Scan(sock, reset_handler):
     services = UDS_ServiceEnumerator(sock)
     reset_handler()
     services.scan()
+    print(services.results)
     reset_handler()
     result = enter_extended_diagnostic_session(sock)
     if result is False:

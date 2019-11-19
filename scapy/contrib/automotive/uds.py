@@ -1522,10 +1522,14 @@ def UDS_Scan(sock, reset_handler):
     reset_handler()
     services.scan()
     reset_handler()
-    assert enter_extended_diagnostic_session(sock)
+    result = enter_extended_diagnostic_session(sock)
+    if result is False:
+        print("Error during session change")
     services.scan(session="extendedDiagnosticSession")
     reset_handler()
-    assert enter_programming_session(sock)
+    result = enter_programming_session(sock)
+    if result is False:
+        print("Error during session change")
     services.scan(session="programmingSession")
     reset_handler()
     services.show()

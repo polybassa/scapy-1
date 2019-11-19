@@ -1410,14 +1410,14 @@ class UDS_SessionEnumerator(UDS_Enumerator):
         pkts = UDS() / UDS_DSC(diagnosticSessionType=self.range)
 
         for p in pkts:
-            self.results += [(p, self.sock.sr1(p, timeout=_tm,
-                                               verbose=_verb, **kwargs))]
             self.reset_handler()
-
-        return [req for req, res in self.results if req is not None and
-                req.service != 0x11 and
-                (res.service == 0x50 or
-                 res.negativeResponseCode not in [0x10, 0x11, 0x12])]
+            resp = self.sock.sr1(p, timeout=_tm, verbose=_verb, **kwargs)
+            if resp is None:
+                continue
+            if resp.service == 0x7f and \
+                    resp.negativeResponseCode in [0x10, 0x11, 0x12]:
+                continue
+            self.results += [(p, resp)]
 
     @staticmethod
     def get_table_entry(tup):

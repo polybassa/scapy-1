@@ -1407,17 +1407,17 @@ class UDS_SessionEnumerator(UDS_Enumerator):
         _tm = kwargs.pop("timeout", 0.2)
         _verb = kwargs.pop("verbose", False)
 
-        pkts = UDS() / UDS_DSC(diagnosticSessionType=self.range)
+        reqs = UDS() / UDS_DSC(diagnosticSessionType=self.range)
 
-        for p in pkts:
+        for req in reqs:
             self.reset_handler()
-            resp = self.sock.sr1(p, timeout=_tm, verbose=_verb, **kwargs)
+            resp = self.sock.sr1(req, timeout=_tm, verbose=_verb, **kwargs)
             if resp is None:
                 continue
             if resp.service == 0x7f and \
                     resp.negativeResponseCode in [0x10, 0x11, 0x12]:
                 continue
-            self.results += [(p, resp)]
+            self.results += [(req, resp)]
 
     @staticmethod
     def get_table_entry(tup):

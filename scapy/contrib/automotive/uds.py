@@ -1505,6 +1505,8 @@ def UDS_Scan(sock, reset_handler):
     def enter_extended_diagnostic_session(socket):
         ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=3), timeout=2,
                          verbose=False)
+        if ans is not None:
+            print(repr(ans))
         return ans is not None and ans.service != 0x7f
 
     def enter_programming_session(socket):
@@ -1512,6 +1514,8 @@ def UDS_Scan(sock, reset_handler):
 
         ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=2), timeout=2,
                          verbose=False)
+        if ans is not None:
+            print(repr(ans))
         return ans is not None and ans.service != 0x7f
 
     services = UDS_ServiceEnumerator(sock)

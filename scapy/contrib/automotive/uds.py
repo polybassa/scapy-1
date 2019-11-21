@@ -1529,59 +1529,54 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
 
 def UDS_Scan(sock, reset_handler):
 
-    def enter_extended_diagnostic_session(socket):
-        ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=3), timeout=2,
-                         verbose=False)
-        if ans is not None:
+    def enter_session(socket, session, verbose=True):
+        ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=session),
+                         timeout=2, verbose=verbose)
+        if ans is not None and verbose:
             print(repr(ans))
         time.sleep(1)
         return ans is not None and ans.service != 0x7f
 
-    def enter_programming_session(socket):
-        enter_extended_diagnostic_session(socket)
+    def enter_extended_diagnostic_session(socket, *args, **kwargs):
+        return enter_session(socket, 3)
 
-        ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=2), timeout=2,
-                         verbose=False)
-        if ans is not None:
-            print(repr(ans))
-        time.sleep(1)
-        return ans is not None and ans.service != 0x7f
-
-    services = UDS_ServiceEnumerator(sock)
+    def enter_programming_session(socket, *args, **kwargs):
+        return enter_session(socket, 3) and enter_session(socket, 2)
 
     reset_handler()
-    services.scan()
-    reset_handler()
-
-    if enter_extended_diagnostic_session(sock) is False:
-        print("Error during session change")
-    services.scan(session="extendedDiagnosticSession")
-    reset_handler()
-
-    if enter_programming_session(sock) is False:
-        print("Error during session change")
-    services.scan(session="programmingSession")
-    reset_handler()
-    services.show()
 
     sessions = UDS_SessionEnumerator(sock, reset_handler=reset_handler)
     sessions.scan()
-    print(sessions.results)
     sessions.show()
+
     reset_handler()
+    services = UDS_ServiceEnumerator(sock)
+
+    session_changers = [(3, enter_extended_diagnostic_session),
+                        (2, enter_programming_session)] + \
+                       [(ses, lambda s: enter_session(s, ses)) for ses in
+                        [req.diagnosticSessionType for req, _ in
+                         sessions.results]]
+
+    for session, changer in session_changers:
+        if changer(sock) is False:
+            print("Error during session change")
+        else:
+            services.scan(session=session)
+            reset_handler()
+
+    services.show()
 
     identifiers = UDS_RDBIEnumerator(sock)
-    identifiers.scan()
-    reset_handler()
-    if enter_extended_diagnostic_session(sock) is False:
-        print("Error during session change")
-    identifiers.scan()
-    reset_handler()
 
-    if enter_programming_session(sock) is False:
-        print("Error during session change")
-    identifiers.scan()
-    reset_handler()
+    for session, changer in session_changers:
+        if changer(sock) is False:
+            print("Error during session change")
+        else:
+            identifiers.scan(session=session)
+            reset_handler()
+
+    identifiers.show()
 
 
 

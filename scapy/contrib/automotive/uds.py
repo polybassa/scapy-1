@@ -1382,15 +1382,6 @@ class UDS_SessionEnumerator(UDS_Enumerator):
         session_range: range for session ID's
         reset_wait: wait time in sec after every packet
     """
-    pkts = (req for tup in
-            product(UDS() / UDS_DSC(diagnosticSessionType=session_range),
-                    UDS() / UDS_ER(resetType='hardReset')) for req in tup)
-    results, _ = sock.sr(pkts, timeout=len(session_range) * reset_wait * 2 + 1,
-                         verbose=False, inter=reset_wait)
-    return [req for req, res in results if req is not None and
-            req.service != 0x11 and
-            (res.service == 0x50 or
-             res.negativeResponseCode not in [0x10, 0x11, 0x12])]
 
     def __init__(self, sock, session_range=range(0x100), reset_handler=None):
         """

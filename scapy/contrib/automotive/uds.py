@@ -7,7 +7,7 @@
 # scapy.contrib.status = loads
 
 import struct
-from itertools import product
+import time
 from scapy.fields import ByteEnumField, StrField, ConditionalField, \
     BitEnumField, BitField, XByteField, FieldListField, \
     XShortField, X3BytesField, XIntField, ByteField, \
@@ -1426,11 +1426,6 @@ class UDS_SessionEnumerator(UDS_Enumerator):
 
         Args:
             tup: tuple with session and UDS response package
-
-        Example:
-            make_lined_table([('DefaultSession', UDS()/UDS_SAPR(),
-                               'ExtendDiagnosticSession', UDS()/UDS_IOCBI())],
-                               get_table_entry)
         """
         req, res = tup
         if res.service == 0x7f:
@@ -1500,6 +1495,47 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
                     "PositiveResponse")
 
 
+class UDS_RDBIEnumerator(UDS_Enumerator):
+    """ Enumerates every  ID
+        and returns list of tuples. Each tuple contains
+        the session and the respective positive response
+
+    Args:
+        sock: socket where packet is sent periodically
+        session: session in which the services are enumerated
+    """
+
+    def __init__(self, sock, session="DefaultSession"):
+        UDS_Enumerator.__init__(self, sock)
+        self.session = session
+
+    def scan(self, session=None, scan_range=range(0x10000), **kwargs):
+        self.session = session or self.session
+        _inter = kwargs.pop("inter", 0.1)
+        _tm = kwargs.pop("timeout", _inter * len(scan_range) * 1.5)
+        _verb = kwargs.pop("verbose", False)
+        pkts = (UDS(service=x) for x in scan_range)
+        res = self.sock.sr(pkts, timeout=_tm,
+                           verbose=_verb, inter=_inter, **kwargs)
+        self.results += [(self.session, p) for _, p in res[0] if
+                         p is not None and p.service != 0x7f]
+
+    @staticmethod
+    def get_table_entry(tup):
+        """ Helping function for make_lined_table.
+            Returns the session and response code of tup.
+
+        Args:
+            tup: tuple with session and UDS response package
+        """
+        session, pkt = tup
+        return (session,
+                "0x%02x: %s" % (pkt.dataIdentifier,
+                                pkt.sprintf("%UDS_RDBIPR.dataIdentifier%")),
+                "%s" % ((pkt.load[:20] + b"...")
+                        if len(pkt.load) > 20 else pkt.load))
+
+
 def UDS_Scan(sock, reset_handler):
 
     def enter_extended_diagnostic_session(socket):
@@ -1507,6 +1543,7 @@ def UDS_Scan(sock, reset_handler):
                          verbose=False)
         if ans is not None:
             print(repr(ans))
+        time.sleep(1)
         return ans is not None and ans.service != 0x7f
 
     def enter_programming_session(socket):
@@ -1516,27 +1553,45 @@ def UDS_Scan(sock, reset_handler):
                          verbose=False)
         if ans is not None:
             print(repr(ans))
-        else:
-            print("TIMEOUT")
+        time.sleep(1)
         return ans is not None and ans.service != 0x7f
 
     services = UDS_ServiceEnumerator(sock)
+
     reset_handler()
     services.scan()
-    print(services.results)
     reset_handler()
-    result = enter_extended_diagnostic_session(sock)
-    if result is False:
+
+    if enter_extended_diagnostic_session(sock) is False:
         print("Error during session change")
     services.scan(session="extendedDiagnosticSession")
     reset_handler()
-    result = enter_programming_session(sock)
-    if result is False:
+
+    if enter_programming_session(sock) is False:
         print("Error during session change")
     services.scan(session="programmingSession")
     reset_handler()
     services.show()
+
     sessions = UDS_SessionEnumerator(sock, reset_handler=reset_handler)
     sessions.scan()
     print(sessions.results)
     sessions.show()
+    reset_handler()
+
+    identifiers = UDS_RDBIEnumerator(sock)
+    identifiers.scan()
+    reset_handler()
+    if enter_extended_diagnostic_session(sock) is False:
+        print("Error during session change")
+    identifiers.scan()
+    reset_handler()
+
+    if enter_programming_session(sock) is False:
+        print("Error during session change")
+    identifiers.scan()
+    reset_handler()
+
+
+
+

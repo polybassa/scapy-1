@@ -1529,19 +1529,27 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
 
 def UDS_Scan(sock, reset_handler):
 
-    def enter_session(socket, session, verbose=True):
+    def enter_session(socket, session, verbose=True, *args, **kwargs):
+        if session in [0, 1]:
+            return False
         ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=session),
-                         timeout=2, verbose=verbose)
+                         timeout=2, verbose=verbose, **kwargs)
         if ans is not None and verbose:
             print(repr(ans))
         time.sleep(1)
         return ans is not None and ans.service != 0x7f
 
+    def enter_through_extended(socket, session, *args, **kwargs):
+        if session == 3:
+            return False
+        return enter_session(socket, 3, *args, **kwargs) \
+            and enter_session(socket, session, *args, **kwargs)
+
     def enter_extended_diagnostic_session(socket, *args, **kwargs):
-        return enter_session(socket, 3)
+        return enter_session(socket, 3, *args, **kwargs)
 
     def enter_programming_session(socket, *args, **kwargs):
-        return enter_session(socket, 3) and enter_session(socket, 2)
+        return enter_through_extended(socket, 2, *args, **kwargs)
 
     reset_handler()
 
@@ -1552,11 +1560,18 @@ def UDS_Scan(sock, reset_handler):
     reset_handler()
     services = UDS_ServiceEnumerator(sock)
 
-    session_changers = [(3, enter_extended_diagnostic_session),
-                        (2, enter_programming_session)] + \
+    services.scan()
+    reset_handler()
+
+    session_changers = [("ExtendedDiagnosticSession",
+                         enter_extended_diagnostic_session),
+                        ("ProgrammingSession", enter_programming_session)] + \
                        [(ses, lambda s: enter_session(s, ses)) for ses in
                         [req.diagnosticSessionType for req, _ in
-                         sessions.results]]
+                         sessions.results]] + \
+                       [(ses, lambda s: enter_through_extended(s, ses))
+                        for ses in [req.diagnosticSessionType for req, _ in
+                                    sessions.results]]
 
     for session, changer in session_changers:
         if changer(sock) is False:
@@ -1577,7 +1592,3 @@ def UDS_Scan(sock, reset_handler):
             reset_handler()
 
     identifiers.show()
-
-
-
-

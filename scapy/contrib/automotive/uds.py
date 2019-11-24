@@ -1583,6 +1583,8 @@ def UDS_Scan(sock, reset_handler):
     services.show()
 
     identifiers = UDS_RDBIEnumerator(sock)
+    identifiers.scan()
+    reset_handler()
 
     for session, changer in session_changers:
         if changer(sock) is False:

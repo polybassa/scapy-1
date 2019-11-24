@@ -1506,7 +1506,7 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         _tm = kwargs.pop("timeout", _inter * len(scan_range) * 1.5)
         _verb = kwargs.pop("verbose", False)
         pkts = (UDS(service=x) for x in scan_range)
-        res = self.sock.sr(pkts, count=len(scan_range), timeout=_tm,
+        res = self.sock.sr(pkts, timeout=_tm,
                            verbose=_verb, inter=_inter, **kwargs)
         self.results += [(self.session, p) for _, p in res[0] if
                          p is not None and p.service != 0x7f]

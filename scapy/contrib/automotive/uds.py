@@ -1501,7 +1501,8 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         UDS_Enumerator.__init__(self, sock)
         self.session = session
 
-    def scan(self, session=None, scan_range=range(0, 0x10000, 0x100), **kwargs):
+    def scan(self, session=None, scan_range=range(0, 0x10000, 0x100),
+             **kwargs):
         self.session = session or self.session
         _inter = kwargs.pop("inter", 0.1)
         _tm = kwargs.pop("timeout", _inter * len(scan_range) * 1.5)

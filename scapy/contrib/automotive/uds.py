@@ -1395,13 +1395,13 @@ class UDS_SessionEnumerator(UDS_Enumerator):
         self.reset_handler = reset_handler
 
     def scan(self, **kwargs):
-        _tm = kwargs.pop("timeout", 0.2)
+        _tm = kwargs.pop("timeout", 0.4)
         _verb = kwargs.pop("verbose", False)
 
         reqs = UDS() / UDS_DSC(diagnosticSessionType=self.range)
 
+        self.reset_handler()
         for req in reqs:
-            self.reset_handler()
             resp = self.sock.sr1(req, timeout=_tm, verbose=_verb, **kwargs)
             if resp is None:
                 continue
@@ -1409,6 +1409,7 @@ class UDS_SessionEnumerator(UDS_Enumerator):
                     resp.negativeResponseCode in [0x10, 0x11, 0x12]:
                 continue
             self.results += [(req, resp)]
+            self.reset_handler()
 
     @staticmethod
     def get_table_entry(tup):

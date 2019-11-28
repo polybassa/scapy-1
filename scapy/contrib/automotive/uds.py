@@ -1500,7 +1500,7 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         UDS_Enumerator.__init__(self, sock)
         self.session = session
 
-    def scan(self, session=None, scan_range=range(0x10000), **kwargs):
+    def scan(self, session=None, scan_range=range(0, 0x10000, 0x100), **kwargs):
         self.session = session or self.session
         _inter = kwargs.pop("inter", 0.1)
         _tm = kwargs.pop("timeout", _inter * len(scan_range) * 1.5)
@@ -1552,16 +1552,9 @@ def UDS_Scan(sock, reset_handler):
         return enter_through_extended(socket, 2, *args, **kwargs)
 
     reset_handler()
-
     sessions = UDS_SessionEnumerator(sock, reset_handler=reset_handler)
     sessions.scan()
     sessions.show()
-
-    reset_handler()
-    services = UDS_ServiceEnumerator(sock)
-
-    services.scan()
-    reset_handler()
 
     session_changers = [("ExtendedDiagnosticSession",
                          enter_extended_diagnostic_session),
@@ -1573,6 +1566,11 @@ def UDS_Scan(sock, reset_handler):
                         for ses in [req.diagnosticSessionType for req, _ in
                                     sessions.results]]
 
+    reset_handler()
+    services = UDS_ServiceEnumerator(sock)
+    services.scan()
+    reset_handler()
+
     for session, changer in session_changers:
         if changer(sock) is False:
             print("Error during session change")
@@ -1582,6 +1580,7 @@ def UDS_Scan(sock, reset_handler):
 
     services.show()
 
+    reset_handler()
     identifiers = UDS_RDBIEnumerator(sock)
     identifiers.scan()
     reset_handler()

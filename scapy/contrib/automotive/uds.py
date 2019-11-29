@@ -1501,23 +1501,19 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         UDS_Enumerator.__init__(self, sock)
         self.session = session
 
-    def scan(self, session=None, scan_range=range(0, 0x10000, 0x100),
+    def scan(self, session=None, scan_range=range(0x10000),
              **kwargs):
         self.session = session or self.session
         _inter = kwargs.pop("inter", 0.1)
-        _tm = kwargs.pop("timeout", _inter * len(scan_range) * 1.5)
+        _tm = kwargs.pop("timeout", 0.4)
         _verb = kwargs.pop("verbose", False)
         for pkt in (UDS() / UDS_RDBI(identifiers=[x]) for x in scan_range):
             resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb,
                                  inter=_inter, **kwargs)
-            if resp is None:
+            if resp is None or resp.service == 0x7f:
                 continue
-            if resp.service == 0x7f:
-                self.results.append((self.session, pkt.identifiers[0],
-                                     "NegativeResponse"))
-            else:
-                self.results.append((self.session, resp.dataIdentifier,
-                                     resp.load))
+
+            self.results.append((self.session, resp.dataIdentifier, resp.load))
 
     @staticmethod
     def get_table_entry(tup):
@@ -1598,7 +1594,5 @@ def UDS_Scan(sock, reset_handler):
         else:
             identifiers.scan(session=session)
             reset_handler()
-
-    print(identifiers.results)
 
     identifiers.show()

@@ -1507,11 +1507,17 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         _inter = kwargs.pop("inter", 0.1)
         _tm = kwargs.pop("timeout", _inter * len(scan_range) * 1.5)
         _verb = kwargs.pop("verbose", False)
-        pkts = (UDS(service=x) for x in scan_range)
-        res = self.sock.sr(pkts, timeout=_tm,
-                           verbose=_verb, inter=_inter, **kwargs)
-        self.results += [(self.session, p) for _, p in res[0] if
-                         p is not None and p.service != 0x7f]
+        for pkt in (UDS() / UDS_RDBI(identifiers=[x]) for x in scan_range):
+            resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb,
+                                 inter=_inter, **kwargs)
+            if resp is None:
+                continue
+            if resp.service == 0x7f:
+                self.results.append((self.session, pkt.identifiers[0],
+                                     "NegativeResponse"))
+            else:
+                self.results.append((self.session, resp.dataIdentifier,
+                                     resp.load))
 
     @staticmethod
     def get_table_entry(tup):
@@ -1521,12 +1527,10 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         Args:
             tup: tuple with session and UDS response package
         """
-        session, pkt = tup
+        session, identifier, load = tup
         return (session,
-                "0x%02x: %s" % (pkt.dataIdentifier,
-                                pkt.sprintf("%UDS_RDBIPR.dataIdentifier%")),
-                "%s" % ((pkt.load[:20] + b"...")
-                        if len(pkt.load) > 20 else pkt.load))
+                "0x%04x" % identifier,
+                "%s" % ((load[:20] + b"...") if len(load) > 20 else load))
 
 
 def UDS_Scan(sock, reset_handler):
@@ -1534,9 +1538,10 @@ def UDS_Scan(sock, reset_handler):
     def enter_session(socket, session, verbose=True, *args, **kwargs):
         if session in [0, 1]:
             return False
-        ans = socket.sr1(UDS() / UDS_DSC(diagnosticSessionType=session),
-                         timeout=2, verbose=verbose, **kwargs)
+        req = UDS() / UDS_DSC(diagnosticSessionType=session)
+        ans = socket.sr1(req, timeout=2, verbose=verbose, **kwargs)
         if ans is not None and verbose:
+            print(repr(req))
             print(repr(ans))
         time.sleep(1)
         return ans is not None and ans.service != 0x7f

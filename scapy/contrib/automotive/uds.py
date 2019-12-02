@@ -1501,19 +1501,18 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         UDS_Enumerator.__init__(self, sock)
         self.session = session
 
-    def scan(self, session=None, scan_range=range(0x10000),
-             **kwargs):
+    def scan(self, session=None, scan_range=range(0x10000), **kwargs):
         self.session = session or self.session
-        _inter = kwargs.pop("inter", 0.1)
-        _tm = kwargs.pop("timeout", 0.4)
+        _tm = kwargs.pop("timeout", 0.7)
         _verb = kwargs.pop("verbose", False)
         for pkt in (UDS() / UDS_RDBI(identifiers=[x]) for x in scan_range):
-            resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb,
-                                 inter=_inter, **kwargs)
+            resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb, **kwargs)
             if resp is None or resp.service == 0x7f:
                 continue
 
-            self.results.append((self.session, resp.dataIdentifier, resp.load))
+            self.results.append((self.session,
+                                 resp.sprintf("%UDS_RDBIPR.dataIdentifier%"),
+                                 resp.load))
 
     @staticmethod
     def get_table_entry(tup):
@@ -1531,7 +1530,7 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
 
 def UDS_Scan(sock, reset_handler, **kwargs):
 
-    def enter_session(socket, session, verbose=True, *args, **kwargs):
+    def enter_session(socket, session, verbose=True, **kwargs):
         if session in [0, 1]:
             return False
         req = UDS() / UDS_DSC(diagnosticSessionType=session)
@@ -1542,17 +1541,17 @@ def UDS_Scan(sock, reset_handler, **kwargs):
         time.sleep(1)
         return ans is not None and ans.service != 0x7f
 
-    def enter_through_extended(socket, session, *args, **kwargs):
+    def enter_through_extended(socket, session, **kwargs):
         if session == 3:
             return False
-        return enter_session(socket, 3, *args, **kwargs) \
-            and enter_session(socket, session, *args, **kwargs)
+        return enter_session(socket, 3, **kwargs) \
+            and enter_session(socket, session, **kwargs)
 
-    def enter_extended_diagnostic_session(socket, *args, **kwargs):
-        return enter_session(socket, 3, *args, **kwargs)
+    def enter_extended_diagnostic_session(socket, **kwargs):
+        return enter_session(socket, 3, **kwargs)
 
-    def enter_programming_session(socket, *args, **kwargs):
-        return enter_through_extended(socket, 2, *args, **kwargs)
+    def enter_programming_session(socket, **kwargs):
+        return enter_through_extended(socket, 2, **kwargs)
 
     def clean_session_changers(socket, _reset_handler, _session_changers):
         _cleaned_session_changers = dict()

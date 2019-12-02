@@ -1554,11 +1554,12 @@ def UDS_Scan(sock, reset_handler, **kwargs):
         return enter_through_extended(socket, 2, **kwargs)
 
     def clean_session_changers(socket, _reset_handler, _session_changers):
+        print(_session_changers)
         _cleaned_session_changers = dict()
         for tup in _session_changers:
             _session, _changer = tup
             if _changer(socket) is False:
-                print("Error during session change")
+                print("Error during session change to %d" % _session)
             elif _session not in _cleaned_session_changers.keys():
                 print("Add changer to session %d" % _session)
                 _cleaned_session_changers[_session] = _changer

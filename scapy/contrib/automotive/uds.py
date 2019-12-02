@@ -1535,7 +1535,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
         if session in [0, 1]:
             return False
         req = UDS() / UDS_DSC(diagnosticSessionType=session)
-        ans = socket.sr1(req, timeout=2, verbose=verbose, **kwargs)
+        ans = socket.sr1(req, timeout=2, verbose=False, **kwargs)
         if ans is not None and verbose:
             print(repr(req))
             print(repr(ans))
@@ -1557,12 +1557,13 @@ def UDS_Scan(sock, reset_handler, **kwargs):
     def clean_session_changers(socket, _reset_handler, _session_changers):
         _cleaned_session_changers = dict()
         for tup in _session_changers:
-            _, _changer = tup
+            _session, _changer = tup
             if _changer(socket) is False:
                 print("Error during session change")
-            else:
-                _cleaned_session_changers[tup[0]] = tup[1]
-                _reset_handler()
+            elif _session not in _cleaned_session_changers.keys():
+                print("Add changer to session %d" % _session)
+                _cleaned_session_changers[_session] = _changer
+            _reset_handler()
         return _cleaned_session_changers
 
     reset_handler()
@@ -1570,6 +1571,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
     sessions.scan()
     sessions.show()
 
+    reset_handler()
     session_changers = clean_session_changers(
         sock, reset_handler,
         [(3, enter_extended_diagnostic_session),

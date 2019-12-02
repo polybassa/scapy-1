@@ -1567,6 +1567,7 @@ def clean_session_changers(socket, _reset_handler, _session_changers):
             print("Add changer to session %d" % _session)
             _cleaned_session_changers[_session] = _changer
         _reset_handler()
+    print(_cleaned_session_changers)
     return _cleaned_session_changers
 
 
@@ -1586,9 +1587,9 @@ def UDS_Scan(sock, reset_handler, **kwargs):
         if session in [1, 2, 3]:
             continue
         temp_session_changers.append(
-            (session, lambda socket: enter_session(socket, session)))
+            (session, lambda socket, ses=session: enter_session(socket, ses)))
         temp_session_changers.append(
-            (session, lambda socket: enter_through_extended(socket, session)))
+            (session, lambda socket, ses=session: enter_through_extended(socket, ses)))
 
     session_changers = clean_session_changers(sock, reset_handler,
                                               temp_session_changers)

@@ -1632,34 +1632,34 @@ def UDS_Scan(sock, reset_handler, **kwargs):
     session_changers = clean_session_changers(sock, reset_handler,
                                               temp_session_changers)
 
-    reset_handler()
-    services = UDS_ServiceEnumerator(sock)
-    services.scan()
-    reset_handler()
+    #reset_handler()
+    #services = UDS_ServiceEnumerator(sock)
+    #services.scan()
+    #reset_handler()
 
-    for session, changer in session_changers.items():
-        if changer(sock) is False:
-            print("Error during session change to session %d" % session)
-        else:
-            services.scan(session=session)
-            reset_handler()
+    #for session, changer in session_changers.items():
+    #    if changer(sock) is False:
+    #        print("Error during session change to session %d" % session)
+    #    else:
+    #        services.scan(session=session)
+    #        reset_handler()
 
-    services.show()
+    #services.show()
 
-    reset_handler()
-    identifiers = UDS_RDBIEnumerator(sock)
-    _scan_range = kwargs.pop("rdbi_scan_range", range(0x10000))
-    identifiers.scan(scan_range=_scan_range)
-    reset_handler()
+    #reset_handler()
+    #identifiers = UDS_RDBIEnumerator(sock)
+    #_scan_range = kwargs.pop("rdbi_scan_range", range(0x10000))
+    #identifiers.scan(scan_range=_scan_range)
+    #reset_handler()
 
-    for session, changer in session_changers.items():
-        if changer(sock) is False:
-            print("Error during session change to session %d" % session)
-        else:
-            identifiers.scan(session=session, scan_range=_scan_range)
-            reset_handler()
+    #for session, changer in session_changers.items():
+    #    if changer(sock) is False:
+    #        print("Error during session change to session %d" % session)
+    #    else:
+    #        identifiers.scan(session=session, scan_range=_scan_range)
+    #        reset_handler()
 
-    identifiers.show()
+    #identifiers.show()
 
     
     reset_handler()

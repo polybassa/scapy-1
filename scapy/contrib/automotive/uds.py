@@ -1663,7 +1663,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
 
     
     reset_handler()
-    securitys = SecurityAccessEnumerator(sock)
+    securitys = UDS_SecurityAccessEnumerator(sock)
     securitys.scan()
     reset_handler()
 

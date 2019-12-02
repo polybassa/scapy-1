@@ -1527,6 +1527,44 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
                 identifier,
                 "%s" % ((load[:20] + b"...") if len(load) > 20 else load))
 
+class UDS_SecurityAccessEnumerator(UDS_Enumerator):
+    """ Enumerates every Security Seed
+        and returns list of tuples. Each tuple contains
+        the session and the respective Seed
+    Args:
+        sock: socket where packet is sent periodically
+        session: session in which the services are enumerated
+    """
+
+    def __init__(self, sock, session="DefaultSession"):
+        UDS_Enumerator.__init__(self, sock)
+        self.session = session
+
+    def scan(self, session=None, **kwargs):
+        self.session = session or self.session
+        _tm = kwargs.pop("timeout", 0.7)
+        _verb = kwargs.pop("verbose", False)
+        for pkt in (UDS() / UDS_SA(identifiers=[x]) for x in range(1,255,2)):
+            resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb, **kwargs)
+            if resp is None or resp.service == 0x7f:
+                continue
+
+            self.results.append((self.session,
+                                 resp.sprintf("%UDS_SA.securityAccessType%"),
+                                 resp.load))
+
+    @staticmethod
+    def get_table_entry(tup):
+        """ Helping function for make_lined_table.
+            Returns the session and response code of tup.
+
+        Args:
+            tup: tuple with session and UDS response package
+        """
+        session, identifier, load = tup
+        return (session,
+                identifier,
+                "%s" % ((load[:20] + b"...") if len(load) > 20 else load))
 
 def enter_session(socket, session, verbose=True, **kwargs):
     if session in [0, 1]:
@@ -1622,3 +1660,18 @@ def UDS_Scan(sock, reset_handler, **kwargs):
             reset_handler()
 
     identifiers.show()
+
+    
+    reset_handler()
+    securitys = SecurityAccessEnumerator(sock)
+    securitys.scan()
+    reset_handler()
+
+    for session, changer in session_changers.items():
+        if changer(sock) is False:
+            print("Error during session change to session %d" % session)
+        else:
+            securitys.scan(session=session)
+            reset_handler()
+
+    securitys.show()

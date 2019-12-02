@@ -1572,14 +1572,20 @@ def UDS_Scan(sock, reset_handler, **kwargs):
     sessions.show()
 
     reset_handler()
-    session_changers = clean_session_changers(
-        sock, reset_handler,
-        [(3, enter_extended_diagnostic_session),
-         (2, enter_programming_session)] +
-        [(ses, lambda s: enter_session(s, ses)) for ses in
-         [req.diagnosticSessionType for req, _ in sessions.results]] +
-        [(ses, lambda s: enter_through_extended(s, ses)) for ses in
-         [req.diagnosticSessionType for req, _ in sessions.results]])
+
+    temp_session_changers = [(3, enter_extended_diagnostic_session),
+                             (2, enter_programming_session)]
+
+    for session in set([1, 2, 3] + [req.diagnosticSessionType
+                                    for req, _ in sessions.results]):
+        if session in [1, 2, 3]:
+            continue
+        temp_session_changers.append(
+            (session, lambda socket: enter_session(socket, session)))
+        temp_session_changers.append(
+            (session, lambda socket: enter_through_extended(socket, session)))
+
+    session_changers = clean_session_changers(temp_session_changers)
 
     reset_handler()
     services = UDS_ServiceEnumerator(sock)

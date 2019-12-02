@@ -1527,6 +1527,7 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
                 identifier,
                 "%s" % ((load[:20] + b"...") if len(load) > 20 else load))
 
+
 class UDS_SecurityAccessEnumerator(UDS_Enumerator):
     """ Enumerates every Security Seed
         and returns list of tuples. Each tuple contains
@@ -1544,7 +1545,8 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
         self.session = session or self.session
         _tm = kwargs.pop("timeout", 0.7)
         _verb = kwargs.pop("verbose", False)
-        for pkt in (UDS() / UDS_SA(securityAccessType=[x]) for x in range(1,255,2)):
+        for pkt in (UDS() / UDS_SA(securityAccessType=x)
+                    for x in range(1, 0xff, 2)):
             resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb, **kwargs)
             if resp is None or resp.service == 0x7f:
                 continue
@@ -1566,12 +1568,14 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
                 identifier,
                 "%s" % ((load[:20] + b"...") if len(load) > 20 else load))
 
-def enter_session(socket, session, verbose=True, **kwargs):
+
+def enter_session_direct(socket, session, verbose=True, **kwargs):
     if session in [0, 1]:
         return False
     req = UDS() / UDS_DSC(diagnosticSessionType=session)
     ans = socket.sr1(req, timeout=2, verbose=False, **kwargs)
     if ans is not None and verbose:
+        print("Try to enter session %s" % session)
         print(repr(req))
         print(repr(ans))
     time.sleep(1)
@@ -1581,32 +1585,13 @@ def enter_session(socket, session, verbose=True, **kwargs):
 def enter_through_extended(socket, session, **kwargs):
     if session == 3:
         return False
-    return enter_session(socket, 3, **kwargs) \
-        and enter_session(socket, session, **kwargs)
+    return enter_session_direct(socket, 3, **kwargs) \
+        and enter_session_direct(socket, session, **kwargs)
 
 
-def enter_extended_diagnostic_session(socket, **kwargs):
-    return enter_session(socket, 3, **kwargs)
-
-
-def enter_programming_session(socket, **kwargs):
-    return enter_through_extended(socket, 2, **kwargs)
-
-
-def clean_session_changers(socket, _reset_handler, _session_changers):
-    print(_session_changers)
-    _cleaned_session_changers = dict()
-    for tup in _session_changers:
-        _session, _changer = tup
-        print("Executing changer %d at %s" % (_session, _changer))
-        if _changer(socket) is False:
-            print("Error during session change to %d" % _session)
-        elif _session not in _cleaned_session_changers.keys():
-            print("Add changer to session %d" % _session)
-            _cleaned_session_changers[_session] = _changer
-        _reset_handler()
-    print(_cleaned_session_changers)
-    return _cleaned_session_changers
+def enter_session(*args, **kwargs):
+    return enter_session_direct(*args, **kwargs) or \
+        enter_through_extended(*args, **kwargs)
 
 
 def UDS_Scan(sock, reset_handler, **kwargs):
@@ -1617,58 +1602,46 @@ def UDS_Scan(sock, reset_handler, **kwargs):
 
     reset_handler()
 
-    temp_session_changers = [(3, enter_extended_diagnostic_session),
-                             (2, enter_programming_session)]
+    available_sessions = set([1, 2, 3] +
+                             [req.diagnosticSessionType
+                              for req, _ in sessions.results])
 
-    for session in set([1, 2, 3] + [req.diagnosticSessionType
-                                    for req, _ in sessions.results]):
-        if session in [1, 2, 3]:
-            continue
-        temp_session_changers.append(
-            (session, lambda socket, ses=session: enter_session(socket, ses)))
-        temp_session_changers.append(
-            (session, lambda socket, ses=session: enter_through_extended(socket, ses)))
+    reset_handler()
+    services = UDS_ServiceEnumerator(sock)
+    services.scan()
+    reset_handler()
 
-    session_changers = clean_session_changers(sock, reset_handler,
-                                              temp_session_changers)
+    for session in available_sessions:
+        if enter_session(sock, session) is False:
+            print("Error during session change to session %d" % session)
+        else:
+            services.scan(session=session)
+            reset_handler()
 
-    #reset_handler()
-    #services = UDS_ServiceEnumerator(sock)
-    #services.scan()
-    #reset_handler()
+    services.show()
 
-    #for session, changer in session_changers.items():
-    #    if changer(sock) is False:
-    #        print("Error during session change to session %d" % session)
-    #    else:
-    #        services.scan(session=session)
-    #        reset_handler()
+    reset_handler()
+    identifiers = UDS_RDBIEnumerator(sock)
+    _scan_range = kwargs.pop("rdbi_scan_range", range(0x10000))
+    identifiers.scan(scan_range=_scan_range)
+    reset_handler()
 
-    #services.show()
+    for session in available_sessions:
+        if enter_session(sock, session) is False:
+            print("Error during session change to session %d" % session)
+        else:
+            identifiers.scan(session=session, scan_range=_scan_range)
+            reset_handler()
 
-    #reset_handler()
-    #identifiers = UDS_RDBIEnumerator(sock)
-    #_scan_range = kwargs.pop("rdbi_scan_range", range(0x10000))
-    #identifiers.scan(scan_range=_scan_range)
-    #reset_handler()
+    identifiers.show()
 
-    #for session, changer in session_changers.items():
-    #    if changer(sock) is False:
-    #        print("Error during session change to session %d" % session)
-    #    else:
-    #        identifiers.scan(session=session, scan_range=_scan_range)
-    #        reset_handler()
-
-    #identifiers.show()
-
-    
     reset_handler()
     securitys = UDS_SecurityAccessEnumerator(sock)
     securitys.scan()
     reset_handler()
 
-    for session, changer in session_changers.items():
-        if changer(sock) is False:
+    for session in available_sessions:
+        if enter_session(sock, session) is False:
             print("Error during session change to session %d" % session)
         else:
             securitys.scan(session=session)

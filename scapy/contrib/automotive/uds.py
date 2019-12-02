@@ -1544,7 +1544,7 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
         self.session = session or self.session
         _tm = kwargs.pop("timeout", 0.7)
         _verb = kwargs.pop("verbose", False)
-        for pkt in (UDS() / UDS_SA(identifiers=[x]) for x in range(1,255,2)):
+        for pkt in (UDS() / UDS_SA(securityAccessType=[x]) for x in range(1,255,2)):
             resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb, **kwargs)
             if resp is None or resp.service == 0x7f:
                 continue

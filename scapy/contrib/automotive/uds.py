@@ -1585,7 +1585,8 @@ def UDS_Scan(sock, reset_handler, **kwargs):
         temp_session_changers.append(
             (session, lambda socket: enter_through_extended(socket, session)))
 
-    session_changers = clean_session_changers(temp_session_changers)
+    session_changers = clean_session_changers(sock, reset_handler,
+                                              temp_session_changers)
 
     reset_handler()
     services = UDS_ServiceEnumerator(sock)

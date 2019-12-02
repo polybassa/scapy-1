@@ -1524,7 +1524,7 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         """
         session, identifier, load = tup
         return (session,
-                "0x%04x" % identifier,
+                identifier,
                 "%s" % ((load[:20] + b"...") if len(load) > 20 else load))
 
 

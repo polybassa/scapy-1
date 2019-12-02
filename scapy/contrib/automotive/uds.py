@@ -1558,6 +1558,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
         _cleaned_session_changers = dict()
         for tup in _session_changers:
             _session, _changer = tup
+            print("Executing changer %d at %s" % (_session, _changer))
             if _changer(socket) is False:
                 print("Error during session change to %d" % _session)
             elif _session not in _cleaned_session_changers.keys():

@@ -1620,7 +1620,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
             print("Error during session change to session %d" % session_iter)
         else:
             services.scan(session=get_session_string(session_iter))
-            reset_handler()
+        reset_handler()
 
     services.show()
 
@@ -1637,7 +1637,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
         else:
             identifiers.scan(session=get_session_string(session_iter),
                              scan_range=_scan_range)
-            reset_handler()
+        reset_handler()
 
     identifiers.show()
 
@@ -1651,7 +1651,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
             print("Error during session change to session %d" % session_iter)
         else:
             securitys.scan(session=get_session_string(session_iter))
-            reset_handler()
+        reset_handler()
 
     securitys.show()
 
@@ -1665,7 +1665,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
             print("Error during session change to session %d" % session_iter)
         else:
             securitys.scan(session=get_session_string(session_iter))
-            reset_handler()
+        reset_handler()
 
     securitys.show()
 
@@ -1679,6 +1679,6 @@ def UDS_Scan(sock, reset_handler, **kwargs):
             print("Error during session change to session %d" % session_iter)
         else:
             securitys.scan(session=get_session_string(session_iter))
-            reset_handler()
+        reset_handler()
 
     securitys.show()

@@ -1358,6 +1358,7 @@ class UDS_Enumerator:
     def __init__(self, sock):
         self.sock = sock
         self.results = list()
+        self.description = "About my results"
 
     def scan(self, *args, **kwargs):
         raise NotImplementedError
@@ -1366,6 +1367,7 @@ class UDS_Enumerator:
         self.results = list()
 
     def show(self):
+        print(self.description)
         make_lined_table(self.results, self.get_table_entry)
 
     @staticmethod
@@ -1394,6 +1396,7 @@ class UDS_SessionEnumerator(UDS_Enumerator):
         UDS_Enumerator.__init__(self, sock)
         self.range = session_range
         self.reset_handler = reset_handler
+        self.description = "Available session"
 
     def scan(self, **kwargs):
         _tm = kwargs.pop("timeout", 0.4)
@@ -1447,6 +1450,8 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
         UDS_Enumerator.__init__(self, sock)
         self.session = session
         self.filter = filter_responses
+        self.description = "Available services and negative response " \
+                           "per session"
 
     def scan(self, session=None, **kwargs):
         self.session = session or self.session
@@ -1501,6 +1506,7 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
     def __init__(self, sock, session="DefaultSession"):
         UDS_Enumerator.__init__(self, sock)
         self.session = session
+        self.description = "Readable data identifier per session"
 
     def scan(self, session=None, scan_range=range(0x10000), **kwargs):
         self.session = session or self.session
@@ -1543,6 +1549,7 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
     def __init__(self, sock, session="DefaultSession"):
         UDS_Enumerator.__init__(self, sock)
         self.session = session
+        self.description = "Writeable data identifier"
 
     def scan(self, session=None, scan_range=range(0x10000), rdbi_list=None,
              **kwargs):
@@ -1589,6 +1596,8 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
     def __init__(self, sock, session="DefaultSession"):
         UDS_Enumerator.__init__(self, sock)
         self.session = session
+        self.description = "Available security seeds " \
+                           "with access type and session"
 
     def scan(self, session=None, **kwargs):
         self.session = session or self.session

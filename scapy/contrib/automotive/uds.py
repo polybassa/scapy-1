@@ -1573,6 +1573,7 @@ def get_session_string(session):
     return (UDS() / UDS_DSC(diagnosticSessionType=session)).\
         sprintf("%UDS_DSC.diagnosticSessionType%")
 
+
 def enter_session_direct(socket, session, verbose=True, **kwargs):
     if session in [0, 1]:
         return False
@@ -1612,14 +1613,14 @@ def UDS_Scan(sock, reset_handler, **kwargs):
 
     reset_handler()
     services = UDS_ServiceEnumerator(sock)
-    services.scan(session=get_session_string(session))
+    services.scan(session=get_session_string(1))
     reset_handler()
 
-    for session in available_sessions:
-        if enter_session(sock, session) is False:
-            print("Error during session change to session %d" % session)
+    for session_iter in available_sessions:
+        if enter_session(sock, session_iter) is False:
+            print("Error during session change to session %d" % session_iter)
         else:
-            services.scan(session=get_session_string(session))
+            services.scan(session=get_session_string(session_iter))
             reset_handler()
 
     services.show()
@@ -1628,14 +1629,14 @@ def UDS_Scan(sock, reset_handler, **kwargs):
     identifiers = UDS_RDBIEnumerator(sock)
     _scan_range = kwargs.pop("rdbi_scan_range", range(0x10000))
     identifiers.scan(scan_range=_scan_range,
-                     session=get_session_string(session))
+                     session=get_session_string(1))
     reset_handler()
 
-    for session in available_sessions:
-        if enter_session(sock, session) is False:
-            print("Error during session change to session %d" % session)
+    for session_iter in available_sessions:
+        if enter_session(sock, session_iter) is False:
+            print("Error during session change to session %d" % session_iter)
         else:
-            identifiers.scan(session=get_session_string(session),
+            identifiers.scan(session=get_session_string(session_iter),
                              scan_range=_scan_range)
             reset_handler()
 
@@ -1643,14 +1644,14 @@ def UDS_Scan(sock, reset_handler, **kwargs):
 
     reset_handler()
     securitys = UDS_SecurityAccessEnumerator(sock)
-    securitys.scan(session=get_session_string(session))
+    securitys.scan(session=get_session_string(1))
     reset_handler()
 
-    for session in available_sessions:
-        if enter_session(sock, session) is False:
-            print("Error during session change to session %d" % session)
+    for session_iter in available_sessions:
+        if enter_session(sock, session_iter) is False:
+            print("Error during session change to session %d" % session_iter)
         else:
-            securitys.scan(session=get_session_string(session))
+            securitys.scan(session=get_session_string(session_iter))
             reset_handler()
 
     securitys.show()

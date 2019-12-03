@@ -1572,7 +1572,7 @@ def get_session_string(session):
         sprintf("%UDS_DSC.diagnosticSessionType%")
 
 
-def enter_session_direct(socket, session, verbose=True, **kwargs):
+def enter_session_direct(socket, session, verbose=False, **kwargs):
     if session in [0, 1]:
         return False
     req = UDS() / UDS_DSC(diagnosticSessionType=session)

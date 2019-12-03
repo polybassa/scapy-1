@@ -1653,3 +1653,31 @@ def UDS_Scan(sock, reset_handler, **kwargs):
             reset_handler()
 
     securitys.show()
+
+    reset_handler()
+    securitys = UDS_SecurityAccessEnumerator(sock)
+    securitys.scan(session=get_session_string(1))
+    reset_handler()
+
+    for session_iter in available_sessions:
+        if enter_session(sock, session_iter) is False:
+            print("Error during session change to session %d" % session_iter)
+        else:
+            securitys.scan(session=get_session_string(session_iter))
+            reset_handler()
+
+    securitys.show()
+
+    reset_handler()
+    securitys = UDS_SecurityAccessEnumerator(sock)
+    securitys.scan(session=get_session_string(1))
+    reset_handler()
+
+    for session_iter in available_sessions:
+        if enter_session(sock, session_iter) is False:
+            print("Error during session change to session %d" % session_iter)
+        else:
+            securitys.scan(session=get_session_string(session_iter))
+            reset_handler()
+
+    securitys.show()

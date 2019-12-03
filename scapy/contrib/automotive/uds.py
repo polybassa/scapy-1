@@ -1511,9 +1511,7 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
             if resp is None or resp.service == 0x7f:
                 continue
 
-            self.results.append((self.session,
-                                 resp.sprintf("%UDS_RDBIPR.dataIdentifier%"),
-                                 resp.load))
+            self.results.append((self.session, resp))
 
     @staticmethod
     def get_table_entry(tup):
@@ -1523,10 +1521,59 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         Args:
             tup: tuple with session and UDS response package
         """
-        session, identifier, load = tup
+        session, resp = tup
+        identifier = resp.sprintf("%UDS_RDBIPR.dataIdentifier%")
+        load = resp.load
+
         return (session,
                 identifier,
                 "%s" % ((load[:20] + b"...") if len(load) > 20 else load))
+
+
+class UDS_WDBIEnumerator(UDS_Enumerator):
+    """ Enumerates every  ID
+        and returns list of tuples. Each tuple contains
+        the session and the respective positive response
+
+    Args:
+        sock: socket where packet is sent periodically
+        session: session in which the services are enumerated
+    """
+
+    def __init__(self, sock, session="DefaultSession"):
+        UDS_Enumerator.__init__(self, sock)
+        self.session = session
+
+    def scan(self, session=None, scan_range=range(0x10000), rdbi_list=None,
+             **kwargs):
+        self.session = session or self.session
+        _tm = kwargs.pop("timeout", 0.7)
+        _verb = kwargs.pop("verbose", False)
+
+        if rdbi_list is None:
+            pkts = (UDS() / UDS_WDBI(dataIdentifier=x) for x in scan_range)
+        else:
+            pkts = (UDS() / UDS_WDBI(dataIdentifier=resp.dataIdentifier) /
+                    resp.load for _, resp in rdbi_list)
+
+        for pkt in pkts:
+            resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb, **kwargs)
+            if resp is None:
+                continue
+
+            self.results.append((self.session, pkt.dataIdentifier, resp))
+
+    @staticmethod
+    def get_table_entry(tup):
+        """ Helping function for make_lined_table.
+            Returns the session and response code of tup.
+
+        Args:
+            tup: tuple with session and UDS response package
+        """
+        session, identifier, resp = tup
+
+        return (session, identifier, repr(resp))
 
 
 class UDS_SecurityAccessEnumerator(UDS_Enumerator):
@@ -1601,18 +1648,14 @@ def enter_session(*args, **kwargs):
 def execute_session_based_scan(sock, reset_handler, enumerator,
                                sessions, **kwargs):
     reset_handler()
-    enum = enumerator(sock)
-    enum.scan(session=get_session_string(1), **kwargs)
-    reset_handler()
-
-    for session_iter in sessions:
+    for session_iter in [1] + list(sessions):
         if enter_session(sock, session_iter) is False:
             print("Error during session change to session %d" % session_iter)
         else:
-            enum.scan(session=get_session_string(session_iter), **kwargs)
+            enumerator.scan(session=get_session_string(session_iter), **kwargs)
         reset_handler()
 
-    enum.show()
+    enumerator.show()
 
 
 def UDS_Scan(sock, reset_handler, **kwargs):
@@ -1630,22 +1673,27 @@ def UDS_Scan(sock, reset_handler, **kwargs):
     available_sessions.remove(1)
 
     execute_session_based_scan(sock, reset_handler,
-                               UDS_ServiceEnumerator,
+                               UDS_ServiceEnumerator(sock),
                                available_sessions)
 
-    execute_session_based_scan(sock, reset_handler, UDS_RDBIEnumerator,
+    rdbi = UDS_RDBIEnumerator(sock)
+    execute_session_based_scan(sock, reset_handler, rdbi,
                                available_sessions,
                                scan_range=kwargs.pop("rdbi_scan_range",
                                                      range(0x10000)))
 
+    execute_session_based_scan(sock, reset_handler, UDS_WDBIEnumerator(sock),
+                               available_sessions,
+                               rdbi_list=rdbi.results)
+
     execute_session_based_scan(sock, reset_handler,
-                               UDS_SecurityAccessEnumerator,
+                               UDS_SecurityAccessEnumerator(sock),
                                available_sessions)
 
     execute_session_based_scan(sock, reset_handler,
-                               UDS_SecurityAccessEnumerator,
+                               UDS_SecurityAccessEnumerator(sock),
                                available_sessions)
 
     execute_session_based_scan(sock, reset_handler,
-                               UDS_SecurityAccessEnumerator,
+                               UDS_SecurityAccessEnumerator(sock),
                                available_sessions)

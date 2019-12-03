@@ -1598,6 +1598,22 @@ def enter_session(*args, **kwargs):
         enter_through_extended(*args, **kwargs)
 
 
+def execute_session_based_scan(sock, reset_handler, enumerator, sessions, **kwargs):
+    reset_handler()
+    enum = enumerator(sock)
+    enum.scan(session=get_session_string(1), **kwargs)
+    reset_handler()
+
+    for session_iter in sessions:
+        if enter_session(sock, session_iter) is False:
+            print("Error during session change to session %d" % session_iter)
+        else:
+            enum.scan(session=get_session_string(session_iter), **kwargs)
+        reset_handler()
+
+    enum.show()
+
+
 def UDS_Scan(sock, reset_handler, **kwargs):
     reset_handler()
     sessions = UDS_SessionEnumerator(sock, reset_handler=reset_handler)
@@ -1610,75 +1626,26 @@ def UDS_Scan(sock, reset_handler, **kwargs):
                              [req.diagnosticSessionType
                               for req, _ in sessions.results])
 
-    reset_handler()
-    services = UDS_ServiceEnumerator(sock)
-    services.scan(session=get_session_string(1))
-    reset_handler()
+    available_sessions.remove(1)
 
-    for session_iter in available_sessions:
-        if enter_session(sock, session_iter) is False:
-            print("Error during session change to session %d" % session_iter)
-        else:
-            services.scan(session=get_session_string(session_iter))
-        reset_handler()
+    execute_session_based_scan(sock, reset_handler,
+                               UDS_ServiceEnumerator,
+                               available_sessions)
 
-    services.show()
-
-    reset_handler()
-    identifiers = UDS_RDBIEnumerator(sock)
     _scan_range = kwargs.pop("rdbi_scan_range", range(0x10000))
-    identifiers.scan(scan_range=_scan_range,
-                     session=get_session_string(1))
-    reset_handler()
+    execute_session_based_scan(sock, reset_handler, UDS_RDBIEnumerator,
+                               available_sessions, scan_range=_scan_range)
 
-    for session_iter in available_sessions:
-        if enter_session(sock, session_iter) is False:
-            print("Error during session change to session %d" % session_iter)
-        else:
-            identifiers.scan(session=get_session_string(session_iter),
-                             scan_range=_scan_range)
-        reset_handler()
+    execute_session_based_scan(sock, reset_handler,
+                               UDS_SecurityAccessEnumerator,
+                               available_sessions)
 
-    identifiers.show()
+    execute_session_based_scan(sock, reset_handler,
+                               UDS_SecurityAccessEnumerator,
+                               available_sessions)
 
-    reset_handler()
-    securitys = UDS_SecurityAccessEnumerator(sock)
-    securitys.scan(session=get_session_string(1))
-    reset_handler()
+    execute_session_based_scan(sock, reset_handler,
+                               UDS_SecurityAccessEnumerator,
+                               available_sessions)
 
-    for session_iter in available_sessions:
-        if enter_session(sock, session_iter) is False:
-            print("Error during session change to session %d" % session_iter)
-        else:
-            securitys.scan(session=get_session_string(session_iter))
-        reset_handler()
 
-    securitys.show()
-
-    reset_handler()
-    securitys = UDS_SecurityAccessEnumerator(sock)
-    securitys.scan(session=get_session_string(1))
-    reset_handler()
-
-    for session_iter in available_sessions:
-        if enter_session(sock, session_iter) is False:
-            print("Error during session change to session %d" % session_iter)
-        else:
-            securitys.scan(session=get_session_string(session_iter))
-        reset_handler()
-
-    securitys.show()
-
-    reset_handler()
-    securitys = UDS_SecurityAccessEnumerator(sock)
-    securitys.scan(session=get_session_string(1))
-    reset_handler()
-
-    for session_iter in available_sessions:
-        if enter_session(sock, session_iter) is False:
-            print("Error during session change to session %d" % session_iter)
-        else:
-            securitys.scan(session=get_session_string(session_iter))
-        reset_handler()
-
-    securitys.show()

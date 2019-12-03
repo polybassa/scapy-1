@@ -1558,10 +1558,10 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
 
         for pkt in pkts:
             resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb, **kwargs)
-            if resp is None:
+            if resp is None or resp.service == 0x7f:
                 continue
 
-            self.results.append((self.session, pkt.dataIdentifier, resp))
+            self.results.append((self.session, resp))
 
     @staticmethod
     def get_table_entry(tup):
@@ -1571,9 +1571,10 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
         Args:
             tup: tuple with session and UDS response package
         """
-        session, identifier, resp = tup
+        session, resp = tup
+        identifier = resp.sprintf("%UDS_WDBIPR.dataIdentifier%")
 
-        return (session, identifier, repr(resp))
+        return session, identifier, "Writeable"
 
 
 class UDS_SecurityAccessEnumerator(UDS_Enumerator):

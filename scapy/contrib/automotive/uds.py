@@ -17,6 +17,7 @@ from scapy.config import conf
 from scapy.error import log_loading
 from scapy.utils import PeriodicSenderThread, make_lined_table
 from scapy.contrib.isotp import ISOTP
+from scapy.utils import hexdump
 
 """
 UDS
@@ -1564,7 +1565,7 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
             tup: tuple with session and UDS response package
         """
         session, securityAccessType, securitySeed = tup
-        return session, securityAccessType, securitySeed
+        return session, securityAccessType, hexdump(securitySeed, dump=True)
 
 
 def get_session_string(session):
@@ -1605,7 +1606,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
 
     reset_handler()
 
-    available_sessions = set([1, 2, 3] +
+    available_sessions = set([2, 3] +
                              [req.diagnosticSessionType
                               for req, _ in sessions.results])
 
@@ -1681,3 +1682,4 @@ def UDS_Scan(sock, reset_handler, **kwargs):
             reset_handler()
 
     securitys.show()
+

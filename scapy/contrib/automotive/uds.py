@@ -1598,7 +1598,8 @@ def enter_session(*args, **kwargs):
         enter_through_extended(*args, **kwargs)
 
 
-def execute_session_based_scan(sock, reset_handler, enumerator, sessions, **kwargs):
+def execute_session_based_scan(sock, reset_handler, enumerator,
+                               sessions, **kwargs):
     reset_handler()
     enum = enumerator(sock)
     enum.scan(session=get_session_string(1), **kwargs)
@@ -1632,9 +1633,10 @@ def UDS_Scan(sock, reset_handler, **kwargs):
                                UDS_ServiceEnumerator,
                                available_sessions)
 
-    _scan_range = kwargs.pop("rdbi_scan_range", range(0x10000))
     execute_session_based_scan(sock, reset_handler, UDS_RDBIEnumerator,
-                               available_sessions, scan_range=_scan_range)
+                               available_sessions,
+                               scan_range=kwargs.pop("rdbi_scan_range",
+                                                     range(0x10000)))
 
     execute_session_based_scan(sock, reset_handler,
                                UDS_SecurityAccessEnumerator,

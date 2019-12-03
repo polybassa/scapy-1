@@ -1649,5 +1649,3 @@ def UDS_Scan(sock, reset_handler, **kwargs):
     execute_session_based_scan(sock, reset_handler,
                                UDS_SecurityAccessEnumerator,
                                available_sessions)
-
-

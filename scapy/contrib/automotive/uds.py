@@ -1552,8 +1552,8 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
                 continue
 
             self.results.append((self.session,
-                                 resp.sprintf("%UDS_SA.securityAccessType%"),
-                                 repr(resp)))
+                                 resp.securityAccessType,
+                                 resp.securitySeed))
 
     @staticmethod
     def get_table_entry(tup):
@@ -1563,8 +1563,8 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
         Args:
             tup: tuple with session and UDS response package
         """
-        session, level, load = tup
-        return session, level, load
+        session, securityAccessType, securitySeed = tup
+        return session, securityAccessType, securitySeed
 
 
 def get_session_string(session):

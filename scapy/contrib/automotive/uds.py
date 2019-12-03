@@ -1682,4 +1682,3 @@ def UDS_Scan(sock, reset_handler, **kwargs):
             reset_handler()
 
     securitys.show()
-

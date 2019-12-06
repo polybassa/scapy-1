@@ -1570,8 +1570,6 @@ def UDS_Scan(sock, reset_handler, **kwargs):
                               for session, req, _ in
                               sessions.filter_results()])
 
-    available_sessions.remove(1)
-
     execute_session_based_scan(sock, reset_handler,
                                UDS_ServiceEnumerator(sock),
                                available_sessions)

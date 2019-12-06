@@ -17,6 +17,7 @@ from scapy.config import conf
 from scapy.error import log_loading, Scapy_Exception
 from scapy.utils import PeriodicSenderThread, make_lined_table
 from scapy.contrib.isotp import ISOTP
+from scapy.modules import six
 
 
 """
@@ -1383,30 +1384,32 @@ class UDS_Enumerator(object):
     def get_table_entry(tup):
         raise NotImplementedError
 
+    @staticmethod
+    def get_label(response, positive_case="PositiveResponse"):
+        if response is None:
+            label = "Timeout"
+        elif response.service == 0x7f:
+            label = response.sprintf("%UDS_NR.negativeResponseCode%")
+        else:
+            if isinstance(positive_case, six.string_types):
+                label = positive_case
+            elif callable(positive_case):
+                label = positive_case()
+            else:
+                raise Scapy_Exception("Unsupported Type for positive_case. "
+                                      "Provide a string or a function.")
+        return label
+
 
 class UDS_SessionEnumerator(UDS_Enumerator):
-    """ Enumerates session ID's in given range
-        and returns list of UDS()/UDS_DSC() packets
-        with valid session types
-
-    Args:
-        sock: socket where packets are sent
-        session_range: range for session ID's
-        reset_wait: wait time in sec after every packet
-    """
     description = "Available sessions"
 
     def scan(self, session="DefaultSession", session_range=range(0x100),
              reset_handler=None, **kwargs):
-        _tm = kwargs.pop("timeout", 0.4)
-        _verb = kwargs.pop("verbose", False)
-
-        reqs = UDS() / UDS_DSC(diagnosticSessionType=session_range)
-
+        pkts = UDS() / UDS_DSC(diagnosticSessionType=session_range)
         reset_handler()
-        for req in reqs:
-            resp = self.sock.sr1(req, timeout=_tm, verbose=_verb, **kwargs)
-            self.results.append((session, req, resp))
+        for req in pkts:
+            super(UDS_SessionEnumerator, self).scan(session, [req], **kwargs)
             reset_handler()
 
     def filter_results(self):
@@ -1418,12 +1421,7 @@ class UDS_SessionEnumerator(UDS_Enumerator):
     @staticmethod
     def get_table_entry(tup):
         _, req, res = tup
-        if res is None:
-            label = "Timeout"
-        elif res.service == 0x7f:
-            label = res.sprintf("%UDS_NR.negativeResponseCode%")
-        else:
-            label = "Supported"
+        label = UDS_Enumerator.get_label(res, "Supported")
         return ("Session",
                 "0x%02x: %s" % (req.diagnosticSessionType, req.sprintf(
                     "%UDS_DSC.diagnosticSessionType%")),
@@ -1446,12 +1444,7 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
     @staticmethod
     def get_table_entry(tup):
         session, req, res = tup
-        if res is None:
-            label = "Timeout"
-        elif res.service == 0x7f:
-            label = res.sprintf("%UDS_NR.negativeResponseCode%")
-        else:
-            label = "PositiveResponse"
+        label = UDS_Enumerator.get_label(res)
         return (session,
                 "0x%02x: %s" % (req.service, req.sprintf("%UDS.service%")),
                 label)
@@ -1468,13 +1461,10 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
     @staticmethod
     def get_table_entry(tup):
         session, req, res = tup
-        if res is None:
-            label = "Timeout"
-        elif res.service == 0x7f:
-            label = res.sprintf("%UDS_NR.negativeResponseCode%")
-        else:
-            label = "%s" % ((res.load[:17] + b"...") if
-                            len(res.load) > 20 else res.load)
+        label = UDS_Enumerator.get_label(
+            res, positive_case=lambda:
+            "%s" % ((res.load[:17] + b"...") if
+                    len(res.load) > 20 else res.load))
         return (session,
                 "0x%02x: %s" % (req.identifiers[0],
                                 req.sprintf("%UDS_RDBI.identifiers%")[1:-1]),
@@ -1501,12 +1491,7 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
     @staticmethod
     def get_table_entry(tup):
         session, req, res = tup
-        if res is None:
-            label = "Timeout"
-        elif res.service == 0x7f:
-            label = res.sprintf("%UDS_NR.negativeResponseCode%")
-        else:
-            label = "Writeable"
+        label = UDS_Enumerator.get_label(res, "Writeable")
         return (session,
                 "0x%02x: %s" % (req.dataIdentifier,
                                 req.sprintf("%UDS_WDBI.dataIdentifier%")),
@@ -1524,12 +1509,8 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
     @staticmethod
     def get_table_entry(tup):
         session, req, res = tup
-        if res is None:
-            label = "Timeout"
-        elif res.service == 0x7f:
-            label = "Not Supported"
-        else:
-            label = res.securitySeed
+        label = UDS_Enumerator.get_label(
+            res, positive_case=lambda: res.securitySeed)
         return session, req.securityAccessType, label
 
 
@@ -1586,7 +1567,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
 
     available_sessions = set([2, 3] +
                              [req.diagnosticSessionType
-                              for req, _ in sessions.results])
+                              for session, req, _ in sessions.results])
 
     available_sessions.remove(1)
 

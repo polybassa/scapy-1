@@ -743,12 +743,12 @@ def colgen(*lstcol, **kargs):
     if len(lstcol) < 2:
         lstcol *= 2
     trans = kargs.get("trans", lambda x, y, z: (x, y, z))
+    length = len(lstcol)
     while True:
-        for i in range(len(lstcol)):
-            for j in range(len(lstcol)):
-                for k in range(len(lstcol)):
-                    if i != j or j != k or k != i:
-                        yield trans(lstcol[(i + j) % len(lstcol)], lstcol[(j + k) % len(lstcol)], lstcol[(k + i) % len(lstcol)])  # noqa: E501
+        for i, j, k in zip(range(length), range(length), range(length)):
+            if i != j or j != k or k != i:
+                yield trans(lstcol[(i + j) % length], lstcol[(j + k) % length],
+                            lstcol[(k + i) % length])
 
 
 def incremental_label(label="tag%05i", start=0):

@@ -14,7 +14,7 @@ from scapy.fields import ByteEnumField, StrField, ConditionalField, \
     ShortField, ObservableDict, XShortEnumField, XByteEnumField
 from scapy.packet import Packet, bind_layers, NoPayload
 from scapy.config import conf
-from scapy.error import log_loading
+from scapy.error import log_loading, Scapy_Exception
 from scapy.utils import PeriodicSenderThread, make_lined_table
 from scapy.contrib.isotp import ISOTP
 
@@ -1348,27 +1348,36 @@ class UDS_TesterPresentSender(PeriodicSenderThread):
         PeriodicSenderThread.__init__(self, sock, pkt, interval)
 
 
-class UDS_Enumerator:
+class UDS_Enumerator(object):
     """ Base class for Enumerators
 
     Args:
         sock: socket where enumeration takes place
     """
+    description = "About my results"
 
     def __init__(self, sock):
         self.sock = sock
         self.results = list()
-        self.description = "About my results"
 
-    def scan(self, *args, **kwargs):
-        raise NotImplementedError
+    def scan(self, session, requests, **kwargs):
+        _tm = kwargs.pop("timeout", 0.5)
+        _verb = kwargs.pop("verbose", False)
+        for req in requests:
+            res = self.sock.sr1(req, timeout=_tm, verbose=_verb, **kwargs)
+            self.results.append((session, req, res))
 
     def reset(self):
         self.results = list()
 
-    def show(self):
+    def filter_results(self):
+        return [(session, req, res) for session, req, res in self.results
+                if res is not None]
+
+    def show(self, filtered=True):
+        data = self.results if not filtered else self.filter_results()
         print(self.description)
-        make_lined_table(self.results, self.get_table_entry)
+        make_lined_table(data, self.get_table_entry)
 
     @staticmethod
     def get_table_entry(tup):
@@ -1385,18 +1394,12 @@ class UDS_SessionEnumerator(UDS_Enumerator):
         session_range: range for session ID's
         reset_wait: wait time in sec after every packet
     """
+    description = "Available sessions"
 
     def __init__(self, sock, session_range=range(0x100), reset_handler=None):
-        """
-        Args:
-            sock: socket where packets are sent
-            session_range: range for session ID's
-            reset_handler:
-        """
-        UDS_Enumerator.__init__(self, sock)
+        super(UDS_SessionEnumerator, self).__init__(sock)
         self.range = session_range
         self.reset_handler = reset_handler
-        self.description = "Available session"
 
     def scan(self, **kwargs):
         _tm = kwargs.pop("timeout", 0.4)
@@ -1437,192 +1440,106 @@ class UDS_SessionEnumerator(UDS_Enumerator):
 
 
 class UDS_ServiceEnumerator(UDS_Enumerator):
-    """ Enumerates every service ID
-        and returns list of tuples. Each tuple contains
-        the session and the respective positive response
+    description = "Available services and negative response per session"
 
-    Args:
-        sock: socket where packet is sent periodically
-        session: session in which the services are enumerated
-    """
-
-    def __init__(self, sock, session="DefaultSession", filter_responses=True):
-        UDS_Enumerator.__init__(self, sock)
-        self.session = session
-        self.filter = filter_responses
-        self.description = "Available services and negative response " \
-                           "per session"
-
-    def scan(self, session=None, **kwargs):
-        self.session = session or self.session
-        _inter = kwargs.pop("inter", 0.1)
-        _tm = kwargs.pop("timeout", _inter * 0x100)
-        _verb = kwargs.pop("verbose", False)
+    def scan(self, session="DefaultSession", **kwargs):
         pkts = (UDS(service=x) for x in set(x & ~0x40 for x in range(0x100)))
-        res = self.sock.sr(pkts, timeout=_tm,
-                           verbose=_verb, inter=_inter, **kwargs)
-        self.results += [(self.session, p) for _, p in res[0] if
-                         p.service != 0x7f or
-                         (p.negativeResponseCode not in [0x10, 0x11] or
-                          not self.filter)]
+        super(UDS_ServiceEnumerator, self).scan(session, pkts, **kwargs)
+
+    def filter_results(self):
+        return [(session, req, res) for session, req, res in
+                super(UDS_ServiceEnumerator, self).filter_results()
+                if res.service != 0x7f or
+                res.negativeResponseCode not in [0x10, 0x11]]
 
     @staticmethod
     def get_table_entry(tup):
-        """ Helping function for make_lined_table.
-            Returns the session and response code of tup.
-
-        Args:
-            tup: tuple with session and UDS response package
-
-        Example:
-            make_lined_table([('DefaultSession', UDS()/UDS_SAPR(),
-                               'ExtendDiagnosticSession', UDS()/UDS_IOCBI())],
-                               get_table_entry)
-        """
-        session, pkt = tup
-        if pkt.service == 0x7f:
-            return (session,
-                    "0x%02x: %s" % (pkt.requestServiceId,
-                                    pkt.sprintf("%UDS_NR.requestServiceId%")),
-                    pkt.sprintf("%UDS_NR.negativeResponseCode%"))
+        session, req, res = tup
+        if res is None:
+            label = "Timeout"
+        elif res.service == 0x7f:
+            label = res.sprintf("%UDS_NR.negativeResponseCode%")
         else:
-            return (session,
-                    "0x%02x: %s" % (pkt.service & ~0x40,
-                                    pkt.get_field('service').
-                                    i2s[pkt.service & ~0x40]),
-                    "PositiveResponse")
+            label = "PositiveResponse"
+        return (session,
+                "0x%02x: %s" % (req.service, req.sprintf("%UDS.service%")),
+                label)
 
 
 class UDS_RDBIEnumerator(UDS_Enumerator):
-    """ Enumerates every  ID
-        and returns list of tuples. Each tuple contains
-        the session and the respective positive response
+    description = "Readable data identifier per session"
 
-    Args:
-        sock: socket where packet is sent periodically
-        session: session in which the services are enumerated
-    """
-
-    def __init__(self, sock, session="DefaultSession"):
-        UDS_Enumerator.__init__(self, sock)
-        self.session = session
-        self.description = "Readable data identifier per session"
-
-    def scan(self, session=None, scan_range=range(0x10000), **kwargs):
-        self.session = session or self.session
-        _tm = kwargs.pop("timeout", 0.7)
-        _verb = kwargs.pop("verbose", False)
-        for pkt in (UDS() / UDS_RDBI(identifiers=[x]) for x in scan_range):
-            resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb, **kwargs)
-            if resp is None or resp.service == 0x7f:
-                continue
-
-            self.results.append((self.session, resp))
+    def scan(self, session="DefaultSession", scan_range=range(0x10000),
+             **kwargs):
+        pkts = (UDS() / UDS_RDBI(identifiers=[x]) for x in scan_range)
+        super(UDS_RDBIEnumerator, self).scan(session, pkts, **kwargs)
 
     @staticmethod
     def get_table_entry(tup):
-        """ Helping function for make_lined_table.
-            Returns the session and response code of tup.
-
-        Args:
-            tup: tuple with session and UDS response package
-        """
-        session, resp = tup
-        identifier = resp.sprintf("%UDS_RDBIPR.dataIdentifier%")
-        load = resp.load
-
+        session, req, res = tup
+        if res is None:
+            label = "Timeout"
+        elif res.service == 0x7f:
+            label = res.sprintf("%UDS_NR.negativeResponseCode%")
+        else:
+            label = "%s" % ((res.load[:17] + b"...") if
+                            len(res.load) > 20 else res.load)
         return (session,
-                identifier,
-                "%s" % ((load[:20] + b"...") if len(load) > 20 else load))
+                "0x%02x: %s" % (req.identifiers[0],
+                                req.sprintf("%UDS_RDBI.identifiers%")[1:-1]),
+                label)
 
 
 class UDS_WDBIEnumerator(UDS_Enumerator):
-    """ Enumerates every  ID
-        and returns list of tuples. Each tuple contains
-        the session and the respective positive response
+    description = "Writeable data identifier"
 
-    Args:
-        sock: socket where packet is sent periodically
-        session: session in which the services are enumerated
-    """
-
-    def __init__(self, sock, session="DefaultSession"):
-        UDS_Enumerator.__init__(self, sock)
-        self.session = session
-        self.description = "Writeable data identifier"
-
-    def scan(self, session=None, scan_range=range(0x10000), rdbi_list=None,
+    def scan(self, session="DefaultSession", scan_range=range(0x10000),
+             rdbi_enumerator=None,
              **kwargs):
-        self.session = session or self.session
-        _tm = kwargs.pop("timeout", 0.7)
-        _verb = kwargs.pop("verbose", False)
 
-        if rdbi_list is None:
+        if rdbi_enumerator is None:
             pkts = (UDS() / UDS_WDBI(dataIdentifier=x) for x in scan_range)
+        elif isinstance(rdbi_enumerator, UDS_RDBIEnumerator):
+            pkts = (UDS() / UDS_WDBI(dataIdentifier=res.dataIdentifier) /
+                    res.load for _, _, res in rdbi_enumerator.results)
         else:
-            pkts = (UDS() / UDS_WDBI(dataIdentifier=resp.dataIdentifier) /
-                    resp.load for _, resp in rdbi_list)
-
-        for pkt in pkts:
-            resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb, **kwargs)
-            if resp is None or resp.service == 0x7f:
-                continue
-
-            self.results.append((self.session, resp))
+            raise Scapy_Exception("rdbi_enumerator has to be an instance "
+                                  "of UDS_RDBIEnumerator")
+        super(UDS_WDBIEnumerator, self).scan(session, pkts, **kwargs)
 
     @staticmethod
     def get_table_entry(tup):
-        """ Helping function for make_lined_table.
-            Returns the session and response code of tup.
-
-        Args:
-            tup: tuple with session and UDS response package
-        """
-        session, resp = tup
-        identifier = resp.sprintf("%UDS_WDBIPR.dataIdentifier%")
-
-        return session, identifier, "Writeable"
+        session, req, res = tup
+        if res is None:
+            label = "Timeout"
+        elif res.service == 0x7f:
+            label = res.sprintf("%UDS_NR.negativeResponseCode%")
+        else:
+            label = "Writeable"
+        return (session,
+                "0x%02x: %s" % (req.dataIdentifier,
+                                req.sprintf("%UDS_WDBI.dataIdentifier%")),
+                label)
 
 
 class UDS_SecurityAccessEnumerator(UDS_Enumerator):
-    """ Enumerates every Security Seed
-        and returns list of tuples. Each tuple contains
-        the session and the respective Seed
-    Args:
-        sock: socket where packet is sent periodically
-        session: session in which the services are enumerated
-    """
+    description = "Available security seeds with access type and session"
 
-    def __init__(self, sock, session="DefaultSession"):
-        UDS_Enumerator.__init__(self, sock)
-        self.session = session
-        self.description = "Available security seeds " \
-                           "with access type and session"
-
-    def scan(self, session=None, **kwargs):
-        self.session = session or self.session
-        _tm = kwargs.pop("timeout", 0.7)
-        _verb = kwargs.pop("verbose", False)
-        for pkt in (UDS() / UDS_SA(securityAccessType=x)
-                    for x in range(1, 0xff, 2)):
-            resp = self.sock.sr1(pkt, timeout=_tm, verbose=_verb, **kwargs)
-            if resp is None or resp.service == 0x7f:
-                continue
-
-            self.results.append((self.session,
-                                 resp.securityAccessType,
-                                 resp.securitySeed))
+    def scan(self, session="DefaultSesion", **kwargs):
+        pkts = (UDS() / UDS_SA(securityAccessType=x)
+                for x in range(1, 0xff, 2))
+        super(UDS_SecurityAccessEnumerator, self).scan(session, pkts, **kwargs)
 
     @staticmethod
     def get_table_entry(tup):
-        """ Helping function for make_lined_table.
-            Returns the session and response code of tup.
-
-        Args:
-            tup: tuple with session and UDS response package
-        """
-        session, securityAccessType, securitySeed = tup
-        return session, securityAccessType, securitySeed
+        session, req, res = tup
+        if res is None:
+            label = "Timeout"
+        elif res.service == 0x7f:
+            label = "Not Supported"
+        else:
+            label = res.securitySeed
+        return session, req.securityAccessType, label
 
 
 def get_session_string(session):
@@ -1694,7 +1611,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
 
     execute_session_based_scan(sock, reset_handler, UDS_WDBIEnumerator(sock),
                                available_sessions,
-                               rdbi_list=rdbi.results)
+                               rdbi_enumerator=rdbi)
 
     execute_session_based_scan(sock, reset_handler,
                                UDS_SecurityAccessEnumerator(sock),

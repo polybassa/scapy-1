@@ -1396,47 +1396,38 @@ class UDS_SessionEnumerator(UDS_Enumerator):
     """
     description = "Available sessions"
 
-    def __init__(self, sock, session_range=range(0x100), reset_handler=None):
-        super(UDS_SessionEnumerator, self).__init__(sock)
-        self.range = session_range
-        self.reset_handler = reset_handler
-
-    def scan(self, **kwargs):
+    def scan(self, session="DefaultSession", session_range=range(0x100),
+             reset_handler=None, **kwargs):
         _tm = kwargs.pop("timeout", 0.4)
         _verb = kwargs.pop("verbose", False)
 
-        reqs = UDS() / UDS_DSC(diagnosticSessionType=self.range)
+        reqs = UDS() / UDS_DSC(diagnosticSessionType=session_range)
 
-        self.reset_handler()
+        reset_handler()
         for req in reqs:
             resp = self.sock.sr1(req, timeout=_tm, verbose=_verb, **kwargs)
-            if resp is None:
-                continue
-            if resp.service == 0x7f and \
-                    resp.negativeResponseCode in [0x10, 0x11, 0x12]:
-                continue
-            self.results += [(req, resp)]
-            self.reset_handler()
+            self.results.append((session, req, resp))
+            reset_handler()
+
+    def filter_results(self):
+        return [(session, req, res) for session, req, res in
+                super(UDS_SessionEnumerator, self).filter_results()
+                if res.service != 0x7f or
+                res.negativeResponseCode not in [0x10, 0x11, 0x12]]
 
     @staticmethod
     def get_table_entry(tup):
-        """ Helping function for make_lined_table.
-            Returns the session and response code of tup.
-
-        Args:
-            tup: tuple with session and UDS response package
-        """
-        req, res = tup
-        if res.service == 0x7f:
-            return ("Session",
-                    "0x%02x: %s" % (req.diagnosticSessionType, req.sprintf(
-                        "%UDS_DSC.diagnosticSessionType%")),
-                    res.sprintf("%UDS_NR.negativeResponseCode%"))
+        _, req, res = tup
+        if res is None:
+            label = "Timeout"
+        elif res.service == 0x7f:
+            label = res.sprintf("%UDS_NR.negativeResponseCode%")
         else:
-            return ("Session",
-                    "0x%02x: %s" % (req.diagnosticSessionType, req.sprintf(
-                        "%UDS_DSC.diagnosticSessionType%")),
-                    "Supported")
+            label = "Supported"
+        return ("Session",
+                "0x%02x: %s" % (req.diagnosticSessionType, req.sprintf(
+                    "%UDS_DSC.diagnosticSessionType%")),
+                label)
 
 
 class UDS_ServiceEnumerator(UDS_Enumerator):

@@ -1578,8 +1578,8 @@ def execute_session_based_scan(sock, reset_handler, enumerator,
 
 def UDS_Scan(sock, reset_handler, **kwargs):
     reset_handler()
-    sessions = UDS_SessionEnumerator(sock, reset_handler=reset_handler)
-    sessions.scan()
+    sessions = UDS_SessionEnumerator(sock)
+    sessions.scan(reset_handler=reset_handler)
     sessions.show()
 
     reset_handler()

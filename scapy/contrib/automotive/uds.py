@@ -1567,7 +1567,8 @@ def UDS_Scan(sock, reset_handler, **kwargs):
 
     available_sessions = set([2, 3] +
                              [req.diagnosticSessionType
-                              for session, req, _ in sessions.filter_results()])
+                              for session, req, _ in
+                              sessions.filter_results()])
 
     available_sessions.remove(1)
 

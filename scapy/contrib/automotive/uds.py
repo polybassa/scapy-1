@@ -1482,7 +1482,8 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
             pkts = (UDS() / UDS_WDBI(dataIdentifier=x) for x in scan_range)
         elif isinstance(rdbi_enumerator, UDS_RDBIEnumerator):
             pkts = (UDS() / UDS_WDBI(dataIdentifier=res.dataIdentifier) /
-                    res.load for _, _, res in rdbi_enumerator.filter_results())
+                    res.load for _, _, res in rdbi_enumerator.filter_results()
+                    if res.service != 0x7f)
         else:
             raise Scapy_Exception("rdbi_enumerator has to be an instance "
                                   "of UDS_RDBIEnumerator")

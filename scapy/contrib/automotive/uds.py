@@ -1356,6 +1356,7 @@ class UDS_Enumerator(object):
         sock: socket where enumeration takes place
     """
     description = "About my results"
+    negative_response_blacklist = []
 
     def __init__(self, sock):
         self.sock = sock
@@ -1373,10 +1374,13 @@ class UDS_Enumerator(object):
 
     def filter_results(self):
         return [(session, req, res) for session, req, res in self.results
-                if res is not None]
+                if res is not None and
+                (res.service != 0x7f or res.negativeResponseCode
+                 not in self.negative_response_blacklist)]
 
     def show(self, filtered=True):
         data = self.results if not filtered else self.filter_results()
+        print("\r\n" + "-" * 20)
         print(self.description)
         make_lined_table(data, self.get_table_entry)
 
@@ -1403,6 +1407,7 @@ class UDS_Enumerator(object):
 
 class UDS_SessionEnumerator(UDS_Enumerator):
     description = "Available sessions"
+    negative_response_blacklist = [0x10, 0x11, 0x12]
 
     def scan(self, session="DefaultSession", session_range=range(2, 0x100),
              reset_handler=None, **kwargs):
@@ -1412,12 +1417,6 @@ class UDS_SessionEnumerator(UDS_Enumerator):
             super(UDS_SessionEnumerator, self).scan(session, [req], timeout=1,
                                                     **kwargs)
             reset_handler()
-
-    def filter_results(self):
-        return [(session, req, res) for session, req, res in
-                super(UDS_SessionEnumerator, self).filter_results()
-                if res.service != 0x7f or
-                res.negativeResponseCode not in [0x10, 0x11, 0x12]]
 
     @staticmethod
     def get_table_entry(tup):
@@ -1431,16 +1430,11 @@ class UDS_SessionEnumerator(UDS_Enumerator):
 
 class UDS_ServiceEnumerator(UDS_Enumerator):
     description = "Available services and negative response per session"
+    negative_response_blacklist = [0x10, 0x11]
 
     def scan(self, session="DefaultSession", **kwargs):
         pkts = (UDS(service=x) for x in set(x & ~0x40 for x in range(0x100)))
         super(UDS_ServiceEnumerator, self).scan(session, pkts, **kwargs)
-
-    def filter_results(self):
-        return [(session, req, res) for session, req, res in
-                super(UDS_ServiceEnumerator, self).filter_results()
-                if res.service != 0x7f or
-                res.negativeResponseCode not in [0x10, 0x11]]
 
     @staticmethod
     def get_table_entry(tup):
@@ -1453,6 +1447,7 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
 
 class UDS_RDBIEnumerator(UDS_Enumerator):
     description = "Readable data identifier per session"
+    negative_response_blacklist = [0x10, 0x11, 0x12, 0x31]
 
     def scan(self, session="DefaultSession", scan_range=range(0x10000),
              **kwargs):
@@ -1471,15 +1466,10 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
                                 req.sprintf("%UDS_RDBI.identifiers%")[1:-1]),
                 label)
 
-    def filter_results(self):
-        return [(session, req, res) for session, req, res in
-                super(UDS_RDBIEnumerator, self).filter_results()
-                if res.service != 0x7f or
-                res.negativeResponseCode not in [0x10, 0x11, 0x12, 0x31]]
-
 
 class UDS_WDBIEnumerator(UDS_Enumerator):
     description = "Writeable data identifier"
+    negative_response_blacklist = [0x10, 0x11, 0x12, 0x31]
 
     def scan(self, session="DefaultSession", scan_range=range(0x10000),
              rdbi_enumerator=None,
@@ -1508,6 +1498,7 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
 
 class UDS_SecurityAccessEnumerator(UDS_Enumerator):
     description = "Available security seeds with access type and session"
+    negative_response_blacklist = [0x10, 0x11, 0x12, 0x31]
 
     def scan(self, session="DefaultSesion", **kwargs):
         pkts = (UDS() / UDS_SA(securityAccessType=x)
@@ -1520,12 +1511,6 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
         label = UDS_Enumerator.get_label(
             res, positive_case=lambda: res.securitySeed)
         return session, req.securityAccessType, label
-
-    def filter_results(self):
-        return [(session, req, res) for session, req, res in
-                super(UDS_SecurityAccessEnumerator, self).filter_results()
-                if res.service != 0x7f or
-                res.negativeResponseCode not in [0x10, 0x11, 0x12, 0x31]]
 
 
 def get_session_string(session):

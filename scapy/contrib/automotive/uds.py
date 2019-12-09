@@ -1459,8 +1459,8 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         session, req, res = tup
         label = UDS_Enumerator.get_label(
             res, positive_case=lambda:
-            "%s" % ((res.load[:17] + b"...") if
-                    len(res.load) > 20 else res.load))
+            "%s" % ((bytes(res[2])[:17] + b"...") if
+                    len(res[2]) > 20 else res[2]))
         return (session,
                 "0x%02x: %s" % (req.identifiers[0],
                                 req.sprintf("%UDS_RDBI.identifiers%")[1:-1]),
@@ -1479,7 +1479,7 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
             pkts = (UDS() / UDS_WDBI(dataIdentifier=x) for x in scan_range)
         elif isinstance(rdbi_enumerator, UDS_RDBIEnumerator):
             pkts = (UDS() / UDS_WDBI(dataIdentifier=res.dataIdentifier) /
-                    res.load for _, _, res in rdbi_enumerator.filter_results()
+                    res[2] for _, _, res in rdbi_enumerator.filter_results()
                     if res.service != 0x7f)
         else:
             raise Scapy_Exception("rdbi_enumerator has to be an instance "

@@ -1568,6 +1568,8 @@ def UDS_Scan(sock, reset_handler, **kwargs):
 
     print(sessions.results)
 
+    print(sessions.filter_results())
+
     available_sessions = set([2, 3] +
                              [req.diagnosticSessionType
                               for session, req, _ in
@@ -1579,6 +1581,7 @@ def UDS_Scan(sock, reset_handler, **kwargs):
                                UDS_ServiceEnumerator(sock),
                                available_sessions)
 
+"""
     rdbi = UDS_RDBIEnumerator(sock)
     execute_session_based_scan(sock, reset_handler, rdbi,
                                available_sessions,
@@ -1600,3 +1603,4 @@ def UDS_Scan(sock, reset_handler, **kwargs):
     execute_session_based_scan(sock, reset_handler,
                                UDS_SecurityAccessEnumerator(sock),
                                available_sessions)
+"""

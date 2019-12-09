@@ -1471,6 +1471,12 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
                                 req.sprintf("%UDS_RDBI.identifiers%")[1:-1]),
                 label)
 
+    def filter_results(self):
+        return [(session, req, res) for session, req, res in
+                super(UDS_RDBIEnumerator, self).filter_results()
+                if res.service != 0x7f or
+                res.negativeResponseCode not in [0x10, 0x11, 0x12, 0x31]]
+
 
 class UDS_WDBIEnumerator(UDS_Enumerator):
     description = "Writeable data identifier"
@@ -1514,6 +1520,12 @@ class UDS_SecurityAccessEnumerator(UDS_Enumerator):
         label = UDS_Enumerator.get_label(
             res, positive_case=lambda: res.securitySeed)
         return session, req.securityAccessType, label
+
+    def filter_results(self):
+        return [(session, req, res) for session, req, res in
+                super(UDS_SecurityAccessEnumerator, self).filter_results()
+                if res.service != 0x7f or
+                res.negativeResponseCode not in [0x10, 0x11, 0x12, 0x31]]
 
 
 def get_session_string(session):

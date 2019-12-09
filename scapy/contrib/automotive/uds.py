@@ -1404,12 +1404,13 @@ class UDS_Enumerator(object):
 class UDS_SessionEnumerator(UDS_Enumerator):
     description = "Available sessions"
 
-    def scan(self, session="DefaultSession", session_range=range(0x100),
+    def scan(self, session="DefaultSession", session_range=range(2, 0x100),
              reset_handler=None, **kwargs):
         pkts = UDS() / UDS_DSC(diagnosticSessionType=session_range)
         reset_handler()
         for req in pkts:
-            super(UDS_SessionEnumerator, self).scan(session, [req], **kwargs)
+            super(UDS_SessionEnumerator, self).scan(session, [req], timeout=1,
+                                                    **kwargs)
             reset_handler()
 
     def filter_results(self):

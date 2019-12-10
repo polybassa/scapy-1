@@ -1380,8 +1380,9 @@ class UDS_Enumerator(object):
 
     def show(self, filtered=True):
         data = self.results if not filtered else self.filter_results()
-        print("\r\n" + "-" * 20)
+        print("\r\n\r\n" + "=" * 60)
         print(self.description)
+        print("-" * 60)
         make_lined_table(data, self.get_table_entry)
 
     @staticmethod
@@ -1414,7 +1415,7 @@ class UDS_SessionEnumerator(UDS_Enumerator):
         pkts = UDS() / UDS_DSC(diagnosticSessionType=session_range)
         reset_handler()
         for req in pkts:
-            super(UDS_SessionEnumerator, self).scan(session, [req], timeout=1,
+            super(UDS_SessionEnumerator, self).scan(session, [req], timeout=2,
                                                     **kwargs)
             reset_handler()
 

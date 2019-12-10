@@ -1380,9 +1380,9 @@ class UDS_Enumerator(object):
 
     def show(self, filtered=True):
         data = self.results if not filtered else self.filter_results()
-        print("\r\n\r\n" + "=" * 60)
-        print(self.description)
-        print("-" * 60)
+        print("\r\n\r\n" + "=" * (len(self.description) + 5))
+        print(" " * 5 + self.description)
+        print("-" * (len(self.description) + 5))
         make_lined_table(data, self.get_table_entry)
 
     @staticmethod
@@ -1505,7 +1505,7 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
 
 class UDS_SecurityAccessEnumerator(UDS_Enumerator):
     description = "Available security seeds with access type and session"
-    negative_response_blacklist = [0x10, 0x11, 0x12, 0x31]
+    negative_response_blacklist = [0x10, 0x11, 0x12]
 
     def scan(self, session="DefaultSesion", **kwargs):
         pkts = (UDS() / UDS_SA(securityAccessType=x)

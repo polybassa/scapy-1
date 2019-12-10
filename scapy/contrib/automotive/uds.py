@@ -1457,13 +1457,9 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
 
     @staticmethod
     def print_information(response_packet):
-        if len(response_packet.layers()) >= 2:
-            return "%s" % ((bytes(response_packet[2])[:17] + b"...")
-                           if len(response_packet[2]) > 20
-                           else response_packet[2])
-        else:
-            load = bytes(response_packet)[3:]
-            return "%s" % ((load[:17] + b"...") if len(load) > 20 else load)
+        load = bytes(response_packet)[3:] if len(response_packet) > 3 \
+            else "No data available"
+        return "%s" % ((load[:17] + b"...") if len(load) > 20 else load)
 
     @staticmethod
     def get_table_entry(tup):

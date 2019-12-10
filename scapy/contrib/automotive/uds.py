@@ -1455,12 +1455,22 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         super(UDS_RDBIEnumerator, self).scan(session, pkts, **kwargs)
 
     @staticmethod
+    def print_information(response_packet):
+        if len(response_packet.layers()) >= 2:
+            return "%s" % ((bytes(response_packet[2])[:17] + b"...")
+                           if len(response_packet[2]) > 20
+                           else response_packet[2])
+        else:
+            load = bytes(response_packet)[3:]
+            return "%s" % ((load[:17] + b"...") if len(load) > 20 else load)
+
+    @staticmethod
     def get_table_entry(tup):
         session, req, res = tup
         label = UDS_Enumerator.get_label(
-            res, positive_case=lambda:
-            "%s" % ((bytes(res[2])[:17] + b"...") if
-                    len(res[2]) > 20 else res[2]))
+            res,
+            positive_case=lambda: UDS_RDBIEnumerator.print_information(res))
+
         return (session,
                 "0x%02x: %s" % (req.identifiers[0],
                                 req.sprintf("%UDS_RDBI.identifiers%")[1:-1]),
@@ -1480,7 +1490,7 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
         elif isinstance(rdbi_enumerator, UDS_RDBIEnumerator):
             pkts = (UDS() / UDS_WDBI(dataIdentifier=res.dataIdentifier) /
                     res[2] for _, _, res in rdbi_enumerator.filter_results()
-                    if res.service != 0x7f)
+                    if res.service != 0x7f and len(res.layers()) >= 2)
         else:
             raise Scapy_Exception("rdbi_enumerator has to be an instance "
                                   "of UDS_RDBIEnumerator")

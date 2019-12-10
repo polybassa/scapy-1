@@ -1470,7 +1470,6 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
         label = UDS_Enumerator.get_label(
             res,
             positive_case=lambda: UDS_RDBIEnumerator.print_information(res))
-
         return (session,
                 "0x%02x: %s" % (req.identifiers[0],
                                 req.sprintf("%UDS_RDBI.identifiers%")[1:-1]),

@@ -12,7 +12,7 @@ from scapy.fields import ByteEnumField, StrField, ConditionalField, \
     BitEnumField, BitField, XByteField, FieldListField, \
     XShortField, X3BytesField, XIntField, ByteField, \
     ShortField, ObservableDict, XShortEnumField, XByteEnumField
-from scapy.packet import Packet, bind_layers, NoPayload
+from scapy.packet import Packet, bind_layers, NoPayload, Raw
 from scapy.config import conf
 from scapy.error import log_loading, Scapy_Exception
 from scapy.utils import PeriodicSenderThread, make_lined_table
@@ -1485,8 +1485,9 @@ class UDS_WDBIEnumerator(UDS_Enumerator):
             pkts = (UDS() / UDS_WDBI(dataIdentifier=x) for x in scan_range)
         elif isinstance(rdbi_enumerator, UDS_RDBIEnumerator):
             pkts = (UDS() / UDS_WDBI(dataIdentifier=res.dataIdentifier) /
-                    res[2] for _, _, res in rdbi_enumerator.filter_results()
-                    if res.service != 0x7f and len(res.layers()) >= 2)
+                    Raw(load=bytes(res)[3:])
+                    for _, _, res in rdbi_enumerator.filter_results()
+                    if res.service != 0x7f and len(bytes(res)) >= 3)
         else:
             raise Scapy_Exception("rdbi_enumerator has to be an instance "
                                   "of UDS_RDBIEnumerator")

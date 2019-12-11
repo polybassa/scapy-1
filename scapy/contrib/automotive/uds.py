@@ -1554,7 +1554,7 @@ def execute_session_based_scan(sock, reset_handler, enumerator,
                                sessions, **kwargs):
     reset_handler()
     for session_iter in [1] + list(sessions):
-        if enter_session(sock, session_iter) is False:
+        if session_iter != 1 or enter_session(sock, session_iter) is False:
             print("Error during session change to session %d" % session_iter)
         else:
             enumerator.scan(session=get_session_string(session_iter), **kwargs)

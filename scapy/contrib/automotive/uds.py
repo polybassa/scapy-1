@@ -1415,7 +1415,7 @@ class UDS_SessionEnumerator(UDS_Enumerator):
         pkts = UDS() / UDS_DSC(diagnosticSessionType=session_range)
         reset_handler()
         for req in pkts:
-            super(UDS_SessionEnumerator, self).scan(session, [req], timeout=2,
+            super(UDS_SessionEnumerator, self).scan(session, [req], timeout=3,
                                                     **kwargs)
             reset_handler()
 

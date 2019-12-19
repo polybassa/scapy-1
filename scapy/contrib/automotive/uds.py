@@ -1527,7 +1527,7 @@ class UDS_RCEnumerator(UDS_Enumerator):
     
     def scan(self, session="DefaultSession", scan_range=range(0xffff), **kwargs):
         pkts = (UDS() / UDS_RC(routineControlType=2,routineIdentifier=x) for x in scan_range)
-        super(UDS_RCTestEnumerator, self).scan(session, pkts, **kwargs)
+        super(UDS_RCEnumerator, self).scan(session, pkts, **kwargs)
     
     @staticmethod
     def get_table_entry(tup):
@@ -1544,7 +1544,7 @@ class UDS_IOCBIEnumerator(UDS_Enumerator):
     
     def scan(self, session="DefaultSession", scan_range=range(0xffff), **kwargs):
         pkts = (UDS() / UDS_IOCBI(dataIdentifier=x) for x in scan_range)
-        super(UDS_IOCBITestEnumerator, self).scan(session, pkts, **kwargs)
+        super(UDS_IOCBIEnumerator, self).scan(session, pkts, **kwargs)
     
     @staticmethod
     def get_table_entry(tup):

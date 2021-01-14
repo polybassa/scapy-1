@@ -122,7 +122,7 @@ class GMLAN_TPEnumerator(GMLAN_Enumerator, StateGenerator):
     @staticmethod
     def _get_table_entry(tup):
         # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
-        state, req, res, _, _ = tup
+        state, _, res, _, _ = tup
         label = GMLAN_Enumerator._get_label(res, "PR: Supported")
         return state, "TesterPresent:", label
 
@@ -168,7 +168,7 @@ class GMLAN_IDOEnumerator(GMLAN_Enumerator, StateGenerator):
     @staticmethod
     def _get_table_entry(tup):
         # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
-        state, req, res, _, _ = tup
+        state, _, res, _, _ = tup
         label = GMLAN_Enumerator._get_label(res, "PR: Supported")
         return state, "InitiateDiagnosticOperation:", label
 

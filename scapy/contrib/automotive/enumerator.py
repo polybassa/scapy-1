@@ -152,7 +152,7 @@ _CleanupCallable = Optional[_TransitionCallable]
 _TransitionTuple = Tuple[_TransitionCallable, _CleanupCallable]
 
 
-class Graph:
+class Graph(object):
     def __init__(self):
         # type: () -> None
         """
@@ -165,8 +165,8 @@ class Graph:
         self.edges = defaultdict(list)  # type: Dict[EcuState, List[EcuState]]
         self.__transition_functions = {}  # type: Dict[Tuple[EcuState, EcuState], Optional[_TransitionTuple]]  # noqa: E501
 
-    def __reduce_ex__(self, protocol):  # type: ignore
-        f, t, d = self.__reduce__()  # type: ignore
+    def __reduce__(self):  # type: ignore
+        f, t, d = super(Graph, self).__reduce__()  # type: ignore
         try:
             del d["_Graph__transition_functions"]
         except KeyError:
@@ -297,7 +297,7 @@ class StateGenerator(ABC):
             raise TypeError("Only AutomotiveTestCaseABC instances "
                             "can be a StateGenerator")
         try:
-            state, req, resp, _, _ = cast(AutomotiveTestCase, self).results[-1]
+            state, _, resp, _, _ = cast(AutomotiveTestCase, self).results[-1]
         except IndexError:
             return None
 
@@ -347,8 +347,8 @@ class StagedAutomotiveTestCase(AutomotiveTestCaseABC, TestCaseGenerator, StateGe
         # type: () -> int
         return len(self.__test_cases)
 
-    def __reduce_ex__(self, protocol):  # type: ignore
-        f, t, d = self.__reduce__()  # type: ignore
+    def __reduce__(self):  # type: ignore
+        f, t, d = super(StagedAutomotiveTestCase, self).__reduce__()  # type: ignore  # noqa: E501
         try:
             del d["_StagedAutomotiveTestCase__connectors"]
         except KeyError:
@@ -444,13 +444,13 @@ class StagedAutomotiveTestCase(AutomotiveTestCaseABC, TestCaseGenerator, StateGe
         except KeyError:
             self.__current_kwargs = dict()
 
-        if self.current_connector and self.__stage_index > 0:
+        if callable(self.current_connector) and self.__stage_index > 0:
             if self.previous_test_case:
-                connection_kwargs = self.current_connector(
-                    self.previous_test_case, self.current_test_case)
-                if self.__current_kwargs is not None and \
-                        connection_kwargs is not None:
-                    self.__current_kwargs.update(connection_kwargs)
+                con = self.current_connector  # type: _TestCaseConnectorCallable  # noqa: E501
+                con_kwargs = con(self.previous_test_case,
+                                 self.current_test_case)
+                if self.__current_kwargs is not None and con_kwargs is not None:  # noqa: E501
+                    self.__current_kwargs.update(con_kwargs)
 
             log_interactive.debug("[i] Stage AutomotiveTestCase %s kwargs: %s",
                                   self.current_test_case.__class__.__name__,
@@ -562,8 +562,8 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         self._retry_pkt = None  # type: Optional[Union[Packet, Iterable[Packet]]]  # noqa: E501
         self._negative_response_blacklist = [0x10, 0x11]  # type: List[int]
 
-    def __reduce_ex__(self, protocol):  # type: ignore
-        f, t, d = self.__reduce__()  # type: ignore
+    def __reduce__(self):  # type: ignore
+        f, t, d = super(AutomotiveTestCase, self).__reduce__()  # type: ignore
         try:
             del d["_request_iterators"]
         except KeyError:
@@ -732,13 +732,14 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
 
     def dump(self, completed_only=True):
         # type: (bool) -> Dict[str, Any]
+        # TODO: Evaluate if dump can be removed since pickle is superior
         if completed_only:
             selected_states = [k for k, v in self._state_completed.items() if v]  # noqa: E501
         else:
             selected_states = list(self._state_completed.keys())
 
         isotp_params = list()
-        for s, req, resp, req_ts, resp_ts in self._results:
+        for s, req, resp, _, _ in self._results:
             if s in selected_states and resp is not None:
                 isotp_tup = (resp.src, resp.dst, resp.exsrc, resp.exdst)
                 if isotp_tup not in isotp_params:
@@ -1050,8 +1051,8 @@ class AutomotiveTestCaseExecutor(ABC):
         self.configuration = AutomotiveTestCaseExecutorConfiguration(
             test_cases or self.default_test_case_clss, **kwargs)
 
-    def __reduce_ex__(self, protocol):  # type: ignore
-        f, t, d = self.__reduce__()  # type: ignore
+    def __reduce__(self):  # type: ignore
+        f, t, d = super(AutomotiveTestCaseExecutor, self).__reduce__()  # type: ignore  # noqa: E501
         try:
             del d["socket"]
         except KeyError:

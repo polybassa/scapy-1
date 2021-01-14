@@ -457,7 +457,10 @@ assert response.supports_state(EcuState(session=3))
 assert response.key_response.service == 80
 assert response.key_response.diagnosticSessionType == 2
 response = ecu.supported_responses[4]
-assert response.supports_state(EcuState(session=2, security_level=18))
+print(response)
+state = EcuState(session=2, security_level=18)
+print(state)
+assert response.supports_state(state)
 assert response.key_response.service == 110
 assert response.key_response.dataIdentifier == 61786
 assert len(ecu.log["TransferData"]) == 2
@@ -477,15 +480,18 @@ ecu = session.ecu
 print(ecu.log)
 print(ecu.supported_responses)
 response = ecu.supported_responses[0]
-response.supports_state(EcuState())
+assert response.supports_state(EcuState())
 assert response.key_response.service == 80
 assert response.key_response.diagnosticSessionType == 3
 response = ecu.supported_responses[1]
-response.supports_state(EcuState(session=3))
+assert response.supports_state(EcuState(session=3))
 assert response.key_response.service == 80
 assert response.key_response.diagnosticSessionType == 2
 response = ecu.supported_responses[4]
-response.supports_state(EcuState(session=2, security_level=18))
+print(response)
+state = EcuState(session=2, security_level=18)
+print(state)
+assert response.supports_state(state)
 assert response.key_response.service == 110
 assert response.key_response.dataIdentifier == 61786
 assert len(ecu.log["TransferData"]) == 2

@@ -61,10 +61,9 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
         # type: (_SocketUnion, EcuState, int, int, Any) -> None  # noqa: E501
 
         overwrite_timeout = kwargs.pop("overwrite_timeout", True)
-        exit_if_service_not_supported = kwargs.pop(  # noqa: F841
-            "exit_if_service_not_supported", False)
-        retry_if_busy_returncode = kwargs.pop(  # noqa: F841
-            "retry_if_busy_returncode", False)
+        # remove args from kwargs since they will be overwritten
+        kwargs.pop("exit_if_service_not_supported", False)
+        kwargs.pop("retry_if_busy_returncode", False)
 
         # Apply a fixed timeout for this execute. Unit-tests want to overwrite
         if overwrite_timeout:
@@ -138,9 +137,8 @@ class UDS_TPEnumerator(UDS_Enumerator, StateGenerator):
     @staticmethod
     def _get_table_entry(tup):
         # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
-        state, req, res, _, _ = tup
-        label = UDS_Enumerator._get_label(res, "PR: Supported")
-        return state, "TesterPresent:", label
+        label = UDS_Enumerator._get_label(tup[2], "PR: Supported")
+        return tup[0], "TesterPresent:", label
 
     @staticmethod
     def enter(socket, configuration):
@@ -237,7 +235,7 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
         # Only generate services with unset positive response bit (0x40)
-        return (UDS(service=x) for x in range(0x100) if not (x & 0x40))
+        return (UDS(service=x) for x in range(0x100) if not x & 0x40)
 
     @staticmethod
     def _get_table_entry(tup):
@@ -339,8 +337,8 @@ class UDS_SAEnumerator(UDS_Enumerator):
         super(UDS_SAEnumerator, self).__init__()
         self._transition_functions = dict()  # type: Dict[Any, Any]
 
-    def __reduce_ex__(self, protocol):  # type: ignore
-        f, t, d = super(UDS_SAEnumerator, self).__reduce_ex__(protocol)  # type: ignore  # noqa: E501
+    def __reduce__(self):  # type: ignore
+        f, t, d = super(UDS_SAEnumerator, self).__reduce__()  # type: ignore  # noqa: E501
         try:
             del d["_transition_functions"]
         except KeyError:

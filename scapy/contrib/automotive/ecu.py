@@ -13,10 +13,9 @@ import random
 import copy
 
 from collections import defaultdict
-from typing import Any, Union, Iterable, Callable, List, Optional, Tuple, \
+from scapy.compat import Any, Union, Iterable, Callable, List, Optional, Tuple, \
     Type, cast, Dict, GeneratorType
 
-from scapy.compat import Any, cast, Dict
 from scapy.packet import Raw, Packet
 from scapy.plist import PacketList
 from scapy.sessions import DefaultSession
@@ -67,10 +66,8 @@ class EcuState(object):
         other = cast(EcuState, other)
         if self.__dict__.keys() != other.__dict__.keys():
             return False
-        for k in self.__dict__.keys():
-            if self.__dict__[k] != other.__dict__[k]:
-                return False
-        return True
+        return all(self.__dict__[k] == other.__dict__[k]
+                   for k in self.__dict__.keys())
 
     def __contains__(self, item):
         # type: (EcuState) -> bool
@@ -115,7 +112,8 @@ class EcuState(object):
             if self.__dict__[k] > other.__dict__[k]:
                 return False
 
-        raise TypeError("EcuStates should be identical. Something bad happen.")
+        raise TypeError("EcuStates should be identical. Something bad happen. "
+                        "self: %s other: %s" % (self.__dict__, other.__dict__))
 
     def __hash__(self):
         # type: () -> int
@@ -414,7 +412,7 @@ class EcuResponse:
 
     def supports_state(self, state):
         # type: (EcuState) -> bool
-        if self.__states is None:
+        if self.__states is None or len(self.__states) == 0:
             return True
         else:
             return any(s == state or state in s for s in self.__states)

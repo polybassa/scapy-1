@@ -27,12 +27,12 @@ __all__ = [
     'DefaultDict',
     'Dict',
     'Generic',
-    'IO',
+    'Iterable',
     'Iterator',
+    'IO',
     'List',
     'Literal',
     'NamedTuple',
-    'NewType',
     'NoReturn',
     'Optional',
     'Pattern',
@@ -122,9 +122,11 @@ if not FAKE_TYPING:
         DefaultDict,
         Dict,
         Generic,
+        Iterable,
         Iterator,
         IO,
         List,
+        NamedTuple,
         NewType,
         NoReturn,
         Optional,
@@ -151,9 +153,11 @@ else:
                             collections.defaultdict)
     Dict = _FakeType("Dict", dict)  # type: ignore
     Generic = _FakeType("Generic")
+    Iterable = _FakeType("Iterable")  # type: ignore
     Iterator = _FakeType("Iterator")  # type: ignore
     IO = _FakeType("IO")  # type: ignore
     List = _FakeType("List", list)  # type: ignore
+    NamedTuple = _FakeType("NamedTuple")  # type: ignore
     NewType = _FakeType("NewType")
     NoReturn = _FakeType("NoReturn")  # type: ignore
     Optional = _FakeType("Optional")

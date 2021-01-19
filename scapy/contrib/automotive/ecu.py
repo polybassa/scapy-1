@@ -16,6 +16,8 @@ from collections import defaultdict
 from scapy.compat import Any, Union, Iterable, Callable, List, Optional, Tuple, \
     Type, cast, Dict, GeneratorType
 
+from scapy.compat import Any, Union, Iterable, Callable, List, Optional, \
+    Tuple, Type, cast, Dict
 from scapy.packet import Raw, Packet
 from scapy.plist import PacketList
 from scapy.sessions import DefaultSession

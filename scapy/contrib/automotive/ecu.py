@@ -13,10 +13,10 @@ import random
 import copy
 
 from collections import defaultdict
-from typing import Any, Union, Iterable, Callable, List, Optional, Tuple, \
-    Type, cast, Dict
 from types import GeneratorType
 
+from scapy.compat import Any, Union, Iterable, Callable, List, Optional, \
+    Tuple, Type, cast, Dict
 from scapy.packet import Raw, Packet
 from scapy.plist import PacketList
 from scapy.sessions import DefaultSession

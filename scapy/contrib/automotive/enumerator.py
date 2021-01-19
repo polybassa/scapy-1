@@ -6,15 +6,14 @@
 # scapy.contrib.description = AutomotiveTestCase and AutomotiveTestCaseExecutor base classes  # noqa: E501
 # scapy.contrib.status = loads
 
-# import datetime
 import functools
 import time
 
 from collections import defaultdict, OrderedDict
 from itertools import product
-from typing import Any, Union, List, NamedTuple, Optional, Iterable, Dict, \
-    Tuple, Set, Callable, Type, cast
 
+from scapy.compat import Any, Union, List, NamedTuple, Optional, Iterable, \
+    Dict, Tuple, Set, Callable, Type, cast
 from scapy.error import Scapy_Exception, log_interactive
 from scapy.utils import make_lined_table, SingleConversationSocket, EDecimal
 import scapy.modules.six as six

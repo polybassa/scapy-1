@@ -8,7 +8,7 @@
 
 
 from scapy.packet import Packet
-from typing import Any, Iterable, Tuple
+from scapy.compat import Any, Iterable, Tuple
 from scapy.contrib.automotive.ecu import EcuState
 from scapy.contrib.automotive.enumerator import _AutomotiveTestCaseScanResult
 from scapy.contrib.automotive.uds import UDS

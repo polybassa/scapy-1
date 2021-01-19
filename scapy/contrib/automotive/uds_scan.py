@@ -13,9 +13,8 @@ import itertools
 import copy
 
 from collections import defaultdict
-from typing import Dict, Optional, List, Type, Any, Iterable, Tuple, cast, \
-    NamedTuple, Union
-
+from scapy.compat import Dict, Optional, List, Type, Any, Iterable, Tuple, \
+    cast, NamedTuple, Union
 from scapy.packet import Packet, Raw
 from scapy.error import Scapy_Exception, log_interactive
 from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \

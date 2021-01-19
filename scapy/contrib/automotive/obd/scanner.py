@@ -8,8 +8,7 @@
 # scapy.contrib.description = OnBoardDiagnosticScanner
 # scapy.contrib.status = loads
 
-from typing import List, Type
-
+from scapy.compat import List, Type
 from scapy.contrib.automotive.obd.obd import OBD, OBD_S03, OBD_S07, OBD_S0A, \
     OBD_S01, OBD_S06, OBD_S08, OBD_S09, OBD_NR, OBD_S02, OBD_S02_Record
 from scapy.contrib.automotive.enumerator import AutomotiveTestCaseExecutor, \

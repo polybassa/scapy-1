@@ -11,9 +11,9 @@
 
 import random
 
-from typing import Optional, List, Type, Any, Tuple, Iterable, Dict, cast
 from collections import defaultdict
 
+from scapy.compat import Optional, List, Type, Any, Tuple, Iterable, Dict, cast
 from scapy.contrib.automotive.gm.gmlan import GMLAN, GMLAN_SA, GMLAN_RD, \
     GMLAN_TD, GMLAN_RMBA, GMLAN_RDBI, GMLAN_RDBPI, GMLAN_IDO, \
     GMLAN_NR, GMLAN_WDBI, GMLAN_SAPR, GMLAN_DC
@@ -260,7 +260,7 @@ class GMLAN_SA1Enumerator(GMLAN_Enumerator, StateGenerator):
     @staticmethod
     def _get_table_entry(tup):
         # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
-        state, req, res, _, _ = tup
+        state, _, res, _, _ = tup
         label = GMLAN_Enumerator._get_label(res, "PR: Supported")
         return state, "SecurityAccess:", label
 

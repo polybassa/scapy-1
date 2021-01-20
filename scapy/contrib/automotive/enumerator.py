@@ -12,8 +12,8 @@ import time
 from collections import defaultdict, OrderedDict
 from itertools import product
 
-from scapy.compat import Any, Union, List, NamedTuple, Optional, Iterable, \
-    Dict, Tuple, Set, Callable, Type, cast
+from scapy.compat import Any, Union, List, Optional, Iterable, \
+    Dict, Tuple, Set, Callable, Type, cast, FAKE_TYPING
 from scapy.error import Scapy_Exception, log_interactive
 from scapy.utils import make_lined_table, SingleConversationSocket, EDecimal
 import scapy.modules.six as six
@@ -27,6 +27,37 @@ if six.PY34:
 else:
     from abc import ABCMeta, abstractmethod
     ABC = ABCMeta('ABC', (), {})  # type: ignore
+
+
+if not FAKE_TYPING:
+    from typing import NamedTuple
+    # Definition outside the class AutomotiveTestCase to allow pickling
+    _AutomotiveTestCaseScanResult = NamedTuple(
+        "_AutomotiveTestCaseScanResult",
+        [("state", EcuState),
+         ("req", Packet),
+         ("resp", Optional[Packet]),
+         ("req_ts", Union[EDecimal, int, float]),
+         ("resp_ts", Optional[Union[EDecimal, int, float]])])
+
+    _AutomotiveTestCaseFilteredScanResult = NamedTuple(
+        "_AutomotiveTestCaseFilteredScanResult",
+        [("state", EcuState),
+         ("req", Packet),
+         ("resp", Packet),
+         ("req_ts", Union[int, float]),
+         ("resp_ts", Union[int, float])])
+
+else:
+    from collections import namedtuple
+    # Definition outside the class AutomotiveTestCase to allow pickling
+    _AutomotiveTestCaseScanResult = namedtuple(  # type: ignore
+        "_AutomotiveTestCaseScanResult",
+        ["state", "req", "resp", "req_ts", "resp_ts"])
+
+    _AutomotiveTestCaseFilteredScanResult = namedtuple(  # type: ignore
+        "_AutomotiveTestCaseFilteredScanResult",
+        ["state", "req", "resp", "req_ts", "resp_ts"])
 
 
 def profile(state, enum=None):
@@ -497,25 +528,6 @@ class StagedAutomotiveTestCase(AutomotiveTestCaseABC, TestCaseGenerator, StateGe
     def completed(self):
         # type: () -> bool
         return all(e.completed for e in self.__test_cases)
-
-
-# Definition outside the class AutomotiveTestCase to allow pickling
-_AutomotiveTestCaseScanResult = NamedTuple(
-    "_AutomotiveTestCaseScanResult",
-    [("state", EcuState),
-     ("req", Packet),
-     ("resp", Optional[Packet]),
-     ("req_ts", Union[EDecimal, int, float]),
-     ("resp_ts", Optional[Union[EDecimal, int, float]])])
-
-# Definition outside the class AutomotiveTestCase to allow pickling
-_AutomotiveTestCaseFilteredScanResult = NamedTuple(
-    "_AutomotiveTestCaseFilteredScanResult",
-    [("state", EcuState),
-     ("req", Packet),
-     ("resp", Packet),
-     ("req_ts", Union[int, float]),
-     ("resp_ts", Union[int, float])])
 
 
 class AutomotiveTestCase(AutomotiveTestCaseABC):

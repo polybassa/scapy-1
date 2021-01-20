@@ -22,7 +22,7 @@ from scapy.supersocket import SuperSocket
 from scapy.layers.can import CAN
 from scapy.error import warning
 from scapy.modules.six.moves import queue
-from scapy.compat import Any, List
+from scapy.compat import List
 from can import Message as can_Message
 from can import CanError as can_CanError
 from can import BusABC as can_BusABC
@@ -33,39 +33,6 @@ CAN_FRAME_SIZE = 16
 CAN_INV_FILTER = 0x20000000
 
 
-class PriotizedCanMessage(object):
-    def __init__(self, msg, count):
-        # type: (can_Message, int) -> None
-        self.msg = msg
-        self.count = count
-
-    def __eq__(self, other):
-        # type: (Any) -> bool
-        if not isinstance(other, PriotizedCanMessage):
-            return False
-        return self.msg.timestamp == other.msg.timestamp and \
-            self.count == other.count
-
-    def __lt__(self, other):
-        # type: (Any) -> bool
-        if not isinstance(other, PriotizedCanMessage):
-            return False
-        return self.msg.timestamp < other.msg.timestamp or \
-            self.count < other.count
-
-    def __le__(self, other):
-        # type: (Any) -> bool
-        return self == other or self < other
-
-    def __gt__(self, other):
-        # type: (Any) -> bool
-        return not self <= other
-
-    def __ge__(self, other):
-        # type: (Any) -> bool
-        return not self < other
-
-
 class SocketMapper:
     def __init__(self, bus, sockets):
         # type: (can_BusABC, List[SocketWrapper]) -> None
@@ -74,15 +41,13 @@ class SocketMapper:
 
     def mux(self):
         while True:
-            prio_count = 0
             try:
                 msg = self.bus.recv(timeout=0)
                 if msg is None:
                     return
                 for sock in self.sockets:
                     if sock._matches_filters(msg):
-                        prio_count += 1
-                        sock.rx_queue.put(PriotizedCanMessage(msg, prio_count))
+                        sock.rx_queue.put(msg)
             except Exception as e:
                 warning("[MUX] python-can exception caught: %s" % e)
 
@@ -97,7 +62,7 @@ class SocketsPool(object):
             SocketsPool.__instance.pool_mutex = threading.Lock()
         return SocketsPool.__instance
 
-    def internal_send(self, sender, msg, prio=0):
+    def internal_send(self, sender, msg):
         with self.pool_mutex:
             try:
                 mapper = self.pool[sender.name]
@@ -108,7 +73,7 @@ class SocketsPool(object):
                     if not sock._matches_filters(msg):
                         continue
 
-                    sock.rx_queue.put(PriotizedCanMessage(msg, prio))
+                    sock.rx_queue.put(msg)
             except KeyError:
                 warning("[SND] Socket %s not found in pool" % sender.name)
             except can_CanError as e:
@@ -156,22 +121,20 @@ class SocketWrapper(can_BusABC):
 
     def __init__(self, *args, **kwargs):
         super(SocketWrapper, self).__init__(*args, **kwargs)
-        self.rx_queue = queue.Queue()  # type: queue.Queue[PriotizedCanMessage]  # noqa: E501
+        self.rx_queue = queue.Queue()  # type: queue.Queue[can_Message]  # noqa: E501
         self.name = None
-        self.prio_counter = 0
         SocketsPool().register(self, *args, **kwargs)
 
     def _recv_internal(self, timeout):
         SocketsPool().multiplex_rx_packets()
         try:
             pm = self.rx_queue.get(block=True, timeout=timeout)
-            return pm.msg, True
+            return pm, True
         except queue.Empty:
             return None, True
 
     def send(self, msg, timeout=None):
-        self.prio_counter += 1
-        SocketsPool().internal_send(self, msg, self.prio_counter)
+        SocketsPool().internal_send(self, msg)
 
     def shutdown(self):
         SocketsPool().unregister(self)

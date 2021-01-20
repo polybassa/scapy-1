@@ -65,7 +65,7 @@ class EcuState(object):
     def __eq__(self, other):
         # type: (object) -> bool
         other = cast(EcuState, other)
-        if self.__dict__.keys() != other.__dict__.keys():
+        if sorted(self.__dict__.keys()) != sorted(other.__dict__.keys()):
             return False
         return all(self.__dict__[k] == other.__dict__[k]
                    for k in self.__dict__.keys())
@@ -74,7 +74,7 @@ class EcuState(object):
         # type: (EcuState) -> bool
         if not isinstance(item, EcuState):
             return False
-        if not self.__dict__.keys() == item.__dict__.keys():
+        if not sorted(self.__dict__.keys()) == sorted(item.__dict__.keys()):
             return False
         return all(ov[1] == sv[1] or
                    (hasattr(sv[1], "__iter__") and ov[1] in sv[1])

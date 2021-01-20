@@ -32,7 +32,6 @@ __all__ = [
     'IO',
     'List',
     'Literal',
-    'NamedTuple',
     'NoReturn',
     'Optional',
     'Pattern',
@@ -157,7 +156,6 @@ else:
     Iterator = _FakeType("Iterator")  # type: ignore
     IO = _FakeType("IO")  # type: ignore
     List = _FakeType("List", list)  # type: ignore
-    NamedTuple = _FakeType("NamedTuple")  # type: ignore
     NewType = _FakeType("NewType")
     NoReturn = _FakeType("NoReturn")  # type: ignore
     Optional = _FakeType("Optional")

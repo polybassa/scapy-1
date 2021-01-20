@@ -14,7 +14,7 @@ import copy
 
 from collections import defaultdict
 from scapy.compat import Dict, Optional, List, Type, Any, Iterable, Tuple, \
-    cast, NamedTuple, Union
+    cast, Union, FAKE_TYPING
 from scapy.packet import Packet, Raw
 from scapy.error import Scapy_Exception, log_interactive
 from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \
@@ -26,6 +26,25 @@ from scapy.contrib.automotive.ecu import EcuState
 from scapy.contrib.automotive.uds import UDS, UDS_NR, UDS_DSC, UDS_TP, \
     UDS_RDBI, UDS_WDBI, UDS_SA, UDS_RC, UDS_IOCBI, UDS_RMBA, UDS_ER, \
     UDS_TesterPresentSender, UDS_CC, UDS_RDBPI, UDS_RD, UDS_TD
+
+if not FAKE_TYPING:
+    from typing import NamedTuple
+    # Definition outside the class UDS_RMBASequentialEnumerator
+    # to allow pickling
+    _PointOfInterest = NamedTuple("_PointOfInterest", [
+        ("memory_address", int),
+        ("direction", bool),
+        # True = increasing / upward, False = decreasing / downward  # noqa: E501
+        ("memorySizeLen", int),
+        ("memoryAddressLen", int)])
+
+else:
+    from collections import namedtuple
+    # Definition outside the class UDS_RMBASequentialEnumerator
+    # to allow pickling
+    _PointOfInterest = namedtuple(  # type: ignore
+        "_PointOfInterest",
+        ["memory_address", "direction", "memorySizeLen", "memoryAddressLen"])
 
 
 class UDS_Enumerator(AutomotiveTestCase):
@@ -666,14 +685,6 @@ class UDS_RMBARandomEnumerator(UDS_RMBAEnumeratorABC):
             (self._random_memory_addr_pkt(addr_len=2) for _ in range(500)),
             (self._random_memory_addr_pkt(addr_len=3) for _ in range(1000)),
             (self._random_memory_addr_pkt(addr_len=4) for _ in range(5000)))
-
-
-# Definition outside the class UDS_RMBASequentialEnumerator to allow pickling
-_PointOfInterest = NamedTuple("_PointOfInterest", [
-    ("memory_address", int),
-    ("direction", bool),  # True = increasing / upward, False = decreasing / downward  # noqa: E501
-    ("memorySizeLen", int),
-    ("memoryAddressLen", int)])
 
 
 class UDS_RMBASequentialEnumerator(UDS_RMBAEnumeratorABC):

@@ -61,6 +61,12 @@ class UDS_Enumerator(AutomotiveTestCase):
             "%UDS_NR.negativeResponseCode%")
 
     @staticmethod
+    def _get_table_entry(tup):
+        # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
+        label = UDS_Enumerator._get_label(tup[2], "PR: Supported")
+        return tup[0], repr(tup[1]), label
+
+    @staticmethod
     def _get_negative_response_label(response):
         # type: (Packet) -> str
         return response.sprintf("NR: %UDS_NR.negativeResponseCode%")

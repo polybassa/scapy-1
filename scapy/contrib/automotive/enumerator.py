@@ -549,12 +549,6 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
 
     @staticmethod
     @abstractmethod
-    def _get_table_entry(tup):
-        # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
-        raise NotImplementedError()
-
-    @staticmethod
-    @abstractmethod
     def _get_negative_response_label(response):
         # type: (Packet) -> str
         raise NotImplementedError()
@@ -1008,6 +1002,12 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         else:
             print(s)
             return None
+
+    @staticmethod
+    def _get_table_entry(tup):
+        # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
+        label = AutomotiveTestCase._get_label(tup[2], "PR: Supported")
+        return tup[0], repr(tup[1]), label
 
     @classmethod
     def _get_label(cls, response, positive_case="PR: PositiveResponse"):

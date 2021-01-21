@@ -140,6 +140,7 @@ class AutomotiveTestCaseExecutorConfiguration(object):
         # type: (Union[List[Union[AutomotiveTestCaseABC, Type[AutomotiveTestCaseABC]]], List[Type[AutomotiveTestCaseABC]]], Any) -> None  # noqa: E501
 
         self.verbose = kwargs.get("verbose", False)
+        self.debug = kwargs.get("debug", False)
         self.delay_state_change = kwargs.pop("delay_state_change", 0.5)
 
         # test_case can be a mix of classes or instances
@@ -1199,6 +1200,8 @@ class AutomotiveTestCaseExecutor(ABC):
                         test_case_executed = True
                     except (OSError, ValueError, Scapy_Exception, BrokenPipeError) as e:  # noqa: E501
                         log_interactive.critical("[-] Exception: %s", e)
+                        if self.configuration.debug:
+                            raise e
 
             if not test_case_executed:
                 log_interactive.info(

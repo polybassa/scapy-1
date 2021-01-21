@@ -365,7 +365,8 @@ class UDS_SAEnumerator(UDS_Enumerator):
 
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
-        return (UDS() / UDS_SA(securityAccessType=x) for x in range(1, 256, 2))
+        scan_range = kwargs.pop("scan_range", range(1, 256, 2))
+        return (UDS() / UDS_SA(securityAccessType=x) for x in scan_range)
 
     @staticmethod
     def _get_table_entry(tup):

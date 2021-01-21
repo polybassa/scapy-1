@@ -99,9 +99,10 @@ class EcuState(object):
         common = set(self.__dict__.keys()).intersection(
             set(other.__dict__.keys()))
         if len(common) < len(self.__dict__.keys()):
-            raise TypeError("EcuStates with different elements can't be "
-                            "compared. Keys1: %s, Keys2: %s" %
-                            (self.__dict__.keys(), other.__dict__.keys()))
+            return False
+            #raise TypeError("EcuStates with different elements can't be "
+            #                "compared. Keys1: %s, Keys2: %s" %
+            #                (self.__dict__.keys(), other.__dict__.keys()))
 
         for k in sorted(self.__dict__.keys()):
             if not isinstance(other.__dict__[k], type(self.__dict__[k])):

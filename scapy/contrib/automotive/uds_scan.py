@@ -566,8 +566,7 @@ class UDS_SA_XOR_Enumerator(UDS_SAEnumerator, StateGenerator):
             pass
 
         try:
-            tf = cast(_TransitionCallable,  # noqa: E501
-                      self._transition_functions[sec_lvl])
+            tf = cast(_TransitionCallable, self._transition_functions[sec_lvl])
             return tf, None
         except KeyError:
             return None

@@ -302,7 +302,7 @@ class GMLAN_RNOEnumerator(GMLAN_Enumerator):
     @staticmethod
     def _get_table_entry(tup):
         # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
-        state, req, res, _, _ = tup
+        state, _, res, _, _ = tup
         label = GMLAN_Enumerator._get_label(res, "PR: Supported")
         return state, "ReturnToNormalOperation:", label
 

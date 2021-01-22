@@ -98,13 +98,8 @@ class EcuState(object):
 
         common = set(self.__dict__.keys()).intersection(
             set(other.__dict__.keys()))
-        if len(common) < len(self.__dict__.keys()):
-            return False
-            #raise TypeError("EcuStates with different elements can't be "
-            #                "compared. Keys1: %s, Keys2: %s" %
-            #                (self.__dict__.keys(), other.__dict__.keys()))
 
-        for k in sorted(self.__dict__.keys()):
+        for k in sorted(common):
             if not isinstance(other.__dict__[k], type(self.__dict__[k])):
                 raise TypeError(
                     "Can't compare %s with %s for the EcuState element %s" %
@@ -113,6 +108,18 @@ class EcuState(object):
                 return True
             if self.__dict__[k] > other.__dict__[k]:
                 return False
+
+        if len(common) < len(self.__dict__.keys()):
+            self_diffs = set(self.__dict__.keys()).difference(
+                set(other.__dict__.keys()))
+            other_diffs = set(other.__dict__.keys()).difference(
+                set(self.__dict__.keys()))
+
+            for s, o in zip(self_diffs, other_diffs):
+                if s < o:
+                    return True
+
+            return False
 
         raise TypeError("EcuStates should be identical. Something bad happen. "
                         "self: %s other: %s" % (self.__dict__, other.__dict__))

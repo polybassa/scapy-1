@@ -192,6 +192,48 @@ s2.a = 1
 
 assert s1 < s2
 
+= less than tests 4
+
+s1 = EcuState()
+s2 = EcuState()
+
+
+s1.A = 1
+s1.a = 2
+
+s2.A = 2
+s2.b = 100
+
+assert s1 < s2
+
+= less than tests 5
+
+s1 = EcuState()
+s2 = EcuState()
+
+
+s1.A = 100
+s1.a = 2
+
+s2.A = 2
+s2.b = 100
+
+assert s1 > s2
+
+= less than tests 6
+
+s1 = EcuState()
+s2 = EcuState()
+
+
+s1.A = 100
+s1.B = 200
+
+s2.a = 2
+s2.b = 1
+
+assert s1 < s2
+
 = contains test
 
 s1 = EcuState(ses=[1,2,3])

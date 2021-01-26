@@ -78,10 +78,9 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
         session_range = kwargs.pop("session_range", range(2, 0x100))
-        return cast(Iterable[Packet],
-                    UDS() / UDS_DSC(diagnosticSessionType=session_range))
+        return list(UDS() / UDS_DSC(diagnosticSessionType=session_range))
 
-    def execute(self, socket, state, timeout=2, execution_time=1200, **kwargs):
+    def execute(self, socket, state, timeout=3, execution_time=1200, **kwargs):
         # type: (_SocketUnion, EcuState, int, int, Any) -> None  # noqa: E501
 
         overwrite_timeout = kwargs.pop("overwrite_timeout", True)
@@ -91,7 +90,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
 
         # Apply a fixed timeout for this execute. Unit-tests want to overwrite
         if overwrite_timeout:
-            timeout = 2
+            timeout = 3
 
         super(UDS_DSCEnumerator, self).execute(
             socket, state, timeout=timeout,
@@ -118,7 +117,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
                 log_interactive.debug(
                     "Try to enter session req: %s, resp: %s" %
                     (repr(request), repr(ans)))
-            return cast(bool, ans.service != 0x7f)
+            return cast(int, ans.service) != 0x7f
         else:
             return False
 
@@ -127,8 +126,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
         edge = super(UDS_DSCEnumerator, self).get_new_edge(socket, config)
         if edge:
             state, new_state = edge
-            if state == new_state:
-                return None
+            # Force TesterPresent if session is changed
             new_state.tp = 1   # type: ignore
             return state, new_state
         return None
@@ -141,7 +139,10 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
         # to switch to the bootloader
         delay = conf[UDS_DSCEnumerator.__name__].get("overwrite_timeout", 5)
         time.sleep(delay)
-        return UDS_DSCEnumerator.enter_state(sock, conf, req)
+        state_changed = UDS_DSCEnumerator.enter_state(sock, conf, req)
+        if not state_changed:
+            UDS_TPEnumerator.cleanup(sock, conf)
+        return state_changed
 
     @staticmethod
     def transition_function(sock, conf, edge):
@@ -156,9 +157,9 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
 
     def get_transition_function(self, socket, config, edge):
         # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
-        _, req, _, _, _ = self._results[-1]
-        cn = self.__class__.__name__
-        self._set_args_for_transition_function(config, cn, edge, (req, ))
+        cn = UDS_DSCEnumerator.__name__
+        self._set_args_for_transition_function(
+            config, cn, edge, (self._results[-1].req, ))
         return UDS_DSCEnumerator.transition_function, UDS_TPEnumerator.cleanup
 
 
@@ -282,7 +283,8 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
 
     def post_execute(self, socket, global_configuration):
         # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
-        pos_reset = [t for t in self.filtered_results if t[2].service == 0x51]
+        pos_reset = [t for t in self.results_with_response
+                     if t[2].service == 0x51]
         if len(pos_reset):
             log_interactive.warning(
                 "ECUResetPositiveResponse detected! This might have changed "
@@ -449,6 +451,19 @@ class UDS_SAEnumerator(UDS_Enumerator):
             break
         return seed
 
+    @staticmethod
+    def evaluate_security_access_response(res, seed, key):
+        # type: (Optional[Packet], Packet, Optional[Packet]) -> bool
+        if res is None or res.service == 0x7f:
+            log_interactive.info(repr(seed))
+            log_interactive.info(repr(key))
+            log_interactive.info(repr(res))
+            log_interactive.info("Security access error!")
+            return False
+        else:
+            log_interactive.info("Security access granted!")
+            return True
+
 
 class UDS_SA_XOR_Enumerator(UDS_SAEnumerator, StateGenerator):
     _description = "XOR SecurityAccess supported"
@@ -489,35 +504,22 @@ class UDS_SA_XOR_Enumerator(UDS_SAEnumerator, StateGenerator):
             return None
 
     @staticmethod
-    def evaluate_security_access_response(res, seed, key):
-        # type: (Optional[Packet], Packet, Optional[Packet]) -> bool
-        if res is None or res.service == 0x7f:
-            log_interactive.info(repr(seed))
-            log_interactive.info(repr(key))
-            log_interactive.info(repr(res))
-            log_interactive.info("Security access error!")
-            return False
-        else:
-            log_interactive.info("Security access granted!")
-            return True
-
-    @staticmethod
-    def get_security_access(sock, level=1, seedpkt=None):
+    def get_security_access(sock, level=1, seed_pkt=None):
         # type: (_SocketUnion, int, Optional[Packet]) -> bool
         log_interactive.info(
             "Try bootloader security access for level %d" % level)
-        if seedpkt is None:
-            seedpkt = UDS_SA_XOR_Enumerator.get_seed_pkt(sock, level)
-            if not seedpkt:
+        if seed_pkt is None:
+            seed_pkt = UDS_SAEnumerator.get_seed_pkt(sock, level)
+            if not seed_pkt:
                 return False
 
-        key_pkt = UDS_SA_XOR_Enumerator.get_key_pkt(seedpkt, level)
+        key_pkt = UDS_SA_XOR_Enumerator.get_key_pkt(seed_pkt, level)
         if key_pkt is None:
             return False
 
         res = sock.sr1(key_pkt, timeout=5, verbose=False)
         return UDS_SA_XOR_Enumerator.evaluate_security_access_response(
-            res, seedpkt, key_pkt)
+            res, seed_pkt, key_pkt)
 
     @staticmethod
     def transition_function(sock, conf, edge):
@@ -860,7 +862,7 @@ class UDS_TDEnumerator(UDS_Enumerator):
 
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
-        cnt = kwargs.pop("scan_range", range(0x10))
+        cnt = kwargs.pop("scan_range", range(0x100))
         return cast(Iterable[Packet], UDS() / UDS_TD(blockSequenceCounter=cnt))
 
     @staticmethod

@@ -214,6 +214,12 @@ with gzip.open("test/contrib/automotive/uds_ecu_scanner.pkl.gz", "rb") as f:
 assert len(backup_scanner.configuration.test_cases) == len(scanner.configuration.test_cases)
 assert len(backup_scanner.state_paths) == len(scanner.state_paths)
 
+= Create clone from Scanner
+
+resps = scanner.supported_responses
+print(resps)
+assert len(resps)
+
 = Pickle scanner
 
 f = io.BytesIO()
@@ -284,3 +290,9 @@ scanner.show_testcases_status()
 scanner.show_testcases()
 assert len(scanner.state_paths) > 3
 assert scanner.scan_completed
+
+= Create clone from Scanner
+
+resps = scanner.supported_responses
+print(resps)
+assert len(resps)

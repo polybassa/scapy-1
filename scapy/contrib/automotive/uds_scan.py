@@ -22,6 +22,7 @@ from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \
     AutomotiveTestCaseExecutorConfiguration, StagedAutomotiveTestCase, \
     _SocketUnion, _TransitionCallable, _TransitionTuple, \
     _AutomotiveTestCaseScanResult, _AutomotiveTestCaseFilteredScanResult
+from scapy.contrib.automotive.graph import _Edge
 from scapy.contrib.automotive.ecu import EcuState
 from scapy.contrib.automotive.uds import UDS, UDS_NR, UDS_DSC, UDS_TP, \
     UDS_RDBI, UDS_WDBI, UDS_SA, UDS_RC, UDS_IOCBI, UDS_RMBA, UDS_ER, \

@@ -580,43 +580,6 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
 
         return False
 
-    def dump(self, completed_only=True):
-        # type: (bool) -> Dict[str, Any]
-        # TODO: Evaluate if dump can be removed since pickle is superior
-        if completed_only:
-            selected_states = [k for k, v in self._state_completed.items() if v]  # noqa: E501
-        else:
-            selected_states = list(self._state_completed.keys())
-
-        isotp_params = list()
-        for s, req, resp, _, _ in self._results:
-            if s in selected_states and resp is not None:
-                isotp_tup = (resp.src, resp.dst, resp.exsrc, resp.exdst)
-                if isotp_tup not in isotp_params:
-                    isotp_params.append(isotp_tup)
-
-        data = [{"state": str(s),
-                 "protocol": str(req.__class__.__name__),
-                 "req_time": req_ts,
-                 "req_idx": list(self.__result_packets.keys()).index(bytes(req)),  # noqa: E501
-                 "resp_time": resp_ts if resp is not None else None,
-                 "resp_idx": list(self.__result_packets.keys()).index(bytes(resp)) if resp is not None else None,  # noqa: E501
-                 "isotp_param_idx": isotp_params.index(
-                     (resp.src, resp.dst, resp.exsrc, resp.exdst))
-                 if resp is not None else None}
-                for s, req, resp, req_ts, resp_ts in self._results
-                if s in selected_states]
-
-        return {"format_version": 0.3,
-                "name": str(self.__class__.__name__),
-                "states_completed": [(str(k), v) for k, v in
-                                     self._state_completed.items()],
-                "result_packets": [str(k) for k in self.__result_packets.keys()],  # noqa: E501
-                "isotp_params": [{"resp_src": t[0], "resp_dst": t[1],
-                                  "resp_exsrc": t[2], "resp_exdst": t[3]}
-                                 for t in isotp_params],
-                "data": data}
-
     def _compute_statistics(self):
         # type: () -> List[Tuple[str, str, str]]
         data_sets = [("all", self._results)]
@@ -926,15 +889,6 @@ class AutomotiveTestCaseExecutor(ABC):
     def default_test_case_clss(self):
         # type: () -> List[Type[AutomotiveTestCaseABC]]
         raise NotImplementedError()
-
-    def dump(self, completed_only=True):
-        # type: (bool) -> Dict[str, Any]
-        return {"format_version": 0.1,
-                "test_cases": [cast(AutomotiveTestCase, e).dump(completed_only)
-                               for e in self.configuration.test_cases],
-                "state_graph": [str(p) for p in self.state_paths],
-                "verbose": self.configuration.verbose,
-                "delay_state_change": self.configuration.delay_state_change}
 
     @property
     def state_paths(self):

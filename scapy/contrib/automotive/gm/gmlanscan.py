@@ -93,15 +93,10 @@ class GMLAN_TPEnumerator(GMLAN_Enumerator, StateGenerator):
         return [GMLAN(service=0x3E)]
 
     @staticmethod
-    def enter(socket, configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> bool
-        try:
-            if configuration["tps"]:
-                configuration["tps"].stop()
-                configuration["tps"] = None
-        except KeyError:
-            pass
-        configuration["tps"] = GMLAN_TesterPresentSender(socket)
+    def enter(socket, configuration, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
+        GMLAN_TPEnumerator.cleanup(socket, configuration)
+        configuration["tps"] = GMLAN_TesterPresentSender(socket)  # noqa: E501
         configuration["tps"].start()
         return True
 
@@ -116,8 +111,8 @@ class GMLAN_TPEnumerator(GMLAN_Enumerator, StateGenerator):
             pass
         return True
 
-    def get_transition_function(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_TransitionTuple]  # noqa: E501
+    def get_transition_function(self, socket, config, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
         return self.enter, self.cleanup
 
     @staticmethod
@@ -145,7 +140,7 @@ class GMLAN_IDOEnumerator(GMLAN_Enumerator, StateGenerator):
         return ans is not None and ans.service != 0x7f
 
     def get_new_edge(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[Tuple[EcuState, EcuState]]  # noqa: E501
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_Edge]  # noqa: E501
         edge = super(GMLAN_IDOEnumerator, self).get_new_edge(socket, config)
         if edge:
             state, new_state = edge
@@ -156,14 +151,14 @@ class GMLAN_IDOEnumerator(GMLAN_Enumerator, StateGenerator):
         return None
 
     @staticmethod
-    def enter_state_with_tp(sock, conf):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> bool
-        res = GMLAN_TPEnumerator.enter(sock, conf)
+    def enter_state_with_tp(sock, conf, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
+        res = GMLAN_TPEnumerator.enter(sock, conf, edge)
         res2 = GMLAN_IDOEnumerator.enter_diagnostic_session(sock)
         return res and res2
 
-    def get_transition_function(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_TransitionTuple]  # noqa: E501
+    def get_transition_function(self, socket, config, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
         return self.enter_state_with_tp, GMLAN_TPEnumerator.cleanup
 
     @staticmethod
@@ -266,7 +261,7 @@ class GMLAN_SA1Enumerator(GMLAN_Enumerator, StateGenerator):
         return state, "SecurityAccess:", label
 
     def get_new_edge(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[Tuple[EcuState, EcuState]]  # noqa: E501
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_Edge]  # noqa: E501
         edge = super(GMLAN_SA1Enumerator, self).get_new_edge(socket, config)
         if edge:
             state, new_state = edge
@@ -277,9 +272,9 @@ class GMLAN_SA1Enumerator(GMLAN_Enumerator, StateGenerator):
         return None
 
     @staticmethod
-    def enter_state_with_tp(sock, conf):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> bool
-        res = GMLAN_TPEnumerator.enter(sock, conf)
+    def enter_state_with_tp(sock, conf, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
+        res = GMLAN_TPEnumerator.enter(sock, conf, edge)
         kf = conf[GMLAN_SA1Enumerator.__name__].get("keyfunction")
         vb = conf[GMLAN_SA1Enumerator.__name__].get("verbose", True)
         tm = conf[GMLAN_SA1Enumerator.__name__].get("timeout", 15)
@@ -288,8 +283,8 @@ class GMLAN_SA1Enumerator(GMLAN_Enumerator, StateGenerator):
             sock, kf, level=1, timeout=tm, verbose=vb, retry=rt)
         return res and res2
 
-    def get_transition_function(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_TransitionTuple]  # noqa: E501
+    def get_transition_function(self, socket, config, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
         return self.enter_state_with_tp, GMLAN_TPEnumerator.cleanup
 
 
@@ -331,7 +326,7 @@ class GMLAN_RDEnumerator(GMLAN_Enumerator, StateGenerator):
         return [GMLAN() / GMLAN_RD(memorySize=0x10)]
 
     def get_new_edge(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[Tuple[EcuState, EcuState]]  # noqa: E501
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_Edge]  # noqa: E501
         edge = super(GMLAN_RDEnumerator, self).get_new_edge(socket, config)
         if edge:
             state, new_state = edge
@@ -342,14 +337,14 @@ class GMLAN_RDEnumerator(GMLAN_Enumerator, StateGenerator):
         return None
 
     @staticmethod
-    def enter_state_with_tp(sock, conf):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> bool
-        res = GMLAN_TPEnumerator.enter(sock, conf)
+    def enter_state_with_tp(sock, conf, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
+        res = GMLAN_TPEnumerator.enter(sock, conf, edge)
         res2 = GMLAN_RequestDownload(sock, 0x10, timeout=10, verbose=False)
         return res and res2
 
-    def get_transition_function(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_TransitionTuple]  # noqa: E501
+    def get_transition_function(self, socket, config, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
         return self.enter_state_with_tp, GMLAN_TPEnumerator.cleanup
 
     @staticmethod
@@ -382,7 +377,7 @@ class GMLAN_PMEnumerator(GMLAN_Enumerator, StateGenerator):
         self._state_completed[state] = True
 
     def get_new_edge(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[Tuple[EcuState, EcuState]]  # noqa: E501
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_Edge]  # noqa: E501
         edge = super(GMLAN_PMEnumerator, self).get_new_edge(socket, config)
         if edge:
             state, new_state = edge
@@ -393,14 +388,14 @@ class GMLAN_PMEnumerator(GMLAN_Enumerator, StateGenerator):
         return None
 
     @staticmethod
-    def enter_state_with_tp(sock, conf):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> bool
-        res = GMLAN_TPEnumerator.enter(sock, conf)
+    def enter_state_with_tp(sock, conf, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
+        res = GMLAN_TPEnumerator.enter(sock, conf, edge)
         res2 = GMLAN_InitDiagnostics(sock, timeout=20, verbose=False)
         return res and res2
 
-    def get_transition_function(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_TransitionTuple]  # noqa: E501
+    def get_transition_function(self, socket, config, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
         return self.enter_state_with_tp, GMLAN_TPEnumerator.cleanup
 
     @staticmethod

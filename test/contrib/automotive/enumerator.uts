@@ -105,15 +105,6 @@ e._state_completed["s2"] = True
 
 assert e.completed
 
-= AutomotiveTestCase dump check
-import json
-
-dump = json.dumps(e.dump())
-d = json.loads(dump)
-assert len(d["states_completed"]) == 2
-assert len(d["data"]) == 4
-assert d["format_version"] == 0.3
-
 = AutomotiveTestCase show
 
 e.show(filtered=False)
@@ -149,12 +140,6 @@ class Scanner(AutomotiveTestCaseExecutor):
         # type: (int) -> bool
         raise NotImplementedError()
 
-scanner = Scanner(MockSock(), test_cases=[e])
-
-dump = json.dumps(scanner.dump(), sort_keys=True, indent=4)
-print(dump)
-d = json.loads(dump)
-print(d)
 
 + AutomotiveTestCaseExecutorConfiguration tests
 

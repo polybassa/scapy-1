@@ -42,7 +42,7 @@ class Graph(object):
         self.edges[edge[0]].append(edge[1])
         self.__transition_functions[edge] = transition_function
 
-    def get_transition_function(self, edge):
+    def get_transition_tuple_for_edge(self, edge):
         # type: (_Edge) -> Optional["_TransitionTuple"]
         try:
             return self.__transition_functions[edge]

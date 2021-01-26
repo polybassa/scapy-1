@@ -8,7 +8,7 @@
 = Imports
 load_layer("can", globals_dict=globals())
 conf.contribs['CAN']['swap-bytes'] = False
-import subprocess, sys
+import subprocess, sys, io
 import scapy.modules.six as six
 from subprocess import call
 from scapy.consts import LINUX
@@ -213,6 +213,14 @@ with gzip.open("test/contrib/automotive/uds_ecu_scanner.pkl.gz", "rb") as f:
 
 assert len(backup_scanner.configuration.test_cases) == len(scanner.configuration.test_cases)
 assert len(backup_scanner.state_paths) == len(scanner.state_paths)
+
+= Pickle scanner
+
+f = io.BytesIO()
+
+pickle.dump(scanner, f)
+# If no exception during dump happen.. we reach this line
+assert True
 
 = Load packets from candump
 pkts = rdcandump("test/contrib/automotive/gmlan_ecu_dump.log.gz")

@@ -159,7 +159,7 @@ class TestCaseGenerator(ABC):
 class StateGenerator(ABC):
     @staticmethod
     def _set_args_for_transition_function(config, class_name, edge, args):
-        # type: (AutomotiveTestCaseExecutorConfiguration, str, _Edge, Tuple[Any]) -> None  # noqa: E501
+        # type: (AutomotiveTestCaseExecutorConfiguration, str, _Edge, Tuple[Any, ...]) -> None  # noqa: E501
         key = "transition_function_args"
         try:
             if config[class_name][key] is None:
@@ -197,6 +197,7 @@ class StateGenerator(ABC):
         else:
             return None
 
+    @abstractmethod
     def get_transition_function(self, socket, config, edge):
         # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
         """
@@ -689,22 +690,30 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         return self._results
 
     @property
-    def filtered_results(self):
+    def results_with_response(self):
         # type: () -> List[_AutomotiveTestCaseFilteredScanResult]
         filtered_results = list()
-
         for r in self._results:
             if r.resp is None:
                 continue
             if r.resp_ts is None:
                 continue
             fr = cast(_AutomotiveTestCaseFilteredScanResult, r)
-            if fr.resp.service != 0x7f:
-                filtered_results.append(fr)
+            filtered_results.append(fr)
+        return filtered_results
+
+    @property
+    def filtered_results(self):
+        # type: () -> List[_AutomotiveTestCaseFilteredScanResult]
+        filtered_results = list()
+
+        for r in self.results_with_response:
+            if r.resp.service != 0x7f:
+                filtered_results.append(r)
                 continue
-            nrc = self._get_negative_response_code(fr.resp)
+            nrc = self._get_negative_response_code(r.resp)
             if nrc not in self.negative_response_blacklist:
-                filtered_results.append(fr)
+                filtered_results.append(r)
         return filtered_results
 
     @property
@@ -796,10 +805,9 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         # type: (bool) -> Optional[str]
         completed = [(state, self._state_completed[state])
                      for state in self.scanned_states]
-        return make_lined_table(completed,
-                                lambda tup: ("Scan state completed",
-                                             tup[0], tup[1]),
-                                dump=dump)
+        return make_lined_table(
+            completed, lambda tup: ("Scan state completed", tup[0], tup[1]),
+            dump=dump)
 
     def _show_results_information(self, dump, filtered):
         # type: (bool, bool) -> Optional[str]
@@ -891,10 +899,6 @@ class AutomotiveTestCaseExecutor(ABC):
             pass
         try:
             del d["reset_handler"]
-        except KeyError:
-            pass
-        try:
-            del d["cleanup_functions"]
         except KeyError:
             pass
         try:
@@ -1041,18 +1045,17 @@ class AutomotiveTestCaseExecutor(ABC):
     def enter_state(self, prev_state, next_state):
         # type: (EcuState, EcuState) -> bool
         edge = (prev_state, next_state)
-        funcs = self.state_graph.get_transition_function(edge)
+        funcs = self.state_graph.get_transition_tuple_for_edge(edge)
 
         if funcs is None:
             log_interactive.error("No transition function for edge %s", edge)
             return False
 
-        trans_func = funcs[0]
+        trans_func, clean_func = funcs
         state_changed = trans_func(self.socket, self.configuration, edge)
         if state_changed:
             self.target_state = next_state
 
-            clean_func = funcs[1]
             if clean_func is not None:
                 self.cleanup_functions += [clean_func]
             return True

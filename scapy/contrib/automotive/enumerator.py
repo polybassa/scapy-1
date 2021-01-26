@@ -20,7 +20,8 @@ from scapy.utils import make_lined_table, SingleConversationSocket, EDecimal
 import scapy.modules.six as six
 from scapy.supersocket import SuperSocket
 from scapy.packet import Packet
-from scapy.contrib.automotive.ecu import EcuState, EcuStateModifier
+from scapy.contrib.automotive.ecu import EcuState, EcuStateModifier, \
+    EcuResponse
 from scapy.compat import orb
 
 if six.PY34:
@@ -392,6 +393,16 @@ class StagedAutomotiveTestCase(AutomotiveTestCaseABC, TestCaseGenerator, StateGe
     def completed(self):
         # type: () -> bool
         return all(e.completed for e in self.__test_cases)
+
+    @property
+    def supported_responses(self):
+        # type: () -> List[EcuResponse]
+
+        supported_responses = list()
+        for tc in self.test_cases:
+            supported_responses += tc.supported_responses
+
+        return supported_responses
 
 
 class AutomotiveTestCase(AutomotiveTestCaseABC):
@@ -859,6 +870,19 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
                 raise Scapy_Exception("Unsupported Type for positive_case. "
                                       "Provide a string or a function.")
 
+    @property
+    def supported_responses(self):
+        # type: () -> List[EcuResponse]
+
+        supported_resps = list()
+        all_responses = [p for p in self.__result_packets.values()
+                         if orb(bytes(p)[0]) & 0x40]
+        for resp in all_responses:
+            states = list(set([t.state for t in self.results_with_response
+                               if t.resp == resp]))
+            supported_resps.append(EcuResponse(state=states, responses=resp))
+        return supported_resps
+
 
 class AutomotiveTestCaseExecutor(ABC):
     @property
@@ -1090,3 +1114,29 @@ class AutomotiveTestCaseExecutor(ABC):
             for s in self.state_graph.nodes:
                 data += [(t.__class__.__name__, repr(s), t.has_completed(s))]
         make_lined_table(data, lambda tup: (tup[1], tup[0], tup[2]))
+
+    @property
+    def supported_responses(self):
+        # type: () -> List[EcuResponse]
+        def sort_key_func(resp):
+            # type: (EcuResponse) -> Tuple[bool, int, int, int]
+            """
+            This sorts responses in the following order:
+            1. Positive responses first
+            2. Lower ServiceID first
+            3. Less states first
+            4. Longer (more specific) responses first
+            :param resp: EcuResponse to be sorted
+            :return: Tuple as sort key
+            """
+            return (resp.key_response.service == 0x7f,
+                    resp.key_response.service,
+                    0xffffffff - len(resp.states or []),
+                    0xffffffff - len(resp.key_response))
+
+        supported_responses = list()
+        for tc in self.configuration.test_cases:
+            supported_responses += tc.supported_responses
+
+        supported_responses.sort(key=sort_key_func)
+        return supported_responses

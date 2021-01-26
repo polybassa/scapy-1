@@ -165,7 +165,11 @@ class StateGenerator(ABC):
             if config[class_name][key] is None:
                 config[class_name][key] = dict()
         except KeyError:
-            config[class_name][key] = dict()
+            try:
+                config[class_name][key] = dict()
+            except KeyError:
+                config[class_name] = dict()
+                config[class_name][key] = dict()
 
         config[class_name][key][edge] = args
 

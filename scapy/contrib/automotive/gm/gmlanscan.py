@@ -350,7 +350,7 @@ class GMLAN_RDEnumerator(GMLAN_Enumerator, StateGenerator):
     @staticmethod
     def _get_table_entry(tup):
         # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
-        state, req, res, _, _ = tup
+        state, _, res, _, _ = tup
         label = GMLAN_Enumerator._get_label(res, "PR: Supported")
         return state, "RequestDownload:", label
 
@@ -401,7 +401,7 @@ class GMLAN_PMEnumerator(GMLAN_Enumerator, StateGenerator):
     @staticmethod
     def _get_table_entry(tup):
         # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
-        state, req, res, _, _ = tup
+        state, _, res, _, _ = tup
         label = GMLAN_Enumerator._get_label(res, "PR: Supported")
         return state, "ProgrammingMode:", label
 

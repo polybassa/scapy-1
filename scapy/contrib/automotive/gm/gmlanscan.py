@@ -22,6 +22,7 @@ from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \
     AutomotiveTestCaseExecutorConfiguration, AutomotiveTestCaseABC, \
     StagedAutomotiveTestCase, _TransitionTuple, _SocketUnion, \
     _AutomotiveTestCaseScanResult
+from scapy.contrib.automotive.graph import _Edge
 from scapy.contrib.automotive.ecu import EcuState
 from scapy.packet import Packet
 from scapy.contrib.isotp import ISOTPSocket

@@ -1,6 +1,6 @@
 % Regression tests for Simulated ECUs, UDS- and GMLAN Scanners
 
-~ disabled  # These tests take too long for CI
+#~ disabled  # These tests take too long for CI
 
 + Configuration
 ~ conf

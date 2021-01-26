@@ -20,7 +20,7 @@ from scapy.error import Scapy_Exception, log_interactive
 from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \
     AutomotiveTestCaseExecutor, AutomotiveTestCaseABC, StateGenerator, \
     AutomotiveTestCaseExecutorConfiguration, StagedAutomotiveTestCase, \
-    _SocketUnion, _TransitionCallable, _TransitionTuple, \
+    _SocketUnion, _TransitionTuple, \
     _AutomotiveTestCaseScanResult, _AutomotiveTestCaseFilteredScanResult
 from scapy.contrib.automotive.graph import _Edge
 from scapy.contrib.automotive.ecu import EcuState
@@ -49,7 +49,6 @@ else:
 
 
 class UDS_Enumerator(AutomotiveTestCase):
-
     @staticmethod
     def _get_negative_response_code(resp):
         # type: (Packet) -> int
@@ -124,7 +123,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
             return False
 
     def get_new_edge(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[Tuple[EcuState, EcuState]]  # noqa: E501
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_Edge]  # noqa: E501
         edge = super(UDS_DSCEnumerator, self).get_new_edge(socket, config)
         if edge:
             state, new_state = edge
@@ -137,19 +136,30 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
     @staticmethod
     def enter_state_with_tp(sock, conf, req):
         # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, Packet) -> bool  # noqa: E501
-        res = UDS_TPEnumerator.enter(sock, conf)
+        UDS_TPEnumerator.enter(sock, conf)
         # Wait 5 seconds, since some ECUs require time
         # to switch to the bootloader
         delay = conf[UDS_DSCEnumerator.__name__].get("overwrite_timeout", 5)
         time.sleep(delay)
-        res2 = UDS_DSCEnumerator.enter_state(sock, conf, req)
-        return res and res2
+        return UDS_DSCEnumerator.enter_state(sock, conf, req)
 
-    def get_transition_function(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_TransitionTuple]  # noqa: E501
+    @staticmethod
+    def transition_function(sock, conf, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
+        args = UDS_DSCEnumerator._get_args_for_transition_function(
+            conf, UDS_DSCEnumerator.__name__, edge)
+        if args is None:
+            log_interactive.error("Couldn't find args")
+            return False
+        else:
+            return UDS_DSCEnumerator.enter_state_with_tp(sock, conf, *args)
+
+    def get_transition_function(self, socket, config, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
         _, req, _, _, _ = self._results[-1]
-        tf = lambda s, c, r=req: self.enter_state_with_tp(s, c, r)
-        return tf, UDS_TPEnumerator.cleanup
+        cn = self.__class__.__name__
+        self._set_args_for_transition_function(config, cn, edge, (req, ))
+        return UDS_DSCEnumerator.transition_function, UDS_TPEnumerator.cleanup
 
 
 class UDS_TPEnumerator(UDS_Enumerator, StateGenerator):
@@ -168,16 +178,15 @@ class UDS_TPEnumerator(UDS_Enumerator, StateGenerator):
     @staticmethod
     def enter(socket, configuration):
         # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> bool
-        try:
-            tps = configuration["tps"]
-            if tps:
-                tps.stop()
-        except KeyError:
-            pass
-
-        configuration["tps"] = UDS_TesterPresentSender(socket)
+        UDS_TPEnumerator.cleanup(socket, configuration)
+        configuration["tps"] = UDS_TesterPresentSender(socket)  # noqa: E501
         configuration["tps"].start()
         return True
+
+    @staticmethod
+    def transition_function(socket, configuration, _):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
+        return UDS_TPEnumerator.enter(socket, configuration)
 
     @staticmethod
     def cleanup(_, configuration):
@@ -185,13 +194,13 @@ class UDS_TPEnumerator(UDS_Enumerator, StateGenerator):
         try:
             configuration["tps"].stop()
             configuration["tps"] = None
-        except AttributeError:
+        except (AttributeError, KeyError):
             pass
         return True
 
-    def get_transition_function(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_TransitionTuple]  # noqa: E501
-        return self.enter, self.cleanup
+    def get_transition_function(self, socket, config, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
+        return self.transition_function, self.cleanup
 
 
 class UDS_EREnumerator(UDS_Enumerator):
@@ -357,19 +366,6 @@ class UDS_WDBISelectiveEnumerator(StagedAutomotiveTestCase):
 class UDS_SAEnumerator(UDS_Enumerator):
     _description = "Available security seeds with access type and state"
 
-    def __init__(self):
-        # type: () -> None
-        super(UDS_SAEnumerator, self).__init__()
-        self._transition_functions = dict()  # type: Dict[Any, Any]
-
-    def __reduce__(self):  # type: ignore
-        f, t, d = super(UDS_SAEnumerator, self).__reduce__()  # type: ignore  # noqa: E501
-        try:
-            del d["_transition_functions"]
-        except KeyError:
-            pass
-        return f, t, d
-
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
         scan_range = kwargs.pop("scan_range", range(1, 256, 2))
@@ -461,11 +457,11 @@ class UDS_SA_XOR_Enumerator(UDS_SAEnumerator, StateGenerator):
     def get_key_pkt(seed, level=1):
         # type: (Packet, int) -> Optional[Packet]
 
-        def keyfunction_I(s):
+        def key_function_int(s):
             # type: (int) -> int
             return 0xffffffff & ~s
 
-        def keyfunction_H(s):
+        def key_function_short(s):
             # type: (int) -> int
             return 0xffff & ~s
 
@@ -479,11 +475,11 @@ class UDS_SA_XOR_Enumerator(UDS_SAEnumerator, StateGenerator):
 
         if len(s) == 2:
             fmt = "H"
-            key_function = keyfunction_H
+            key_function = key_function_short
 
         if len(s) == 4:
             fmt = "I"
-            key_function = keyfunction_I
+            key_function = key_function_int
 
         if key_function is not None and fmt is not None:
             key = struct.pack(fmt, key_function(struct.unpack(fmt, s)[0]))
@@ -506,28 +502,40 @@ class UDS_SA_XOR_Enumerator(UDS_SAEnumerator, StateGenerator):
             return True
 
     @staticmethod
-    def get_bootloader_security_access(sock, level=1):
-        # type: (_SocketUnion, int) -> bool
+    def get_security_access(sock, level=1, seedpkt=None):
+        # type: (_SocketUnion, int, Optional[Packet]) -> bool
         log_interactive.info(
             "Try bootloader security access for level %d" % level)
+        if seedpkt is None:
+            seedpkt = UDS_SA_XOR_Enumerator.get_seed_pkt(sock, level)
+            if not seedpkt:
+                return False
 
-        seed = UDS_SA_XOR_Enumerator.get_seed_pkt(sock, level)
-        if not seed:
-            return False
-        key_pkt = UDS_SA_XOR_Enumerator.get_key_pkt(seed, level)
+        key_pkt = UDS_SA_XOR_Enumerator.get_key_pkt(seedpkt, level)
         if key_pkt is None:
             return False
 
         res = sock.sr1(key_pkt, timeout=5, verbose=False)
         return UDS_SA_XOR_Enumerator.evaluate_security_access_response(
-            res, seed, key_pkt)
+            res, seedpkt, key_pkt)
+
+    @staticmethod
+    def transition_function(sock, conf, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
+        args = UDS_SA_XOR_Enumerator._get_args_for_transition_function(
+            conf, UDS_SA_XOR_Enumerator.__name__, edge)
+        if args is None:
+            log_interactive.error("Couldn't find args")
+            return False
+
+        return UDS_SA_XOR_Enumerator.get_security_access(sock, *args)
 
     def get_new_edge(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[Tuple[EcuState, EcuState]]  # noqa: E501
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_Edge]  # noqa: E501
         last_resp = self._results[-1].resp
         last_state = self._results[-1].state
 
-        if last_resp is None:
+        if last_resp is None or last_resp.service == 0x7f:
             return None
 
         try:
@@ -537,47 +545,25 @@ class UDS_SA_XOR_Enumerator(UDS_SAEnumerator, StateGenerator):
 
             seed = last_resp
             sec_lvl = seed.securityAccessType
-            key_pkt = self.get_key_pkt(seed, sec_lvl)
 
-            if key_pkt is None:
-                return None
-
-            res = socket.sr1(key_pkt, timeout=5, verbose=False)
-            if not self.evaluate_security_access_response(
-                    res, seed, key_pkt):
-                return None
-            else:
+            if self.get_security_access(socket, sec_lvl, seed):
                 log_interactive.debug("Security Access found.")
-
-                # create transition function
-                tf = lambda sock, _, lvl=sec_lvl: \
-                    self.get_bootloader_security_access(sock, level=lvl)
-                self._transition_functions[sec_lvl] = tf
-
                 # create edge
                 new_state = copy.copy(last_state)
                 new_state.security_level = seed.securityAccessType + 1  # type: ignore  # noqa: E501
-                return last_state, new_state
-        except AttributeError:
-            return None
+                edge = (last_state, new_state)
 
-    def get_transition_function(self, socket, config):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_TransitionTuple]  # noqa: E501
-        last_state = self._results[-1].state
-        last_request = self._results[-1].req
-        sec_lvl = last_request.securityAccessType
-
-        try:
-            if last_state.security_level == sec_lvl:  # type: ignore
-                return None
+                self._set_args_for_transition_function(
+                    config, UDS_SA_XOR_Enumerator.__name__, edge, (sec_lvl, ))
+                return edge
         except AttributeError:
             pass
 
-        try:
-            tf = cast(_TransitionCallable, self._transition_functions[sec_lvl])
-            return tf, None
-        except KeyError:
-            return None
+        return None
+
+    def get_transition_function(self, socket, config, edge):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
+        return self.transition_function, None
 
 
 class UDS_RCEnumerator(UDS_Enumerator):

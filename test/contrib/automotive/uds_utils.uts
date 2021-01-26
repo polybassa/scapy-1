@@ -93,7 +93,7 @@ drain_bus(iface1)
 
 started = threading.Event()
 g = Graph()
-g.add_edge(EcuState(session=1), EcuState(session=1))
+g.add_edge((EcuState(session=1), EcuState(session=1)))
 
 def answer(pkt):
     if pkt.service < 0xff:
@@ -112,7 +112,7 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
         session_scanner.execute(sendSock, EcuState(session=1), session_range=range(1,4), timeout=0.2, overwrite_timeout=False)
         edge = session_scanner.get_new_edge(None, None)
         if edge:
-            g.add_edge(*edge)
+            g.add_edge(edge)
     sendSock.send(b"\xff")
     threadSniffer.join(timeout=5)
 
@@ -143,7 +143,7 @@ drain_bus(iface1)
 
 started = threading.Event()
 g = Graph()
-g.add_edge(EcuState(session=1), EcuState(session=1))
+g.add_edge((EcuState(session=1), EcuState(session=1)))
 config = {"state_graph": g, "UDS_DSCEnumerator":
     {"session_range": range(1,4), "timeout": 0.2, "overwrite_timeout": False}}
 
@@ -173,7 +173,7 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
         staged_enumerators.post_execute(sendSock, config)
         edge = staged_enumerators.get_new_edge(None, None)
         if edge:
-            g.add_edge(*edge)
+            g.add_edge(edge)
     sendSock.send(b"\xff")
     threadSniffer.join(timeout=10)
 

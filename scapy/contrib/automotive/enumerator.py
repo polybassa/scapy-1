@@ -178,6 +178,12 @@ class AutomotiveTestCaseABC(ABC):
         # type: () -> bool
         raise NotImplementedError
 
+    @property
+    @abstractmethod
+    def supported_responses(self):
+        # type: () -> List[EcuResponse]
+        raise NotImplementedError
+
 
 class TestCaseGenerator(ABC):
     @abstractmethod

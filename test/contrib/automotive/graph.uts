@@ -1,0 +1,234 @@
+% Regression tests for enumerators
+
++ Load general modules
+
+= Load contribution layer
+
+from scapy.contrib.automotive.enumerator import *
+from scapy.contrib.automotive.uds import *
+from scapy.contrib.automotive.uds_scan import UDS_Enumerator
+import pickle
+import io
+
+from scapy.contrib.automotive.enumerator import _AutomotiveTestCaseScanResult
+
+
++ Basic checks
+= AutomotiveTestCase basecls checks
+
+pkts = [
+    _AutomotiveTestCaseScanResult("s1", UDS(b"\x20abcd"), UDS(b"\x60abcd"), 1.0, 1.9),
+    _AutomotiveTestCaseScanResult("s2", UDS(b"\x20abcd"), None, 2.0, None),
+    _AutomotiveTestCaseScanResult("s1", UDS(b"\x21abcd"), UDS(b"\x7fabcd"), 3.0, 3.1),
+    _AutomotiveTestCaseScanResult("s2", UDS(b"\x21abcd"), UDS(b"\x61abcd"), 4.0, 4.5),
+]
+
+class MyTestCase(AutomotiveTestCase):
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+        raise NotImplementedError("Overwrite this method")
+    @staticmethod
+    def _get_table_entry(tup):
+        state, req, res, _, _ = tup
+        label = UDS_Enumerator._get_label(res, "PR: Supported")
+        return (state,
+                "0x%02x: %s" % (req.service, req.sprintf("%UDS.service%")),
+                label)
+    @staticmethod
+    def _get_negative_response_label(response):
+        # type: (Packet) -> str
+        return response.sprintf("NR: %UDS_NR.negativeResponseCode%")
+    @staticmethod
+    def _get_negative_response_code(resp):
+        # type: (Packet) -> int
+        return resp.negativeResponseCode
+    @staticmethod
+    def _get_negative_response_desc(nrc):
+        # type: (int) -> str
+        return UDS_NR(negativeResponseCode=nrc).sprintf(
+            "%UDS_NR.negativeResponseCode%")
+
+
+e = MyTestCase()
+for p in pkts:
+    p.req.time = p.req_ts
+    p.req.sent_time = p.req_ts
+    if p.resp is not None:
+        p.resp.time = p.resp_ts
+    e._store_result(p.state, p.req, p.resp)
+
+
+= AutomotiveTestCase not completed check
+
+assert e.completed == False
+
+
+= AutomotiveTestCase stats check
+
+stat_list = e._compute_statistics()
+
+stats = {label: value for state, label, value in stat_list if state == "all"}
+print(stats)
+
+assert stats["num_answered"] == '3'
+assert stats["num_unanswered"] == '1'
+assert stats["answertime_max"] == '0.9'
+assert stats["answertime_min"] == '0.1'
+assert stats["answertime_avg"] == '0.5'
+assert stats["num_negative_resps"] == '1'
+
+
+= AutomotiveTestCase filtered results
+
+assert len(e.filtered_results) == 3
+assert e.filtered_results[0] == pkts[0]
+assert e.filtered_results[1] == pkts[2]
+
+
+= AutomotiveTestCase scanned states
+
+assert len(e.scanned_states) == 2
+assert {"s1", "s2"} == e.scanned_states
+
+= AutomotiveTestCase get_label
+
+assert e._get_label(pkts[0].resp) == "PR: PositiveResponse"
+assert e._get_label(pkts[1].resp) == "Timeout"
+assert e._get_label(pkts[2].resp) == "NR: 98"
+assert e._get_label(pkts[3].resp, lambda _: "positive") == "positive"
+assert e._get_label(pkts[3].resp, lambda _: "positive" + hex(pkts[3].req.service)) == "positive" + "0x21"
+
+= AutomotiveTestCase completed
+
+e._state_completed["s1"] = True
+e._state_completed["s2"] = True
+
+assert e.completed
+
+= AutomotiveTestCase show
+
+e.show(filtered=False)
+
+dump = e.show(dump=True, filtered=False)
+assert "NR: 98" in dump
+assert "Supported" in dump
+assert "PR:" in dump
+assert "NR:" in dump
+assert "s1" in dump
+assert "s2" in dump
+assert "all" in dump
+
+= TestCaseExecutor dump check
+
+class MockSock(object):
+    def __init__(self):
+        self.src = 1
+        self.dst = 2
+        self.exsrc = 3
+        self.exdst = 4
+
+class Scanner(AutomotiveTestCaseExecutor):
+    @property
+    def tester_present_sender_cls(self):
+        # type: () -> Type[PeriodicSenderThread]
+        raise NotImplementedError()
+    @property
+    def default_test_case_clss(self):
+        # type: () -> List[Type[AutomotiveTestCaseABC]]
+        return [MyTestCase]
+    def enter_session(self, session):
+        # type: (int) -> bool
+        raise NotImplementedError()
+
+
++ AutomotiveTestCaseExecutorConfiguration tests
+
+= Basic tests
+
+class TestCase1(MyTestCase):
+    pass
+
+class TestCase2(MyTestCase):
+    pass
+
+tce = Scanner(MockSock(), test_cases=[TestCase1, TestCase2, MyTestCase],
+              verbose=True, delay_state_change=42,
+              global_arg="Whatever", TestCase1_kwargs={"local_kwarg": 42})
+
+config = tce.configuration  # type: AutomotiveTestCaseExecutorConfiguration
+assert config.delay_state_change == 42
+assert config.verbose == True
+assert len(config.test_cases) == 3
+assert len(config.TestCase1.items()) == 3
+assert len(config.TestCase2.items()) == 2
+assert len(config["TestCase1"].items()) == 3
+assert len(config.MyTestCase.items()) == 2
+assert config.TestCase1["verbose"] == True
+assert config.TestCase1["local_kwarg"] == 42
+assert config.TestCase1["global_arg"] == "Whatever"
+assert config.TestCase2["global_arg"] == "Whatever"
+assert config.MyTestCase["global_arg"] == "Whatever"
+
+= StagedAutomotiveTestCase
+
+
+
++ Graph tests
+
+= Basic test
+
+g = Graph()
+g.add_edge(("1", "1"))
+g.add_edge(("1", "2"))
+g.add_edge(("2", "3"))
+g.add_edge(("3", "4"))
+g.add_edge(("4", "4"))
+
+assert "1" in g.nodes
+assert "2" in g.nodes
+assert "3" in g.nodes
+assert "4" in g.nodes
+assert len(g.nodes) == 4
+assert g.dijkstra(g, "1", "4") == ["1", "2", "3", "4"]
+
+= Shortest path test
+
+g = Graph()
+g.add_edge(("1", "1"))
+g.add_edge(("1", "2"))
+g.add_edge(("2", "3"))
+g.add_edge(("3", "4"))
+g.add_edge(("4", "4"))
+
+assert g.dijkstra(g, "1", "4") == ["1", "2", "3", "4"]
+
+g.add_edge(("1", "4"))
+
+assert g.dijkstra(g, "1", "4") == ["1", "4"]
+
+g.add_edge(("3", "5"))
+g.add_edge(("5", "6"))
+
+print(g.dijkstra(g, "1", "6"))
+
+assert g.dijkstra(g, "1", "6") == ["1", "2", "3", "5", "6"] or \
+       g.dijkstra(g, "1", "6") == ['1', '4', '3', '5', '6']
+
+g.add_edge(("2", "5"))
+
+print(g.dijkstra(g, "1", "6"))
+
+assert g.dijkstra(g, "1", "6") == ["1", "2", "5", "6"]
+
+g.add_edge(("4", "6"))
+
+assert g.dijkstra(g, "1", "6") == ["1", "4", "6"]
+
+= graph pickle
+
+f = io.BytesIO()
+
+pickle.dump(g, f)
+unp = pickle.loads(f.getvalue())
+
+assert unp.dijkstra(g, "1", "6") == ["1", "4", "6"]

@@ -196,25 +196,21 @@ class StateGenerator(ABC):
     @staticmethod
     def _set_args_for_transition_function(config, class_name, edge, args):
         # type: (AutomotiveTestCaseExecutorConfiguration, str, _Edge, Tuple[Any, ...]) -> None  # noqa: E501
-        key = "transition_function_args"
+        key = "_transition_function_args"
         try:
-            if config[class_name][key] is None:
-                config[class_name][key] = dict()
+            if config[class_name + key] is None:
+                config[class_name + key] = dict()
         except KeyError:
-            try:
-                config[class_name][key] = dict()
-            except KeyError:
-                config[class_name] = dict()
-                config[class_name][key] = dict()
+            config[class_name + key] = dict()
 
-        config[class_name][key][edge] = args
+        config[class_name + key][edge] = args
 
     @staticmethod
     def _get_args_for_transition_function(config, class_name, edge):
         # type: (AutomotiveTestCaseExecutorConfiguration, str, _Edge) -> Optional[Tuple[Any]]  # noqa: E501
-        key = "transition_function_args"
+        key = "_transition_function_args"
         try:
-            return config[class_name][key][edge]
+            return config[class_name + key][edge]
         except KeyError:
             return None
 

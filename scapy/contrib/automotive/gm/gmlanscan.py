@@ -330,8 +330,6 @@ class GMLAN_RDEnumerator(GMLAN_Enumerator, StateGenerator):
         edge = super(GMLAN_RDEnumerator, self).get_new_edge(socket, config)
         if edge:
             state, new_state = edge
-            if state == new_state:
-                return None
             new_state.tp = 1  # type: ignore
             return state, new_state
         return None

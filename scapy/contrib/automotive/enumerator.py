@@ -96,7 +96,7 @@ class AutomotiveTestCaseExecutorConfiguration(object):
                        To assign a configuration dictionary to a TestCase, the
                        keyword need to identify the TestCase by the following
                        pattern.
-                       `MyTestCase_kwargs={"someConfig": 42}`
+                       ``MyTestCase_kwargs={"someConfig": 42}``
                        The keyword is composed from the TestCase class name and
                        the postfix '_kwargs'.
 

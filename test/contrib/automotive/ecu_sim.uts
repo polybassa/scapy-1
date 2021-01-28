@@ -299,7 +299,3 @@ assert scanner.scan_completed
 resps = scanner.supported_responses
 print(resps)
 assert len(resps)
-
-
-for r in resps:
-    assert r in mEcu.supported_responses

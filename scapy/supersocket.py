@@ -35,6 +35,7 @@ from scapy.compat import (
     Tuple,
     Type,
     Union,
+    Callable,
 )
 
 # Utils
@@ -234,7 +235,7 @@ class SuperSocket:
 
     @staticmethod
     def select(sockets, remain=conf.recv_poll_rate):
-        # type: (List[SuperSocket], Optional[float]) -> Tuple[List[SuperSocket], None]  # noqa: E501
+        # type: (List[SuperSocket], Optional[float]) -> Tuple[List[SuperSocket], Optional[Callable[[SuperSocket, int], Optional[Packet]]]]  # noqa: E501
         """This function is called during sendrecv() routine to select
         the available sockets.
 
@@ -471,7 +472,7 @@ class L2ListenTcpdump(SuperSocket):
 
     @staticmethod
     def select(sockets, remain=None):
-        # type: (List[SuperSocket], Optional[float]) -> Tuple[List[SuperSocket], None]  # noqa: E501
+        # type: (List[SuperSocket], Optional[float]) -> Tuple[List[SuperSocket], Optional[Callable[[SuperSocket, int], Optional[Packet]]]]  # noqa: E501
         if (WINDOWS or DARWIN):
             return sockets, None
         return SuperSocket.select(sockets, remain=remain)

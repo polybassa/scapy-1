@@ -129,7 +129,7 @@ class CAN(Packet):
     def extract_padding(self, p):
         # type: (bytes) -> Tuple[bytes, Optional[bytes]]
         if conf.contribs['CAN']['remove-padding']:
-            return b'', b''
+            return b'', None
         else:
             return b'', p
 

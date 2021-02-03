@@ -1045,7 +1045,8 @@ class UDS_RCPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_RC \
-            and other.routineControlType == self.routineControlType
+            and other.routineControlType == self.routineControlType \
+            and other.routineIdentifier == self.routineIdentifier
 
     @staticmethod
     def get_log(pkt):

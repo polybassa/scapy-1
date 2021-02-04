@@ -157,10 +157,10 @@ config = tce.configuration  # type: AutomotiveTestCaseExecutorConfiguration
 assert config.delay_state_change == 42
 assert config.verbose == True
 assert len(config.test_cases) == 3
-assert len(config.TestCase1.items()) == 3
-assert len(config.TestCase2.items()) == 2
-assert len(config["TestCase1"].items()) == 3
-assert len(config.MyTestCase.items()) == 2
+assert len(config.TestCase1.items()) == 4
+assert len(config.TestCase2.items()) == 3
+assert len(config["TestCase1"].items()) == 4
+assert len(config.MyTestCase.items()) == 3
 assert config.TestCase1["verbose"] == True
 assert config.TestCase1["local_kwarg"] == 42
 assert config.TestCase1["global_arg"] == "Whatever"

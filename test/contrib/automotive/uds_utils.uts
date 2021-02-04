@@ -234,17 +234,17 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
     def reset():
         answering_machine.state.reset()
         answering_machine.state["session"] = 1
-    sim = threading.Thread(target=answering_machine, kwargs={'timeout': 200, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
+    sim = threading.Thread(target=answering_machine, kwargs={'timeout': 300, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
     sim.start()
     reset()
-    scanner = UDS_Scanner(tester, reset_handler=reset, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.2, "overwrite_timeout": False}, delay_state_change=0)
+    scanner = UDS_Scanner(tester, reset_handler=reset, delay_state_change=0, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.1, "overwrite_timeout": False})
     scanner.scan()
     scanner.scan()
     tester.send(b"\xff\xff\xff")
     sim.join(timeout=2)
 
-assert scanner.configuration.test_cases[0].completed
 print(scanner.state_paths)
+assert scanner.configuration.test_cases[0].completed
 print(len(scanner.configuration.test_cases[0].filtered_results))
 assert len(scanner.configuration.test_cases[0].filtered_results) == 7*8
 assert EcuState(session=1) in scanner.state_graph.nodes
@@ -286,7 +286,7 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
         answering_machine.state["session"] = 1
     sim = threading.Thread(target=answering_machine, kwargs={'timeout': 200, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
     sim.start()
-    scanner = UDS_Scanner(tester, reset_handler=reset, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.2, "overwrite_timeout": False}, delay_state_change=0)
+    scanner = UDS_Scanner(tester, reset_handler=reset, delay_state_change=0, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.2, "overwrite_timeout": False})
     scanner.scan()
     scanner.scan()
     tester.send(b"\xff\xff\xff")

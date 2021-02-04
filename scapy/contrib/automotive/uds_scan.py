@@ -137,7 +137,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
         UDS_TPEnumerator.enter(sock, conf)
         # Wait 5 seconds, since some ECUs require time
         # to switch to the bootloader
-        delay = conf[UDS_DSCEnumerator.__name__].get("overwrite_timeout", 5)
+        delay = conf[UDS_DSCEnumerator.__name__].get("delay_state_change", 5)
         time.sleep(delay)
         state_changed = UDS_DSCEnumerator.enter_state(sock, conf, req)
         if not state_changed:

@@ -281,8 +281,8 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
                 "0x%02x: %s" % (req.service, req.sprintf("%UDS.service%")),
                 label)
 
-    def post_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
+    def post_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         pos_reset = [t for t in self.results_with_response
                      if t[2].service == 0x51]
         if len(pos_reset):
@@ -291,7 +291,7 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
                 "the state of the ECU under test.")
 
         super(UDS_ServiceEnumerator, self).post_execute(
-            socket, global_configuration)
+            socket, state, global_configuration)
 
 
 class UDS_RDBIEnumerator(UDS_Enumerator):
@@ -381,8 +381,8 @@ class UDS_SAEnumerator(UDS_Enumerator):
             res, lambda r: "PR: %s" % r.securitySeed)
         return state, req.securityAccessType, label
 
-    def pre_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
+    def pre_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         if self._retry_pkt is not None:
             # this is a retry execute. Wait much longer than usual because
             # a required time delay not expired could have been received
@@ -744,13 +744,8 @@ class UDS_RMBASequentialEnumerator(UDS_RMBAEnumeratorABC):
             self.__initial_points_of_interest = pois
         return reqs
 
-    def post_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
-        try:
-            state = self.results[-1].state
-        except IndexError:
-            return
-
+    def post_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         if not len(self.__points_of_interest[state]):
             if self.__initial_points_of_interest is None:
                 # there are no points_of_interest for the current state.

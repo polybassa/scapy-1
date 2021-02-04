@@ -478,10 +478,8 @@ class GMLAN_RMBAEnumerator(GMLAN_Enumerator):
                                      memorySize=self.probe_width)
                 for x in scan_range)
 
-    def post_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None
-        state = self.results[-1].state
-
+    def post_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         if not self._state_completed[state]:
             return
 

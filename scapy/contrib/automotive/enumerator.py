@@ -105,7 +105,7 @@ class AutomotiveTestCaseExecutorConfiguration(object):
 
         self.verbose = kwargs.get("verbose", False)
         self.debug = kwargs.get("debug", False)
-        self.delay_state_change = kwargs.pop("delay_state_change", 0.5)
+        self.delay_state_change = kwargs.get("delay_state_change", 0.5)
 
         # test_case can be a mix of classes or instances
         self.test_cases = \

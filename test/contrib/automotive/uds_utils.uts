@@ -5,6 +5,7 @@
 ~ conf
 
 = Imports
+import pickle
 import scapy.modules.six as six
 
 if six.PY3:
@@ -168,9 +169,9 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
     for _ in range(15):
         if staged_enumerators.has_completed(EcuState(session=1)):
             continue
-        staged_enumerators.pre_execute(sendSock, config)
+        staged_enumerators.pre_execute(sendSock, EcuState(session=1), config)
         staged_enumerators.execute(sendSock, EcuState(session=1))
-        staged_enumerators.post_execute(sendSock, config)
+        staged_enumerators.post_execute(sendSock, EcuState(session=1), config)
         edge = staged_enumerators.get_new_edge(None, None)
         if edge:
             g.add_edge(edge)

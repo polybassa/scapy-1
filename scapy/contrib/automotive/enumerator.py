@@ -153,8 +153,8 @@ class AutomotiveTestCaseABC(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def pre_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None
+    def pre_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         raise NotImplementedError()
 
     @abstractmethod
@@ -163,8 +163,8 @@ class AutomotiveTestCaseABC(ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    def post_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None
+    def post_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         raise NotImplementedError()
 
     @abstractmethod
@@ -361,8 +361,8 @@ class StagedAutomotiveTestCase(AutomotiveTestCaseABC, TestCaseGenerator, StateGe
             self.__completion_delay = 0
         return False
 
-    def pre_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None
+    def pre_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         test_case_cls = self.current_test_case.__class__
         try:
             self.__current_kwargs = global_configuration[
@@ -382,16 +382,16 @@ class StagedAutomotiveTestCase(AutomotiveTestCaseABC, TestCaseGenerator, StateGe
                                   self.current_test_case.__class__.__name__,
                                   self.__current_kwargs)
 
-        self.current_test_case.pre_execute(socket, global_configuration)
+        self.current_test_case.pre_execute(socket, state, global_configuration)
 
     def execute(self, socket, state, **kwargs):
         # type: (_SocketUnion, EcuState, Any) -> None  # noqa: E501
         kwargs = self.__current_kwargs or dict()
         self.current_test_case.execute(socket, state, **kwargs)
 
-    def post_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None
-        self.current_test_case.post_execute(socket, global_configuration)
+    def post_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
+        self.current_test_case.post_execute(socket, state, global_configuration)  # noqa: E501
 
     @staticmethod
     def _show_headline(headline, sep="=", dump=False):
@@ -548,8 +548,8 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         return self.__get_retry_iterator() or \
             self.__get_initial_request_iterator(state, **kwargs)
 
-    def pre_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None
+    def pre_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         pass
 
     def execute(self, socket, state, timeout=1, execution_time=1200, **kwargs):
@@ -594,8 +594,8 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         log_interactive.debug("[i] States completed %s",
                               repr(self._state_completed))
 
-    def post_execute(self, socket, global_configuration):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> None
+    def post_execute(self, socket, state, global_configuration):
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         pass
 
     def _evaluate_response(self, response, **kwargs):
@@ -1020,7 +1020,8 @@ class AutomotiveTestCaseExecutor(ABC):
 
     def execute_test_case(self, test_case):
         # type: (AutomotiveTestCaseABC) -> None
-        test_case.pre_execute(self.socket, self.configuration)
+        test_case.pre_execute(
+            self.socket, self.target_state, self.configuration)
 
         try:
             test_case_kwargs = self.configuration[test_case.__class__.__name__]
@@ -1031,7 +1032,8 @@ class AutomotiveTestCaseExecutor(ABC):
                               test_case.__class__.__name__, test_case_kwargs)
 
         test_case.execute(self.socket, self.target_state, **test_case_kwargs)
-        test_case.post_execute(self.socket, self.configuration)
+        test_case.post_execute(
+            self.socket, self.target_state, self.configuration)
 
         if isinstance(test_case, StateGenerator):
             edge = test_case.get_new_edge(self.socket, self.configuration)

@@ -538,6 +538,7 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
     def __get_initial_request_iterator(self, state, **kwargs):
         # type: (EcuState, Any) -> Iterable[Packet]
         if state not in self._request_iterators:
+            kwargs["state"] = state
             self._request_iterators[state] = iter(
                 self._get_initial_requests(**kwargs))
 

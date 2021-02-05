@@ -11,6 +11,7 @@ from collections import defaultdict
 from scapy.compat import Union, List, Optional, Dict, Tuple, Set, TYPE_CHECKING
 from scapy.contrib.automotive.ecu import EcuState
 from scapy.contrib.automotive.profiler import Profiler
+from scapy.error import log_interactive
 
 _Edge = Tuple[EcuState, EcuState]
 
@@ -58,6 +59,26 @@ class Graph(object):
     def nodes(self):
         # type: () -> Union[List[EcuState], Set[EcuState]]
         return set([n for _, p in self.edges.items() for n in p])
+
+    def render(self, filename="SystemStateGraph.gv"):
+        try:
+            from graphviz import Digraph
+        except ImportError:
+            log_interactive.info("Please install graphviz.")
+            return
+
+        ps = Digraph(name="SystemStateGraph",
+                     node_attr={"fillcolor": "lightgrey",
+                                "style": "filled",
+                                "shape": "box"},
+                     graph_attr={"concentrate": "true"})
+        for n in self.nodes:
+            ps.node(str(n))
+
+        for e, f in self.__transition_functions.items():
+            ps.edge(str(e[0]), str(e[1]))
+
+        ps.render(filename, view=True)
 
     @staticmethod
     def dijkstra(graph, initial, end):

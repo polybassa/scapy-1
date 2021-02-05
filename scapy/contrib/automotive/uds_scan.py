@@ -13,6 +13,8 @@ import itertools
 import copy
 
 from collections import defaultdict
+from math import ceil
+
 from scapy.compat import Dict, Optional, List, Type, Any, Iterable, Tuple, \
     cast, Union, FAKE_TYPING
 from scapy.packet import Packet, Raw
@@ -297,9 +299,54 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
 class UDS_RDBIEnumerator(UDS_Enumerator):
     _description = "Readable data identifier per state"
 
+    @staticmethod
+    def _random_results_to_scan_range(rdbi_random, state):
+        # type: (UDS_RDBIRandomEnumerator, EcuState) -> Iterable[int]
+
+        identifiers_with_positive_response = [p.resp.dataIdentifier
+                                              for p in rdbi_random.results_with_positive_response
+                                              if p.state == state]
+
+        if len(identifiers_with_positive_response) == 0:
+            # quick path for better performance
+            scan_range = []
+        else:
+            def flatten(l):
+                """[[s1, s2, s3], [s4, s5]] -> [s1, s2, s3, s4, s5]"""
+                return [item for sublist in l for item in sublist]
+
+            # by random enumerator
+            probed_identifiers = \
+                set(flatten([p.req.identifiers
+                    for p in rdbi_random.results
+                    if p.state == state]))
+
+            block_size = UDS_RDBIRandomEnumerator.block_size
+            to_scan = []
+            for block_index, start in enumerate(range(0, 2 ** 16, block_size)):
+                end = start + block_size - 1
+                pr_in_block = any((start <= identifier <= end
+                                   for identifier in identifiers_with_positive_response))
+                if pr_in_block:
+                    to_scan += range(start, end + 1)
+            # make all identifiers unique with set()
+            # do not scan already probed identifiers again: minus probed_identifiers
+            # Sort for better logs
+            scan_range = sorted(list(set(to_scan) - probed_identifiers))
+        return scan_range
+
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
-        scan_range = kwargs.pop("scan_range", range(0x10000))
+        rdbi_random = kwargs.pop("rdbi_random", None)
+        if rdbi_random:
+            # While in the random enumerator we use the results from all states,
+            # here we only use the results of the RDBIRandomEnumerator
+            # of the current state of the ECU
+            state = kwargs['state']
+            scan_range = self._random_results_to_scan_range(rdbi_random, state)
+        else:
+            scan_range = kwargs.pop("scan_range", range(0x10000))
+
         return (UDS() / UDS_RDBI(identifiers=[x]) for x in scan_range)
 
     @staticmethod
@@ -318,6 +365,156 @@ class UDS_RDBIEnumerator(UDS_Enumerator):
                 "0x%04x: %s" % (req.identifiers[0],
                                 req.sprintf("%UDS_RDBI.identifiers%")[1:-1]),
                 label)
+
+
+class UDS_RDBISelectiveEnumerator(StagedAutomotiveTestCase):
+    @staticmethod
+    def __connector_random_to_sequential(rdbi_random, _):
+        # The scan range for the sequential enumerator
+        # is generated in the sequential enumerator itself,
+        # since in this connector we do not know the state
+        # of the ECU.
+        return {"rdbi_random": rdbi_random}
+
+    def __init__(self):
+        # type: () -> None
+        super(UDS_RDBISelectiveEnumerator, self).__init__(
+            [UDS_RDBIRandomEnumerator(), UDS_RDBIEnumerator()],
+            [None, self.__connector_random_to_sequential])
+
+
+class UDS_RDBIRandomEnumerator(UDS_RDBIEnumerator):
+    block_size = 2 ** 6
+
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+
+        probabilities = [0.015625, 0.0, 0.0, 0.0, 0.453125, 0.34375, 0.296875, 0.0, 0.171875, 0.171875, 0.203125,
+                         0.21875, 0.484375,
+                         0.0625, 0.40625, 0.015625, 0.46875, 0.0625, 0.3125, 0.078125, 0.765625, 0.84375, 0.140625,
+                         0.0625, 0.15625,
+                         0.125, 0.0, 0.0, 0.09375, 0.046875, 0.015625, 0.0, 0.171875, 0.0, 0.015625, 0.0, 0.0625,
+                         0.046875, 0.0,
+                         0.015625, 0.140625, 0.140625, 0.046875, 0.015625, 0.03125, 0.0, 0.0, 0.046875, 0.0625,
+                         0.046875, 0.0, 0.0,
+                         0.125, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.546875, 0.0, 0.03125,
+                         0.015625, 0.375,
+                         0.296875, 0.46875, 0.4375, 0.25, 0.0625, 0.09375, 0.421875, 0.640625, 0.171875, 0.09375,
+                         0.0, 0.0, 0.03125,
+                         0.0, 0.015625, 0.0, 0.0, 0.015625, 0.0, 0.046875, 0.0, 0.03125, 0.015625, 0.25, 0.0, 0.0,
+                         0.0, 0.0,
+                         0.234375, 0.3125, 0.0, 0.09375, 0.078125, 0.078125, 0.15625, 0.0, 0.015625, 0.15625, 0.0,
+                         0.0625, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.046875, 0.0, 0.0, 0.0,
+                         0.109375, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.015625, 0.0, 0.234375, 0.21875, 0.421875, 0.15625, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.015625, 0.0, 0.140625, 0.0, 0.03125, 0.0, 0.03125, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.015625, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.359375, 0.234375, 0.25, 0.25, 0.03125, 0.0, 0.0, 0.0, 0.046875,
+                         0.0625, 0.03125,
+                         0.015625, 0.015625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.03125, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.046875, 0.0, 0.0,
+                         0.03125, 0.0,
+                         0.0, 0.015625, 0.0, 0.125, 0.0, 0.0, 0.0, 0.015625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.390625, 0.0, 0.0,
+                         0.0, 0.109375, 0.03125, 0.0, 0.0, 0.0, 0.015625, 0.0, 0.015625, 0.015625, 0.0, 0.015625,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.015625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.09375, 0.0,
+                         0.0, 0.03125, 0.0, 0.0, 0.015625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.015625, 0.015625, 0.0, 0.015625, 0.03125, 0.015625, 0.015625,
+                         0.046875, 0.0, 0.0,
+                         0.0, 0.046875, 0.296875, 0.0, 0.03125, 0.03125, 0.0, 0.0, 0.0625, 0.15625, 0.046875, 0.0,
+                         0.125, 0.0, 0.0,
+                         0.015625, 0.046875, 0.0, 0.015625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.015625, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.015625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.015625, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.09375, 0.03125,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.015625, 0.0625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0625, 0.0,
+                         0.046875, 0.015625, 0.0, 0.0, 0.0, 0.0, 0.1875, 0.203125, 0.53125, 0.046875, 0.0, 0.0, 0.0,
+                         0.0, 0.15625,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0,
+                         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.046875, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+                         0.0, 0.359375,
+                         0.21875, 0.234375, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        to_scan = []
+        block_size = UDS_RDBIRandomEnumerator.block_size
+        for block_index, start in enumerate(range(0, 2 ** 16, block_size)):
+            end = start + block_size - 1
+            count_samples = max(ceil(block_size * probabilities[block_index]), 1)  # Minimum 1
+            to_scan = to_scan + random.sample(range(start, end + 1), count_samples)
+
+        # Use locality effect
+        # If an identifier brought a positive response in any state,
+        # it is likely that in another state the identifier is available as well
+        positive_identifiers = [t.resp.dataIdentifier for t in self.results_with_positive_response]
+        to_scan += positive_identifiers
+
+        # make all identifiers unique with set()
+        # Sort for better logs
+        to_scan = sorted(list(set(to_scan)))
+        return (UDS() / UDS_RDBI(identifiers=[x]) for x in to_scan)
 
 
 class UDS_WDBIEnumerator(UDS_Enumerator):
@@ -574,6 +771,12 @@ class UDS_RCEnumerator(UDS_Enumerator):
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
         scan_range = kwargs.pop("scan_range", range(0x10000))
+        rc_start = kwargs.get("rc_start")
+        if rc_start:
+            state = kwargs["state"]
+            rc_type = kwargs["type"]
+            return UDS_RCSelectiveEnumerator.start_enum_to_packets(rc_start, state, rc_type)
+
         return itertools.chain(
             (UDS() / UDS_RC(routineControlType=1, routineIdentifier=x)
              for x in scan_range),
@@ -592,6 +795,72 @@ class UDS_RCEnumerator(UDS_Enumerator):
                     req.routineIdentifier, req.routineControlType,
                     req.sprintf("%UDS_RC.routineIdentifier%")),
                 label)
+
+
+class UDS_RCStartEnumerator(UDS_Enumerator):
+    _description = "Available RoutineControls and negative response per state"
+
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+        scan_range = kwargs.pop("scan_range", range(0x10000))
+        return itertools.chain(
+            (UDS() / UDS_RC(routineControlType=1, routineIdentifier=x)
+             for x in scan_range))
+
+    @staticmethod
+    def _get_table_entry(tup):
+        # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
+        state, req, res, _, _ = tup
+        label = UDS_Enumerator._get_label(res)
+        return (state,
+                "0x%04x-%d: %s" % (
+                    req.routineIdentifier, req.routineControlType,
+                    req.sprintf("%UDS_RC.routineIdentifier%")),
+                label)
+
+
+class UDS_RCSelectiveEnumerator(StagedAutomotiveTestCase):
+    _left_right_width = 132
+
+    @staticmethod
+    def start_enum_to_packets(rc_start, my_state, rc_type, range_size=_left_right_width):
+        identifiers_with_pr = [resp.routineIdentifier for state, req, resp, _, _ in
+                               rc_start.results_with_positive_response
+                               if my_state == state]
+        to_scan = UDS_RCSelectiveEnumerator.points_to_ranges(identifiers_with_pr, range_size)
+        return (UDS() / UDS_RC(routineControlType=rc_type, routineIdentifier=x)
+                for x in to_scan)
+
+    @staticmethod
+    def points_to_ranges(points_of_interest, range_size=_left_right_width):
+        # type: (Iterable, int) -> List[int]
+        to_scan = []
+        for identifier in points_of_interest:
+            start = max(identifier - range_size, 0)
+            end = min(identifier + range_size + 1, 0x10000)
+            to_scan = to_scan + list(range(start, end))
+        return sorted(set(to_scan))
+
+    @staticmethod
+    def __connector_start_to_stop(rc_start, rc_stop):
+        # type: (AutomotiveTestCaseABC, AutomotiveTestCaseABC) -> Dict[str, Any]  # noqa: E501
+        # In the next connector (Stop -> RequestResult) we can't access the RCEnumerator object.
+        # So set it here that we can access it again in the next enumerator.
+        rc_stop.rc_start = rc_start
+        return {"rc_start": rc_start,
+                "type": 2}
+
+    @staticmethod
+    def __connector_stop_to_result(rc_stop, _):
+        # type: (AutomotiveTestCaseABC, AutomotiveTestCaseABC) -> Dict[str, Any]  # noqa: E501
+        return {"rc_start": rc_stop.rc_start,
+                "type": 3}
+
+    def __init__(self):
+        # type: () -> None
+        super(UDS_RCSelectiveEnumerator, self).__init__(
+            [UDS_RCStartEnumerator(), UDS_RCEnumerator(), UDS_RCEnumerator()],
+            [None, self.__connector_start_to_stop, self.__connector_stop_to_result])
 
 
 class UDS_IOCBIEnumerator(UDS_Enumerator):

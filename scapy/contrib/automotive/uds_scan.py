@@ -299,54 +299,9 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
 class UDS_RDBIEnumerator(UDS_Enumerator):
     _description = "Readable data identifier per state"
 
-    @staticmethod
-    def _random_results_to_scan_range(rdbi_random, state):
-        # type: (UDS_RDBIRandomEnumerator, EcuState) -> Iterable[int]
-
-        identifiers_with_positive_response = [p.resp.dataIdentifier
-                                              for p in rdbi_random.results_with_positive_response
-                                              if p.state == state]
-
-        if len(identifiers_with_positive_response) == 0:
-            # quick path for better performance
-            scan_range = []
-        else:
-            def flatten(l):
-                """[[s1, s2, s3], [s4, s5]] -> [s1, s2, s3, s4, s5]"""
-                return [item for sublist in l for item in sublist]
-
-            # by random enumerator
-            probed_identifiers = \
-                set(flatten([p.req.identifiers
-                    for p in rdbi_random.results
-                    if p.state == state]))
-
-            block_size = UDS_RDBIRandomEnumerator.block_size
-            to_scan = []
-            for block_index, start in enumerate(range(0, 2 ** 16, block_size)):
-                end = start + block_size - 1
-                pr_in_block = any((start <= identifier <= end
-                                   for identifier in identifiers_with_positive_response))
-                if pr_in_block:
-                    to_scan += range(start, end + 1)
-            # make all identifiers unique with set()
-            # do not scan already probed identifiers again: minus probed_identifiers
-            # Sort for better logs
-            scan_range = sorted(list(set(to_scan) - probed_identifiers))
-        return scan_range
-
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
-        rdbi_random = kwargs.pop("rdbi_random", None)
-        if rdbi_random:
-            # While in the random enumerator we use the results from all states,
-            # here we only use the results of the RDBIRandomEnumerator
-            # of the current state of the ECU
-            state = kwargs['state']
-            scan_range = self._random_results_to_scan_range(rdbi_random, state)
-        else:
-            scan_range = kwargs.pop("scan_range", range(0x10000))
-
+        scan_range = kwargs.pop("scan_range", range(0x10000))
         return (UDS() / UDS_RDBI(identifiers=[x]) for x in scan_range)
 
     @staticmethod
@@ -374,7 +329,34 @@ class UDS_RDBISelectiveEnumerator(StagedAutomotiveTestCase):
         # is generated in the sequential enumerator itself,
         # since in this connector we do not know the state
         # of the ECU.
-        return {"rdbi_random": rdbi_random}
+        identifiers_with_positive_response = \
+            [p.resp.dataIdentifier
+             for p in rdbi_random.results_with_positive_response]
+
+        scan_range = UDS_RDBISelectiveEnumerator.\
+            _random_results_to_scan_range(identifiers_with_positive_response)
+        return {"scan_range": scan_range}
+
+    @staticmethod
+    def _poi_to_scan_range(pois):
+        # type: (UDS_RDBIRandomEnumerator) -> Iterable[int]
+
+        if len(pois) == 0:
+            # quick path for better performance
+            scan_range = []
+        else:
+            block_size = UDS_RDBIRandomEnumerator.block_size
+            to_scan = []
+            for block_index, start in enumerate(range(0, 2 ** 16, block_size)):
+                end = start + block_size - 1
+                pr_in_block = any((start <= identifier <= end
+                                   for identifier in pois))
+                if pr_in_block:
+                    to_scan += range(start, end + 1)
+            # make all identifiers unique with set()
+            # Sort for better logs
+            scan_range = sorted(list(set(to_scan)))
+        return scan_range
 
     def __init__(self):
         # type: () -> None
@@ -770,20 +752,14 @@ class UDS_RCEnumerator(UDS_Enumerator):
 
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
+        type_list = kwargs.pop("type_list", [1, 2, 3])
         scan_range = kwargs.pop("scan_range", range(0x10000))
-        rc_start = kwargs.get("rc_start")
-        if rc_start:
-            state = kwargs["state"]
-            rc_type = kwargs["type"]
-            return UDS_RCSelectiveEnumerator.start_enum_to_packets(rc_start, state, rc_type)
 
-        return itertools.chain(
-            (UDS() / UDS_RC(routineControlType=1, routineIdentifier=x)
-             for x in scan_range),
-            (UDS() / UDS_RC(routineControlType=2, routineIdentifier=x)
-             for x in scan_range),
-            (UDS() / UDS_RC(routineControlType=3, routineIdentifier=x)
-             for x in scan_range))
+        return \
+            (UDS() / UDS_RC(routineControlType=rc_type,
+                            routineIdentifier=data_id)
+                for rc_type, data_id in itertools.product(type_list, scan_range)
+             )
 
     @staticmethod
     def _get_table_entry(tup):
@@ -797,70 +773,49 @@ class UDS_RCEnumerator(UDS_Enumerator):
                 label)
 
 
-class UDS_RCStartEnumerator(UDS_Enumerator):
+class UDS_RCStartEnumerator(UDS_RCEnumerator):
     _description = "Available RoutineControls and negative response per state"
 
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
-        scan_range = kwargs.pop("scan_range", range(0x10000))
-        return itertools.chain(
-            (UDS() / UDS_RC(routineControlType=1, routineIdentifier=x)
-             for x in scan_range))
-
-    @staticmethod
-    def _get_table_entry(tup):
-        # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
-        state, req, res, _, _ = tup
-        label = UDS_Enumerator._get_label(res)
-        return (state,
-                "0x%04x-%d: %s" % (
-                    req.routineIdentifier, req.routineControlType,
-                    req.sprintf("%UDS_RC.routineIdentifier%")),
-                label)
+        if "type_list" in kwargs:
+            raise Exception("'type_list' already set in kwargs.")
+        if "scan_range" in kwargs:
+            raise Exception("'scan_range' set in kwargs.")
+        kwargs["type_list"] = [1]
+        return \
+            super(UDS_RCStartEnumerator, self)._get_initial_requests(**kwargs)
 
 
 class UDS_RCSelectiveEnumerator(StagedAutomotiveTestCase):
     _left_right_width = 132
 
     @staticmethod
-    def start_enum_to_packets(rc_start, my_state, rc_type, range_size=_left_right_width):
-        identifiers_with_pr = [resp.routineIdentifier for state, req, resp, _, _ in
-                               rc_start.results_with_positive_response
-                               if my_state == state]
-        to_scan = UDS_RCSelectiveEnumerator.points_to_ranges(identifiers_with_pr, range_size)
-        return (UDS() / UDS_RC(routineControlType=rc_type, routineIdentifier=x)
-                for x in to_scan)
-
-    @staticmethod
     def points_to_ranges(points_of_interest, range_size=_left_right_width):
-        # type: (Iterable, int) -> List[int]
+        # type: (Iterable[int], int) -> Iterable[int]
         to_scan = []
         for identifier in points_of_interest:
             start = max(identifier - range_size, 0)
             end = min(identifier + range_size + 1, 0x10000)
-            to_scan = to_scan + list(range(start, end))
+            to_scan += list(range(start, end))
         return sorted(set(to_scan))
 
     @staticmethod
-    def __connector_start_to_stop(rc_start, rc_stop):
+    def __connector_start_to_rest(rc_start, rc_stop):
         # type: (AutomotiveTestCaseABC, AutomotiveTestCaseABC) -> Dict[str, Any]  # noqa: E501
-        # In the next connector (Stop -> RequestResult) we can't access the RCEnumerator object.
-        # So set it here that we can access it again in the next enumerator.
-        rc_stop.rc_start = rc_start
-        return {"rc_start": rc_start,
-                "type": 2}
+        identifiers_with_pr = [resp.routineIdentifier for _, _, resp, _, _
+                               in rc_start.results_with_positive_response]
+        scan_range = UDS_RCSelectiveEnumerator.points_to_ranges(
+            identifiers_with_pr)
 
-    @staticmethod
-    def __connector_stop_to_result(rc_stop, _):
-        # type: (AutomotiveTestCaseABC, AutomotiveTestCaseABC) -> Dict[str, Any]  # noqa: E501
-        return {"rc_start": rc_stop.rc_start,
-                "type": 3}
+        return {"type_list": [2, 3],
+                "scan_range": scan_range}
 
     def __init__(self):
         # type: () -> None
         super(UDS_RCSelectiveEnumerator, self).__init__(
-            [UDS_RCStartEnumerator(), UDS_RCEnumerator(), UDS_RCEnumerator()],
-            [None, self.__connector_start_to_stop, self.__connector_stop_to_result])
+            [UDS_RCStartEnumerator(), UDS_RCEnumerator()],
+            [None, self.__connector_start_to_rest])
 
 
 class UDS_IOCBIEnumerator(UDS_Enumerator):

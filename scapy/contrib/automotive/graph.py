@@ -61,6 +61,7 @@ class Graph(object):
         return set([n for _, p in self.edges.items() for n in p])
 
     def render(self, filename="SystemStateGraph.gv"):
+        # type: (str) -> None
         try:
             from graphviz import Digraph
         except ImportError:

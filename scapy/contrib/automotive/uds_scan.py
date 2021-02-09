@@ -14,6 +14,7 @@ import copy
 
 from collections import defaultdict
 from math import ceil
+from typing import Sequence
 
 from scapy.compat import Dict, Optional, List, Type, Any, Iterable, Tuple, \
     cast, Union, FAKE_TYPING
@@ -334,28 +335,26 @@ class UDS_RDBISelectiveEnumerator(StagedAutomotiveTestCase):
              for p in rdbi_random.results_with_positive_response]
 
         scan_range = UDS_RDBISelectiveEnumerator.\
-            _random_results_to_scan_range(identifiers_with_positive_response)
+            _poi_to_scan_range(identifiers_with_positive_response)
         return {"scan_range": scan_range}
 
     @staticmethod
     def _poi_to_scan_range(pois):
-        # type: (UDS_RDBIRandomEnumerator) -> Iterable[int]
+        # type: (Sequence[int]) -> Iterable[int]
 
         if len(pois) == 0:
             # quick path for better performance
             scan_range = []
         else:
             block_size = UDS_RDBIRandomEnumerator.block_size
-            to_scan = []
-            for block_index, start in enumerate(range(0, 2 ** 16, block_size)):
-                end = start + block_size - 1
-                pr_in_block = any((start <= identifier <= end
+            generators = []
+            for start in range(0, 2 ** 16, block_size):
+                end = start + block_size
+                pr_in_block = any((start <= identifier < end
                                    for identifier in pois))
                 if pr_in_block:
-                    to_scan += range(start, end + 1)
-            # make all identifiers unique with set()
-            # Sort for better logs
-            scan_range = sorted(list(set(to_scan)))
+                    generators.append(range(start, end))
+            scan_range = itertools.chain.from_iterable(generators)
         return scan_range
 
     def __init__(self):
@@ -483,9 +482,9 @@ class UDS_RDBIRandomEnumerator(UDS_RDBIEnumerator):
         to_scan = []
         block_size = UDS_RDBIRandomEnumerator.block_size
         for block_index, start in enumerate(range(0, 2 ** 16, block_size)):
-            end = start + block_size - 1
+            end = start + block_size
             count_samples = max(ceil(block_size * probabilities[block_index]), 1)  # Minimum 1
-            to_scan = to_scan + random.sample(range(start, end + 1), count_samples)
+            to_scan = to_scan + random.sample(range(start, end), count_samples)
 
         # Use locality effect
         # If an identifier brought a positive response in any state,

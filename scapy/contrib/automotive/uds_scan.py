@@ -13,7 +13,6 @@ import itertools
 import copy
 
 from collections import defaultdict
-from math import ceil
 from typing import Sequence
 
 from scapy.compat import Dict, Optional, List, Type, Any, Iterable, Tuple, \
@@ -370,24 +369,22 @@ class UDS_RDBIRandomEnumerator(UDS_RDBIEnumerator):
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
 
-        samples_per_block = {4: 29, 5: 22, 6: 19, 8: 11, 9: 11, 10: 13, 11: 14,
-                             12: 31, 13: 4, 14: 26, 16: 30, 17: 4, 18: 20,
-                             19: 5, 20: 49, 21: 54, 22: 9, 23: 4, 24: 10, 25: 8,
-                             28: 6, 29: 3, 32: 11, 36: 4, 37: 3, 40: 9, 41: 9,
-                             42: 3, 44: 2, 47: 3, 48: 4, 49: 3, 52: 8, 64: 35,
-                             66: 2, 68: 24, 69: 19, 70: 30, 71: 28, 72: 16,
-                             73: 4, 74: 6, 75: 27, 76: 41, 77: 11, 78: 6, 81: 2,
-                             88: 3, 90: 2, 92: 16, 97: 15, 98: 20, 100: 6,
-                             101: 5, 102: 5, 103: 10, 106: 10, 108: 4, 124: 3,
-                             128: 7, 136: 15, 137: 14, 138: 27, 139: 10, 148: 9,
-                             150: 2, 152: 2, 168: 23, 169: 15, 170: 16, 171: 16,
-                             172: 2, 176: 3, 177: 4, 178: 2, 187: 2, 232: 3,
-                             235: 2, 240: 8, 252: 25, 256: 7, 257: 2, 287: 6,
-                             290: 2, 316: 2, 319: 3, 323: 3, 324: 19, 326: 2,
-                             327: 2, 330: 4, 331: 10, 332: 3, 334: 8, 338: 3,
-                             832: 6, 833: 2, 900: 4, 956: 4, 958: 3, 964: 12,
-                             965: 13, 966: 34, 967: 3, 972: 10, 1000: 3,
-                             1012: 23, 1013: 14, 1014: 15}
+        samples_per_block = {
+            4: 29, 5: 22, 6: 19, 8: 11, 9: 11, 10: 13, 11: 14, 12: 31, 13: 4,
+            14: 26, 16: 30, 17: 4, 18: 20, 19: 5, 20: 49, 21: 54, 22: 9, 23: 4,
+            24: 10, 25: 8, 28: 6, 29: 3, 32: 11, 36: 4, 37: 3, 40: 9, 41: 9,
+            42: 3, 44: 2, 47: 3, 48: 4, 49: 3, 52: 8, 64: 35, 66: 2, 68: 24,
+            69: 19, 70: 30, 71: 28, 72: 16, 73: 4, 74: 6, 75: 27, 76: 41,
+            77: 11, 78: 6, 81: 2, 88: 3, 90: 2, 92: 16, 97: 15, 98: 20, 100: 6,
+            101: 5, 102: 5, 103: 10, 106: 10, 108: 4, 124: 3, 128: 7, 136: 15,
+            137: 14, 138: 27, 139: 10, 148: 9, 150: 2, 152: 2, 168: 23,
+            169: 15, 170: 16, 171: 16, 172: 2, 176: 3, 177: 4, 178: 2, 187: 2,
+            232: 3, 235: 2, 240: 8, 252: 25, 256: 7, 257: 2, 287: 6, 290: 2,
+            316: 2, 319: 3, 323: 3, 324: 19, 326: 2, 327: 2, 330: 4, 331: 10,
+            332: 3, 334: 8, 338: 3, 832: 6, 833: 2, 900: 4, 956: 4, 958: 3,
+            964: 12, 965: 13, 966: 34, 967: 3, 972: 10, 1000: 3, 1012: 23,
+            1013: 14, 1014: 15
+        }
         to_scan = []
         block_size = UDS_RDBIRandomEnumerator.block_size
         for block_index, start in enumerate(range(0, 2 ** 16, block_size)):
@@ -397,7 +394,7 @@ class UDS_RDBIRandomEnumerator(UDS_RDBIEnumerator):
 
         # Use locality effect
         # If an identifier brought a positive response in any state,
-        # it is likely that in another state the identifier is available as well
+        # it is likely that in another state it is available as well
         positive_identifiers = [t.resp.dataIdentifier for t in
                                 self.results_with_positive_response]
         to_scan += positive_identifiers

@@ -343,17 +343,17 @@ class UDS_RDBISelectiveEnumerator(StagedAutomotiveTestCase):
 
         if len(pois) == 0:
             # quick path for better performance
-            scan_range = []
-        else:
-            block_size = UDS_RDBIRandomEnumerator.block_size
-            generators = []
-            for start in range(0, 2 ** 16, block_size):
-                end = start + block_size
-                pr_in_block = any((start <= identifier < end
-                                   for identifier in pois))
-                if pr_in_block:
-                    generators.append(range(start, end))
-            scan_range = itertools.chain.from_iterable(generators)
+            return []
+
+        block_size = UDS_RDBIRandomEnumerator.block_size
+        generators = []
+        for start in range(0, 2 ** 16, block_size):
+            end = start + block_size
+            pr_in_block = any((start <= identifier < end
+                               for identifier in pois))
+            if pr_in_block:
+                generators.append(range(start, end))
+        scan_range = itertools.chain.from_iterable(generators)
         return scan_range
 
     def __init__(self):
@@ -685,9 +685,9 @@ class UDS_RCStartEnumerator(UDS_RCEnumerator):
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
         if "type_list" in kwargs:
-            raise Exception("'type_list' already set in kwargs.")
+            raise KeyError("'type_list' already set in kwargs.")
         if "scan_range" in kwargs:
-            raise Exception("'scan_range' set in kwargs.")
+            raise KeyError("'scan_range' set in kwargs.")
         kwargs["type_list"] = [1]
         return super(UDS_RCStartEnumerator, self). \
             _get_initial_requests(**kwargs)

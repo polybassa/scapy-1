@@ -240,6 +240,7 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
     scanner = UDS_Scanner(tester, reset_handler=reset, delay_state_change=0, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.1, "overwrite_timeout": False})
     scanner.scan()
     scanner.scan()
+    scanner.cleanup_state()
     tester.send(b"\xff\xff\xff")
     sim.join(timeout=2)
 
@@ -289,6 +290,7 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
     scanner = UDS_Scanner(tester, reset_handler=reset, delay_state_change=0, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.2, "overwrite_timeout": False})
     scanner.scan()
     scanner.scan()
+    scanner.cleanup_state()
     tester.send(b"\xff\xff\xff")
     sim.join(timeout=2)
 
@@ -343,6 +345,7 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
     scanner = UDS_Scanner(tester, reset_handler=reset, test_cases=[UDS_ServiceEnumerator], delay_state_change=0, timeout=0.2, retry_if_busy_returncode=False, verbose=True)
     scanner.scan()
     scanner.scan()
+    scanner.cleanup_state()
     tester.send(b"\xff\xff\xff")
     sim.join(timeout=2)
 
@@ -385,6 +388,7 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
                           UDS_DSCEnumerator_kwargs={"timeout": 0.2, "overwrite_timeout": False},
                           UDS_ServiceEnumerator_kwargs={"retry_if_busy_returncode": False}, delay_state_change=0, timeout=0.2, verbose=True)
     scanner.scan()
+    scanner.cleanup_state()
     tester.send(b"\xff\xff\xff")
     sim.join(timeout=2)
 
@@ -468,6 +472,7 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
                           UDS_ServiceEnumerator_kwargs={"retry_if_busy_returncode": False}, delay_state_change=0, timeout=0.2, verbose=True)
     scanner.scan()
     scanner.scan()
+    scanner.cleanup_state()
     tester.send(b"\xff\xff\xff")
     sim.join(timeout=2)
 

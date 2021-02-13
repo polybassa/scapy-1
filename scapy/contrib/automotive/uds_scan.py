@@ -326,10 +326,6 @@ class UDS_RDBISelectiveEnumerator(StagedAutomotiveTestCase):
     @staticmethod
     def __connector_random_to_sequential(rdbi_random, _):
         # type: (AutomotiveTestCaseABC, AutomotiveTestCaseABC) -> Dict[str, Any]  # noqa: E501
-        # The scan range for the sequential enumerator
-        # is generated in the sequential enumerator itself,
-        # since in this connector we do not know the state
-        # of the ECU.
         rdbi_random = cast(UDS_Enumerator, rdbi_random)
         identifiers_with_positive_response = \
             [p.resp.dataIdentifier

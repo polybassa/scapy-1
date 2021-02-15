@@ -13,8 +13,7 @@ import random
 import copy
 
 from collections import defaultdict
-from scapy.compat import Any, Union, Iterable, Callable, List, Optional, Tuple, \
-    Type, cast, Dict, GeneratorType
+from types import GeneratorType
 
 from scapy.compat import Any, Union, Iterable, Callable, List, Optional, \
     Tuple, Type, cast, Dict

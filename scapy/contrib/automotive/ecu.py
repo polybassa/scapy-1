@@ -22,15 +22,8 @@ from scapy.plist import PacketList
 from scapy.sessions import DefaultSession
 from scapy.ansmachine import AnsweringMachine
 from scapy.config import conf
-import scapy.modules.six as six
 from scapy.supersocket import SuperSocket
 
-
-if six.PY34:
-    from abc import ABC, abstractmethod
-else:
-    from abc import ABCMeta, abstractmethod  # noqa: F401
-    ABC = ABCMeta('ABC', (), {})  # type: ignore
 
 __all__ = ["EcuState", "EcuStateModifier", "Ecu", "EcuResponse",
            "EcuSession", "EcuAnsweringMachine"]

@@ -495,11 +495,9 @@ assert len(scanner.configuration.test_cases[0].filtered_results) == 11
 
 
 = UDS Scanner pickle
+~ python3_only
 
 f = io.BytesIO()
-
-print(scanner.__dict__)
-
 pickle.dump(scanner, f)
 del scanner
 unp = pickle.loads(f.getvalue())

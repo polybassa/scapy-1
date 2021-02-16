@@ -8,7 +8,7 @@ from scapy.contrib.automotive.enumerator import *
 from scapy.contrib.automotive.uds import *
 from scapy.contrib.automotive.uds_scan import UDS_Enumerator
 
-from scapy.contrib.automotive.enumerator import _AutomotiveTestCaseScanResult
+from scapy.contrib.automotive.enumerator import _AutomotiveTestCaseScanResult, _AutomotiveTestCaseFilteredScanResult
 
 
 + Basic checks
@@ -109,12 +109,27 @@ e.show(filtered=False)
 
 dump = e.show(dump=True, filtered=False)
 assert "NR: 98" in dump
-assert "Supported" in dump
-assert "PR:" in dump
-assert "NR:" in dump
+assert "PR: Supported" in dump
+assert "Timeout" in dump
 assert "s1" in dump
 assert "s2" in dump
 assert "all" in dump
+assert "0x20" in dump
+assert "0x21" in dump
+
+= AutomotiveTestCase show filtered
+
+e.show(filtered=True)
+
+dump = e.show(dump=True, filtered=True)
+assert "NR: 98" in dump
+assert "PR: Supported" in dump
+assert "Timeout" not in dump
+assert "s1" in dump
+assert "s2" in dump
+assert "all" in dump
+assert "0x20" in dump
+assert "0x21" in dump
 
 = TestCaseExecutor dump check
 

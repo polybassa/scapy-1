@@ -610,15 +610,19 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
 
         retry_if_busy_returncode = kwargs.pop("retry_if_busy_returncode", True)
 
-        if exit_if_service_not_supported and response.service == 0x7f and \
-                self._get_negative_response_code(response) in [0x11, 0x7f]:
-            log_interactive.debug("[-] Exit execute because negative response "
-                                  "serviceNotSupported received!")
-            # execute of current state is completed,
-            # since a serviceNotSupported negative response was received
-            self._state_completed[self._results[-1].state] = True
-            # stop current execute and exit
-            return True
+        if exit_if_service_not_supported and response.service == 0x7f:
+            response_code = self._get_negative_response_code(response)
+            if response_code in [0x11, 0x7f]:
+                names = {0x11: "serviceNotSupported",
+                         0x7f: "serviceNotSupportedInActiveSession"}
+                msg = "[-] Exit execute because negative response " \
+                      "%s received!" % names[response_code]
+                log_interactive.debug(msg)
+                # execute of current state is completed,
+                # since a serviceNotSupported negative response was received
+                self._state_completed[self._results[-1].state] = True
+                # stop current execute and exit
+                return True
 
         if retry_if_busy_returncode and response.service == 0x7f \
                 and self._get_negative_response_code(response) == 0x21:

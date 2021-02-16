@@ -836,9 +836,6 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         else:
             s += "\n"
 
-        if filtered:
-            self._prepare_negative_response_blacklist()
-
         s += self._show_negative_response_details(dump) or "" + "\n"
         if filtered and len(self.negative_response_blacklist):
             s += "The following negative response codes are blacklisted: %s\n"\
@@ -875,6 +872,9 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
 
     def show(self, dump=False, filtered=True, verbose=False):
         # type: (bool, bool, bool) -> Optional[str]
+        if filtered:
+            self._prepare_negative_response_blacklist()
+
         s = self._show_header(dump) or ""
         s += self._show_statistics(dump) or ""
         s += self._show_negative_response_information(dump, filtered) or ""

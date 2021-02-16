@@ -9,9 +9,9 @@ import pickle
 import scapy.modules.six as six
 
 if six.PY3:
-    exec(open("contrib/automotive/interface_mockup.py").read())
+    exec(open("test/contrib/automotive/interface_mockup.py").read())
 else:
-    execfile("contrib/automotive/interface_mockup.py")
+    execfile("test/contrib/automotive/interface_mockup.py")
 
 
 ############

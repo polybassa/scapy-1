@@ -18,7 +18,7 @@ pkts = [
     _AutomotiveTestCaseScanResult("s1", UDS(b"\x20abcd"), UDS(b"\x60abcd"), 1.0, 1.9),
     _AutomotiveTestCaseScanResult("s2", UDS(b"\x20abcd"), None, 2.0, None),
     _AutomotiveTestCaseScanResult("s1", UDS(b"\x21abcd"), UDS(b"\x7fabcd"), 3.0, 3.1),
-    _AutomotiveTestCaseScanResult("s2", UDS(b"\x21abcd"), UDS(b"\x61abcd"), 4.0, 4.5),
+    _AutomotiveTestCaseScanResult("s2", UDS(b"\x21abcd"), UDS(b"\x7fa\x10cd"), 4.0, 4.5),
 ]
 
 class MyTestCase(AutomotiveTestCase):
@@ -73,11 +73,12 @@ assert stats["num_unanswered"] == '1'
 assert stats["answertime_max"] == '0.9'
 assert stats["answertime_min"] == '0.1'
 assert stats["answertime_avg"] == '0.5'
-assert stats["num_negative_resps"] == '1'
+assert stats["num_negative_resps"] == '2'
 
 
 = AutomotiveTestCase filtered results
 
+print(len(e.filtered_results))
 assert len(e.filtered_results) == 3
 assert e.filtered_results[0] == pkts[0]
 assert e.filtered_results[1] == pkts[2]
@@ -91,10 +92,11 @@ assert {"s1", "s2"} == e.scanned_states
 = AutomotiveTestCase get_label
 
 assert e._get_label(pkts[0].resp) == "PR: PositiveResponse"
+assert e._get_label(pkts[0].resp, lambda _: "positive") == "positive"
+assert e._get_label(pkts[0].resp, lambda _: "positive" + hex(pkts[0].req.service)) == "positive" + "0x20"
 assert e._get_label(pkts[1].resp) == "Timeout"
 assert e._get_label(pkts[2].resp) == "NR: 98"
-assert e._get_label(pkts[3].resp, lambda _: "positive") == "positive"
-assert e._get_label(pkts[3].resp, lambda _: "positive" + hex(pkts[3].req.service)) == "positive" + "0x21"
+assert e._get_label(pkts[3].resp) == "NR: generalReject"
 
 = AutomotiveTestCase completed
 
@@ -109,6 +111,7 @@ e.show(filtered=False)
 
 dump = e.show(dump=True, filtered=False)
 assert "NR: 98" in dump
+assert "NR: generalReject" in dump
 assert "PR: Supported" in dump
 assert "Timeout" in dump
 assert "s1" in dump
@@ -123,6 +126,7 @@ e.show(filtered=True)
 
 dump = e.show(dump=True, filtered=True)
 assert "NR: 98" in dump
+assert "NR: generalReject" in dump
 assert "PR: Supported" in dump
 assert "Timeout" not in dump
 assert "s1" in dump
@@ -130,6 +134,7 @@ assert "s2" in dump
 assert "all" in dump
 assert "0x20" in dump
 assert "0x21" in dump
+assert "The following negative response codes are blacklisted: ['serviceNotSupported']" in dump
 
 = TestCaseExecutor dump check
 

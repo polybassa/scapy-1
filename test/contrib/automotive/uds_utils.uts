@@ -211,7 +211,7 @@ assert unp.completed
 
 + Tests with EcuAnsweringMachine of UDS_DSCEnumerator
 
-= Simple check with different Sessions and diagnosticSessionControl
+= Simple check with different Sessions and diagnosticSessionControl 1
 drain_bus(iface0)
 
 conf.verb = -1
@@ -250,8 +250,10 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
 
 print(scanner.state_paths)
 assert scanner.configuration.test_cases[0].completed
+print(len(scanner.configuration.test_cases[0].results_with_positive_response))
+print(len(scanner.configuration.test_cases[0].results_with_negative_response))
 print(len(scanner.configuration.test_cases[0].filtered_results))
-assert len(scanner.configuration.test_cases[0].filtered_results) == 7*8
+assert len(scanner.configuration.test_cases[0].results_with_positive_response) == 7*8
 assert EcuState(session=1) in scanner.state_graph.nodes
 assert EcuState(session=2, tp=1) in scanner.state_graph.nodes
 assert EcuState(session=3, tp=1) in scanner.state_graph.nodes
@@ -262,7 +264,7 @@ assert EcuState(session=7, tp=1) in scanner.state_graph.nodes
 assert 2 == max([len(p) for p in scanner.state_paths])
 
 
-= Simple check with different Sessions and diagnosticSessionControl
+= Simple check with different Sessions and diagnosticSessionControl 2
 drain_bus(iface0)
 
 

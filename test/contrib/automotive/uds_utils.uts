@@ -1,5 +1,4 @@
 % Regression tests for uds_utils
-~ needs_root
 
 + Configuration
 ~ conf
@@ -24,7 +23,7 @@ load_contrib("automotive.uds_scan", globals_dict=globals())
 load_contrib("automotive.enumerator", globals_dict=globals())
 load_contrib("automotive.ecu", globals_dict=globals())
 
-from scapy.contrib.automotive.enumerator import _AutomotiveTestCaseFilteredScanResult, _AutomotiveTestCaseScanResult
+from scapy.contrib.automotive.enumerator import _AutomotiveTestCaseScanResult
 
 import logging
 
@@ -78,6 +77,7 @@ assert stats["answertime_avg"] == '0.5'
 assert stats["num_negative_resps"] == '1'
 
 = Enumerator pickle
+~ python3_only
 
 f = io.BytesIO()
 
@@ -126,6 +126,7 @@ assert EcuState(session=2, tp=1) in g.nodes
 assert EcuState(session=3, tp=1) in g.nodes
 
 = UDS_DSCEnumerator pickle
+~ python3_only
 
 f = io.BytesIO()
 
@@ -192,6 +193,7 @@ assert EcuState(session=2, tp=1) in g.nodes
 assert EcuState(session=3, tp=1) in g.nodes
 
 = Staged Session Enumerator pickle
+~ python3_only
 
 f = io.BytesIO()
 

@@ -1019,7 +1019,7 @@ class AutomotiveTestCaseExecutor(ABC):
         except KeyError:
             test_case_kwargs = dict()
 
-        log_interactive.debug("Execute test_case %s with args %s",
+        log_interactive.debug("[i] Execute test_case %s with args %s",
                               test_case.__class__.__name__, test_case_kwargs)
 
         test_case.execute(self.socket, self.target_state, **test_case_kwargs)
@@ -1049,18 +1049,26 @@ class AutomotiveTestCaseExecutor(ABC):
             for p in self.state_paths:
                 log_interactive.info("[i] Scan path %s", p)
                 for test_case in self.configuration.test_cases:
+
+                    terminate = kill_time < time.time()
+                    if terminate:
+                        log_interactive.debug(
+                            "[-] Execution time exceeded. Terminating scan!")
+                        break
+
                     final_state = p[-1]
                     if test_case.has_completed(final_state):
                         log_interactive.debug("[+] State %s for %s completed",
                                               repr(final_state), test_case)
                         continue
+
                     try:
                         if not self.enter_state_path(p):
                             log_interactive.error(
                                 "[-] Error entering path %s", p)
                             continue
-                        log_interactive.info("[i] EXECUTE SCAN %s for path %s",
-                                             test_case.__class__.__name__, p)
+                        log_interactive.info(
+                            "[i] Execute %s for path %s", str(test_case), p)
                         with Profiler(p, test_case.__class__.__name__):
                             self.execute_test_case(test_case)
                             self.cleanup_state()
@@ -1072,7 +1080,7 @@ class AutomotiveTestCaseExecutor(ABC):
 
             if not test_case_executed:
                 log_interactive.info(
-                    "[-] Execute failure or completed. Exit scan!")
+                    "[i] Execute failure or scan completed. Exit scan!")
                 break
         self.cleanup_state()
         self.reset_target()
@@ -1100,7 +1108,7 @@ class AutomotiveTestCaseExecutor(ABC):
         funcs = self.state_graph.get_transition_tuple_for_edge(edge)
 
         if funcs is None:
-            log_interactive.error("No transition function for edge %s", edge)
+            log_interactive.error("[!] No transition function for %s", edge)
             return False
 
         trans_func, clean_func = funcs
@@ -1112,17 +1120,22 @@ class AutomotiveTestCaseExecutor(ABC):
                 self.cleanup_functions += [clean_func]
             return True
         else:
-            log_interactive.info("Transition for edge %s failed", edge)
+            log_interactive.info("[-] Transition for edge %s failed", edge)
             return False
 
     def cleanup_state(self):
         # type: () -> None
         for f in self.cleanup_functions:
-            if f is None:
+            if not callable(f):
                 continue
-            result = f(self.socket, self.configuration)
-            if not result:
-                log_interactive.info("Cleanup function %s failed", repr(f))
+            try:
+                result = f(self.socket, self.configuration)
+                if not result:
+                    log_interactive.info(
+                        "[-] Cleanup function %s failed", repr(f))
+            except (OSError, ValueError, Scapy_Exception,
+                    BrokenPipeError) as e:
+                log_interactive.critical("[!] Exception during cleanup: %s", e)
 
         self.cleanup_functions = list()
 
@@ -1136,12 +1149,13 @@ class AutomotiveTestCaseExecutor(ABC):
         data = list()
         for t in self.configuration.test_cases:
             for s in self.state_graph.nodes:
-                data += [(t.__class__.__name__, repr(s), t.has_completed(s))]
-        make_lined_table(data, lambda tup: (tup[1], tup[0], tup[2]))
+                data += [(repr(s), t.__class__.__name__, t.has_completed(s))]
+        make_lined_table(data, lambda tup: (tup[0], tup[1], tup[2]))
 
     @property
     def supported_responses(self):
         # type: () -> List[EcuResponse]
+        # TODO: rebase and use Ecu.sort as soon PR is in
         def sort_key_func(resp):
             # type: (EcuResponse) -> Tuple[bool, int, int, int]
             """

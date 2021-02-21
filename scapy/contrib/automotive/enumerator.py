@@ -12,7 +12,7 @@ from collections import defaultdict, OrderedDict
 from itertools import product
 
 from scapy.compat import Any, Union, List, Optional, Iterable, \
-    Dict, Tuple, Set, Callable, Type, cast, NamedTuple
+    Dict, Tuple, Set, Callable, Type, cast, NamedTuple, FAKE_TYPING
 from scapy.contrib.automotive.graph import Graph, _Edge
 from scapy.contrib.automotive.profiler import Profiler, profile
 from scapy.error import Scapy_Exception, log_interactive
@@ -31,22 +31,34 @@ else:
     ABC = ABCMeta('ABC', (), {})  # type: ignore
 
 
-# Definition outside the class AutomotiveTestCase to allow pickling
-_AutomotiveTestCaseScanResult = NamedTuple(
-    "_AutomotiveTestCaseScanResult",
-    [("state", EcuState),
-     ("req", Packet),
-     ("resp", Optional[Packet]),
-     ("req_ts", Union[EDecimal, int, float]),
-     ("resp_ts", Optional[Union[EDecimal, int, float]])])
+if not FAKE_TYPING:
+    # Definition outside the class AutomotiveTestCase to allow pickling
+    _AutomotiveTestCaseScanResult = NamedTuple(
+        "_AutomotiveTestCaseScanResult",
+        [("state", EcuState),
+         ("req", Packet),
+         ("resp", Optional[Packet]),
+         ("req_ts", Union[EDecimal, int, float]),
+         ("resp_ts", Optional[Union[EDecimal, int, float]])])
 
-_AutomotiveTestCaseFilteredScanResult = NamedTuple(
-    "_AutomotiveTestCaseFilteredScanResult",
-    [("state", EcuState),
-     ("req", Packet),
-     ("resp", Packet),
-     ("req_ts", Union[int, float]),
-     ("resp_ts", Union[int, float])])
+    _AutomotiveTestCaseFilteredScanResult = NamedTuple(
+        "_AutomotiveTestCaseFilteredScanResult",
+        [("state", EcuState),
+         ("req", Packet),
+         ("resp", Packet),
+         ("req_ts", Union[int, float]),
+         ("resp_ts", Union[int, float])])
+
+else:
+    from collections import namedtuple
+    # Definition outside the class AutomotiveTestCase to allow pickling
+    _AutomotiveTestCaseScanResult = namedtuple(  # type: ignore
+        "_AutomotiveTestCaseScanResult",
+        ["state", "req", "resp", "req_ts", "resp_ts"])
+
+    _AutomotiveTestCaseFilteredScanResult = namedtuple(  # type: ignore
+        "_AutomotiveTestCaseFilteredScanResult",
+        ["state", "req", "resp", "req_ts", "resp_ts"])
 
 
 class AutomotiveTestCaseExecutorConfiguration(object):

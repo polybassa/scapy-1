@@ -675,8 +675,6 @@ class UDS_RCStartEnumerator(UDS_RCEnumerator):
         # type: (Any) -> Iterable[Packet]
         if "type_list" in kwargs:
             raise KeyError("'type_list' already set in kwargs.")
-        if "scan_range" in kwargs:
-            raise KeyError("'scan_range' set in kwargs.")
         kwargs["type_list"] = [1]
         return super(UDS_RCStartEnumerator, self). \
             _get_initial_requests(**kwargs)

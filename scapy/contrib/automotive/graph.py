@@ -44,11 +44,8 @@ class Graph(object):
         self.__transition_functions[edge] = transition_function
 
     def get_transition_tuple_for_edge(self, edge):
-        # type: (_Edge) -> Optional["_TransitionTuple"]
-        try:
-            return self.__transition_functions[edge]
-        except KeyError:
-            return None
+        # type: (_Edge) -> Optional["_TransitionTuple"]  # noqa: E501
+        return self.__transition_functions.get(edge, None)
 
     @property
     def transition_functions(self):

@@ -143,7 +143,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
         return UDS_DSCEnumerator.enter_state_with_tp, {
             "req": self._results[-1].req,
             "desc": "DSC=%d" % self._results[-1].req.diagnosticSessionType}, \
-               UDS_TPEnumerator.cleanup
+            UDS_TPEnumerator.cleanup
 
 
 class UDS_TPEnumerator(UDS_Enumerator, StateGenerator):

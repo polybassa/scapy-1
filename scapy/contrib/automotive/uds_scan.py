@@ -71,7 +71,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
         session_range = kwargs.pop("session_range", range(2, 0x100))
-        return list(UDS() / UDS_DSC(diagnosticSessionType=session_range))
+        return UDS() / UDS_DSC(diagnosticSessionType=session_range)
 
     def execute(self, socket, state, timeout=3, execution_time=1200, **kwargs):
         # type: (_SocketUnion, EcuState, int, int, Any) -> None  # noqa: E501
@@ -249,6 +249,16 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
         # type: (Any) -> Iterable[Packet]
         # Only generate services with unset positive response bit (0x40)
         return (UDS(service=x) for x in range(0x100) if not x & 0x40)
+
+    def execute(self, socket, state, **kwargs):
+        # type: (_SocketUnion, EcuState, Any) -> None  # noqa: E501
+
+        # remove args from kwargs since they will be overwritten
+        kwargs.pop("exit_if_service_not_supported", False)
+
+        super(UDS_ServiceEnumerator, self).execute(
+            socket, state,
+            exit_if_service_not_supported=False,  **kwargs)
 
     @staticmethod
     def _get_table_entry(tup):

@@ -12,7 +12,7 @@ from collections import defaultdict, OrderedDict
 from itertools import product
 
 from scapy.compat import Any, Union, List, Optional, Iterable, \
-    Dict, Tuple, Set, Callable, Type, cast, NamedTuple, FAKE_TYPING
+    Dict, Tuple, Set, Callable, Type, cast, NamedTuple, FAKE_TYPING, orb
 from scapy.contrib.automotive.graph import Graph, _Edge
 from scapy.contrib.automotive.profiler import Profiler, profile
 from scapy.error import Scapy_Exception, log_interactive
@@ -22,7 +22,6 @@ from scapy.supersocket import SuperSocket
 from scapy.packet import Packet
 from scapy.contrib.automotive.ecu import EcuState, EcuStateModifier, \
     EcuResponse
-from scapy.compat import orb
 
 if six.PY34:
     from abc import ABC, abstractmethod
@@ -65,8 +64,6 @@ class AutomotiveTestCaseExecutorConfiguration(object):
     """
     Configuration storage for AutomotiveTestCaseExecutor.
 
-    Initializer for configuration.
-
     The following keywords are used in the AutomotiveTestCaseExecutor:
         verbose: Enables verbose output and logging
         debug:  Will raise Exceptions on internal errors
@@ -104,6 +101,7 @@ class AutomotiveTestCaseExecutorConfiguration(object):
         self.verbose = kwargs.get("verbose", False)
         self.debug = kwargs.get("debug", False)
         self.delay_state_change = kwargs.get("delay_state_change", 0.5)
+        self.state_graph = Graph()
 
         # test_case can be a mix of classes or instances
         self.test_cases = \
@@ -139,9 +137,9 @@ class AutomotiveTestCaseExecutorConfiguration(object):
 
 # type definitions
 _SocketUnion = Union[SuperSocket, SingleConversationSocket]
-_TransitionCallable = Callable[[_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge], bool]  # noqa: E501
+_TransitionCallable = Callable[[_SocketUnion, AutomotiveTestCaseExecutorConfiguration, Dict[str, Any]], bool]  # noqa: E501
 _CleanupCallable = Callable[[_SocketUnion, AutomotiveTestCaseExecutorConfiguration], bool]  # noqa: E501
-_TransitionTuple = Tuple[_TransitionCallable, Optional[_CleanupCallable]]
+_TransitionTuple = Tuple[_TransitionCallable, Dict[str, Any], Optional[_CleanupCallable]]  # noqa: E501
 
 
 class AutomotiveTestCaseABC(ABC):
@@ -191,27 +189,6 @@ class TestCaseGenerator(ABC):
 
 
 class StateGenerator(ABC):
-    @staticmethod
-    def _set_args_for_transition_function(config, class_name, edge, args):
-        # type: (AutomotiveTestCaseExecutorConfiguration, str, _Edge, Tuple[Any, ...]) -> None  # noqa: E501
-        key = "_transition_function_args"
-        try:
-            if config[class_name + key] is None:
-                config[class_name + key] = dict()
-        except KeyError:
-            config[class_name + key] = dict()
-
-        config[class_name + key][edge] = args
-
-    @staticmethod
-    def _get_args_for_transition_function(config, class_name, edge):
-        # type: (AutomotiveTestCaseExecutorConfiguration, str, _Edge) -> Optional[Tuple[Any]]  # noqa: E501
-        key = "_transition_function_args"
-        try:
-            return config[class_name + key][edge]
-        except KeyError:
-            return None
-
     def get_new_edge(self, socket, config):
         # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_Edge]  # noqa: E501
         if not isinstance(self, AutomotiveTestCaseABC):
@@ -232,19 +209,18 @@ class StateGenerator(ABC):
             return None
 
     @abstractmethod
-    def get_transition_function(self, socket, config, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
+    def get_transition_function(self, socket, edge):
+        # type: (_SocketUnion, _Edge) -> Optional[_TransitionTuple]
         """
 
         :param socket: Socket to target
-        :param config: Configuration of TestCaseExecutor
         :param edge: Tuple of EcuState objects for the requested
                      transition function
         :return: Returns an optional tuple with two functions. Both functions
                  take a Socket and the TestCaseExecutor configuration as
                  arguments and return True if the execution was successful.
                  The first function is the state enter function, the second
-                 function is a cleanup function.
+                 function is a cleanup function
         """
         raise NotImplementedError
 
@@ -319,11 +295,11 @@ class StagedAutomotiveTestCase(AutomotiveTestCaseABC, TestCaseGenerator, StateGe
         except AttributeError:
             return None
 
-    def get_transition_function(self, socket, config, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
+    def get_transition_function(self, socket, edge):
+        # type: (_SocketUnion, _Edge) -> Optional[_TransitionTuple]
         try:
             test_case = cast(StateGenerator, self.current_test_case)
-            return test_case.get_transition_function(socket, config, edge)
+            return test_case.get_transition_function(socket, edge)
         except AttributeError:
             return None
 
@@ -331,19 +307,19 @@ class StagedAutomotiveTestCase(AutomotiveTestCaseABC, TestCaseGenerator, StateGe
         # type: (EcuState) -> bool
         if not (self.current_test_case.has_completed(state) and
                 self.current_test_case.completed):
-            # current test_case not fully completed, we can skip completed
-            # internal states of the current test_case
+            # current test_case not fully completed
+            # reset completion delay, since new states could have been appeared
             self.__completion_delay = 0
             return False
 
         # current test_case is fully completed
-        if self.__stage_index == len(self) - 1:
+        if self.__stage_index == len(self.__test_cases) - 1:
             # this test_case was the last test_case... nothing to do
             return True
 
         # current stage is finished. We have to increase the stage
-        if self.__completion_delay < 3:
-            # First we wait one more iteration of the executor
+        if self.__completion_delay < 5:
+            # First we wait five more iteration of the executor
             # Maybe one more execution reveals new states of other
             # test_cases
             self.__completion_delay += 1
@@ -943,14 +919,13 @@ class AutomotiveTestCaseExecutor(ABC):
         self.reset_handler = reset_handler
         self.reconnect_handler = reconnect_handler
 
-        self.state_graph = Graph()
-        self.state_graph.add_edge((self.__initial_ecu_state,
-                                   self.__initial_ecu_state))
-
         self.cleanup_functions = list()  # type: List[_CleanupCallable]
 
         self.configuration = AutomotiveTestCaseExecutorConfiguration(
             test_cases or self.default_test_case_clss, **kwargs)
+
+        self.configuration.state_graph.add_edge(
+            (self.__initial_ecu_state, self.__initial_ecu_state))
 
     def __reduce__(self):  # type: ignore
         f, t, d = super(AutomotiveTestCaseExecutor, self).__reduce__()  # type: ignore  # noqa: E501
@@ -973,6 +948,11 @@ class AutomotiveTestCaseExecutor(ABC):
     def default_test_case_clss(self):
         # type: () -> List[Type[AutomotiveTestCaseABC]]
         raise NotImplementedError()
+
+    @property
+    def state_graph(self):
+        # type: () -> Graph
+        return self.configuration.state_graph
 
     @property
     def state_paths(self):
@@ -1041,9 +1021,8 @@ class AutomotiveTestCaseExecutor(ABC):
             edge = test_case.get_new_edge(self.socket, self.configuration)
             if edge:
                 log_interactive.debug("Edge found %s", edge)
-                transition_function = test_case.get_transition_function(
-                    self.socket, self.configuration, edge)
-                self.state_graph.add_edge(edge, transition_function)
+                tf = test_case.get_transition_function(self.socket, edge)
+                self.state_graph.add_edge(edge, tf)
 
         if isinstance(test_case, TestCaseGenerator):
             test_case_gen = cast(TestCaseGenerator, test_case)
@@ -1122,8 +1101,9 @@ class AutomotiveTestCaseExecutor(ABC):
             log_interactive.error("[!] No transition function for %s", edge)
             return False
 
-        trans_func, clean_func = funcs
-        state_changed = trans_func(self.socket, self.configuration, edge)
+        trans_func, trans_kwargs, clean_func = funcs
+        state_changed = trans_func(
+            self.socket, self.configuration, trans_kwargs)
         if state_changed:
             self.target_state = next_state
 

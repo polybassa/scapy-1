@@ -93,8 +93,8 @@ class GMLAN_TPEnumerator(GMLAN_Enumerator, StateGenerator):
         return [GMLAN(service=0x3E)]
 
     @staticmethod
-    def enter(socket, configuration, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
+    def enter(socket, configuration, kwargs):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, Dict[str, Any]) -> bool  # noqa: E501
         GMLAN_TPEnumerator.cleanup(socket, configuration)
         configuration["tps"] = GMLAN_TesterPresentSender(socket)  # noqa: E501
         configuration["tps"].start()
@@ -111,9 +111,9 @@ class GMLAN_TPEnumerator(GMLAN_Enumerator, StateGenerator):
             pass
         return True
 
-    def get_transition_function(self, socket, config, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
-        return self.enter, self.cleanup
+    def get_transition_function(self, socket, edge):
+        # type: (_SocketUnion, _Edge) -> Optional[_TransitionTuple]
+        return self.enter, {"desc": "TP"}, self.cleanup
 
     @staticmethod
     def _get_table_entry(tup):
@@ -151,15 +151,15 @@ class GMLAN_IDOEnumerator(GMLAN_Enumerator, StateGenerator):
         return None
 
     @staticmethod
-    def enter_state_with_tp(sock, conf, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
-        res = GMLAN_TPEnumerator.enter(sock, conf, edge)
+    def enter_state_with_tp(sock, conf, kwargs):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, Dict[str, Any]) -> bool  # noqa: E501
+        res = GMLAN_TPEnumerator.enter(sock, conf, kwargs)
         res2 = GMLAN_IDOEnumerator.enter_diagnostic_session(sock)
         return res and res2
 
-    def get_transition_function(self, socket, config, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
-        return self.enter_state_with_tp, GMLAN_TPEnumerator.cleanup
+    def get_transition_function(self, socket, edge):
+        # type: (_SocketUnion, _Edge) -> Optional[_TransitionTuple]
+        return self.enter_state_with_tp, {"desc": "IDO_TP"}, GMLAN_TPEnumerator.cleanup  # noqa: E501
 
     @staticmethod
     def _get_table_entry(tup):
@@ -272,9 +272,9 @@ class GMLAN_SA1Enumerator(GMLAN_Enumerator, StateGenerator):
         return None
 
     @staticmethod
-    def enter_state_with_tp(sock, conf, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
-        res = GMLAN_TPEnumerator.enter(sock, conf, edge)
+    def enter_state_with_tp(sock, conf, kwargs):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, Dict[str, Any]) -> bool  # noqa: E501
+        res = GMLAN_TPEnumerator.enter(sock, conf, kwargs)
         kf = conf[GMLAN_SA1Enumerator.__name__].get("keyfunction")
         vb = conf[GMLAN_SA1Enumerator.__name__].get("verbose", True)
         tm = conf[GMLAN_SA1Enumerator.__name__].get("timeout", 15)
@@ -283,9 +283,9 @@ class GMLAN_SA1Enumerator(GMLAN_Enumerator, StateGenerator):
             sock, kf, level=1, timeout=tm, verbose=vb, retry=rt)
         return res and res2
 
-    def get_transition_function(self, socket, config, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
-        return self.enter_state_with_tp, GMLAN_TPEnumerator.cleanup
+    def get_transition_function(self, socket, edge):
+        # type: (_SocketUnion, _Edge) -> Optional[_TransitionTuple]
+        return self.enter_state_with_tp, {"desc": "SA1_TP"}, GMLAN_TPEnumerator.cleanup  # noqa: E501
 
 
 class GMLAN_RNOEnumerator(GMLAN_Enumerator):
@@ -335,15 +335,15 @@ class GMLAN_RDEnumerator(GMLAN_Enumerator, StateGenerator):
         return None
 
     @staticmethod
-    def enter_state_with_tp(sock, conf, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
-        res = GMLAN_TPEnumerator.enter(sock, conf, edge)
+    def enter_state_with_tp(sock, conf, kwargs):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, Dict[str, Any]) -> bool  # noqa: E501
+        res = GMLAN_TPEnumerator.enter(sock, conf, kwargs)
         res2 = GMLAN_RequestDownload(sock, 0x10, timeout=10, verbose=False)
         return res and res2
 
-    def get_transition_function(self, socket, config, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
-        return self.enter_state_with_tp, GMLAN_TPEnumerator.cleanup
+    def get_transition_function(self, socket, edge):
+        # type: (_SocketUnion, _Edge) -> Optional[_TransitionTuple]
+        return self.enter_state_with_tp, {"desc": "RD_TP"}, GMLAN_TPEnumerator.cleanup  # noqa: E501
 
     @staticmethod
     def _get_table_entry(tup):
@@ -386,15 +386,15 @@ class GMLAN_PMEnumerator(GMLAN_Enumerator, StateGenerator):
         return None
 
     @staticmethod
-    def enter_state_with_tp(sock, conf, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> bool  # noqa: E501
-        res = GMLAN_TPEnumerator.enter(sock, conf, edge)
+    def enter_state_with_tp(sock, conf, kwargs):
+        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, Dict[str, Any]) -> bool  # noqa: E501
+        res = GMLAN_TPEnumerator.enter(sock, conf, kwargs)
         res2 = GMLAN_InitDiagnostics(sock, timeout=20, verbose=False)
         return res and res2
 
-    def get_transition_function(self, socket, config, edge):
-        # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration, _Edge) -> Optional[_TransitionTuple]  # noqa: E501
-        return self.enter_state_with_tp, GMLAN_TPEnumerator.cleanup
+    def get_transition_function(self, socket, edge):
+        # type: (_SocketUnion, _Edge) -> Optional[_TransitionTuple]
+        return self.enter_state_with_tp, {"desc": "PM_TP"}, GMLAN_TPEnumerator.cleanup  # noqa: E501
 
     @staticmethod
     def _get_table_entry(tup):

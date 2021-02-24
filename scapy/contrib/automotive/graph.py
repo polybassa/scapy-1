@@ -57,8 +57,8 @@ class Graph(object):
         # type: () -> Union[List[EcuState], Set[EcuState]]
         return set([n for _, p in self.edges.items() for n in p])
 
-    def render(self, filename="SystemStateGraph.gv"):
-        # type: (str) -> None
+    def render(self, filename="SystemStateGraph.gv", view=True):
+        # type: (str, bool) -> None
         try:
             from graphviz import Digraph
         except ImportError:
@@ -74,9 +74,13 @@ class Graph(object):
             ps.node(str(n))
 
         for e, f in self.__transition_functions.items():
-            ps.edge(str(e[0]), str(e[1]))
+            try:
+                desc = "" if f is None else f[1]["desc"]
+            except (AttributeError, KeyError):
+                desc = ""
+            ps.edge(str(e[0]), str(e[1]), label=desc)
 
-        ps.render(filename, view=True)
+        ps.render(filename, view=view)
 
     @staticmethod
     def dijkstra(graph, initial, end):

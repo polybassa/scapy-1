@@ -1087,7 +1087,9 @@ class AutomotiveTestCaseExecutor(ABC):
             return True
 
         for next_state in path[1:]:
-            if not self.enter_state(self.target_state, next_state):
+            edge = (self.target_state, next_state)
+            if not self.enter_state(*edge):
+                self.state_graph.downrate_edge(edge)
                 return False
         return True
 

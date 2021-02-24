@@ -31,6 +31,7 @@ class Graph(object):
         """
         self.edges = defaultdict(list)  # type: Dict[EcuState, List[EcuState]]
         self.__transition_functions = {}  # type: Dict[_Edge, Optional["_TransitionTuple"]]  # noqa: E501
+        self.weights = {}  # type: Dict[_Edge, int]
 
     def add_edge(self, edge, transition_function=None):
         # type: (_Edge, Optional["_TransitionTuple"]) -> None
@@ -41,11 +42,19 @@ class Graph(object):
         """
         Profiler.write_milestone(repr(edge[1]))
         self.edges[edge[0]].append(edge[1])
+        self.weights[edge] = 1
         self.__transition_functions[edge] = transition_function
 
     def get_transition_tuple_for_edge(self, edge):
         # type: (_Edge) -> Optional["_TransitionTuple"]  # noqa: E501
         return self.__transition_functions.get(edge, None)
+
+    def downrate_edge(self, edge):
+        # type: (_Edge) -> None
+        try:
+            self.weights[edge] += 1
+        except KeyError:
+            pass
 
     @property
     def transition_functions(self):
@@ -103,7 +112,8 @@ class Graph(object):
             weight_to_current_node = shortest_paths[current_node][1]
 
             for next_node in destinations:
-                weight = 1 + weight_to_current_node
+                weight = graph.weights[(current_node, next_node)] + \
+                    weight_to_current_node
                 if next_node not in shortest_paths:
                     shortest_paths[next_node] = (current_node, weight)
                 else:

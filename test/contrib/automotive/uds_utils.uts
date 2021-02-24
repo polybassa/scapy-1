@@ -227,7 +227,6 @@ example_responses = [ \
      EcuResponse(responses=UDS() / UDS_DSCPR(diagnosticSessionType=8, sessionParameterRecord=b"dead")),
      EcuResponse(responses=UDS() / UDS_ERPR(resetType="hardReset")),
      EcuResponse(responses=UDS() / UDS_TPPR()),
-     EcuResponse(responses=UDS() / UDS_NR(negativeResponseCode=0x11, requestServiceId=0x10)),
      EcuResponse(responses=UDS() / UDS_NR(negativeResponseCode=0x11, requestServiceId=0x10), answers=defaultNegativeResponse)
      ]
 
@@ -240,7 +239,7 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
     sim = threading.Thread(target=answering_machine, kwargs={'timeout': 300, "stop_filter": lambda x: bytes(x) == b"\xff\xff\xff"})
     sim.start()
     reset()
-    scanner = UDS_Scanner(tester, reset_handler=reset, delay_state_change=0, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.1, "overwrite_timeout": False})
+    scanner = UDS_Scanner(tester, reset_handler=reset, delay_state_change=0, test_cases=[UDS_DSCEnumerator], UDS_DSCEnumerator_kwargs={"timeout": 0.2, "overwrite_timeout": False})
     scanner.scan()
     scanner.scan()
     scanner.scan()
@@ -253,6 +252,8 @@ assert scanner.configuration.test_cases[0].completed
 print(len(scanner.configuration.test_cases[0].results_with_positive_response))
 print(len(scanner.configuration.test_cases[0].results_with_negative_response))
 print(len(scanner.configuration.test_cases[0].filtered_results))
+scanner.show_testcases_status()
+scanner.show_testcases()
 assert len(scanner.configuration.test_cases[0].results_with_positive_response) == 7*8
 assert EcuState(session=1) in scanner.state_graph.nodes
 assert EcuState(session=2, tp=1) in scanner.state_graph.nodes
@@ -261,6 +262,7 @@ assert EcuState(session=4, tp=1) in scanner.state_graph.nodes
 assert EcuState(session=5, tp=1) in scanner.state_graph.nodes
 assert EcuState(session=6, tp=1) in scanner.state_graph.nodes
 assert EcuState(session=7, tp=1) in scanner.state_graph.nodes
+assert EcuState(session=8, tp=1) in scanner.state_graph.nodes
 assert 2 == max([len(p) for p in scanner.state_paths])
 
 

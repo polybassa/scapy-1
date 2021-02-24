@@ -16,7 +16,7 @@ from collections import defaultdict
 from scapy.compat import Optional, List, Type, Any, Tuple, Iterable, Dict, cast
 from scapy.contrib.automotive.gm.gmlan import GMLAN, GMLAN_SA, GMLAN_RD, \
     GMLAN_TD, GMLAN_RMBA, GMLAN_RDBI, GMLAN_RDBPI, GMLAN_IDO, \
-    GMLAN_NR, GMLAN_WDBI, GMLAN_SAPR, GMLAN_DC
+    GMLAN_NR, GMLAN_WDBI, GMLAN_SAPR, GMLAN_DC, GMLAN_PM
 from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \
     AutomotiveTestCaseExecutor, StateGenerator, \
     AutomotiveTestCaseExecutorConfiguration, AutomotiveTestCaseABC, \
@@ -249,7 +249,7 @@ class GMLAN_SA1Enumerator(GMLAN_Enumerator, StateGenerator):
                                GMLAN() / GMLAN_SAPR(subfunction=2))
         else:
             self._store_result(
-                state, GMLAN(service=0x27),
+                state, GMLAN() / GMLAN_SA(subfunction=2),
                 GMLAN() / GMLAN_NR(returnCode=0x11, requestServiceId=0x27))
         self._state_completed[state] = True
 
@@ -366,10 +366,11 @@ class GMLAN_PMEnumerator(GMLAN_Enumerator, StateGenerator):
                                           timeout=20, verbose=False)
         # TODO: Refactor result storage
         if supported:
-            self._store_result(state, GMLAN(service=0xA5), GMLAN(service=0xE5))
+            self._store_result(
+                state, GMLAN() / GMLAN_PM(), GMLAN(service=0xE5))
         else:
             self._store_result(
-                state, GMLAN(service=0xA5),
+                state, GMLAN() / GMLAN_PM(),
                 GMLAN() / GMLAN_NR(returnCode=0x11, requestServiceId=0xA5))
 
         self._state_completed[state] = True

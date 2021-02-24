@@ -64,6 +64,32 @@ else:
 class AutomotiveTestCaseExecutorConfiguration(object):
     """
     Configuration storage for AutomotiveTestCaseExecutor.
+
+    Initializer for configuration.
+
+    The following keywords are used in the AutomotiveTestCaseExecutor:
+        verbose: Enables verbose output and logging
+        debug:  Will raise Exceptions on internal errors
+        delay_state_change: After a state change, a defined time is waited
+
+    :param test_cases: List of AutomotiveTestCase classes or instances.
+                       Classes will get instantiated in this initializer.
+    :param kwargs: Configuration for every AutomotiveTestCase in test_cases
+                   and for the AutomotiveTestCaseExecutor. TestCase local
+                   configuration and global configuration for all TestCase
+                   objects are possible. All keyword arguments given will
+                   be stored for every TestCase. To define a local
+                   configuration for one TestCase only, the keyword
+                   arguments need to be provided in a dictionary.
+                   To assign a configuration dictionary to a TestCase, the
+                   keyword need to identify the TestCase by the following
+                   pattern.
+                   ``MyTestCase_kwargs={"someConfig": 42}``
+                   The keyword is composed from the TestCase class name and
+                   the postfix '_kwargs'.
+
+    Example:
+        >>> config = AutomotiveTestCaseExecutorConfiguration([MyTestCase], global_config=42, MyTestCase_kwargs={"localConfig": 1337})  # noqa: E501
     """
     def __setitem__(self, key, value):
         # type: (Any, Any) -> None
@@ -75,33 +101,6 @@ class AutomotiveTestCaseExecutorConfiguration(object):
 
     def __init__(self, test_cases, **kwargs):
         # type: (Union[List[Union[AutomotiveTestCaseABC, Type[AutomotiveTestCaseABC]]], List[Type[AutomotiveTestCaseABC]]], Any) -> None  # noqa: E501
-        """
-        Initializer for configuration.
-
-        The following keywords are used in the AutomotiveTestCaseExecutor:
-            verbose: Enables verbose output and logging
-            debug:  Will raise Exceptions on internal errors
-            delay_state_change: After a state change, a defined time is waited
-
-        :param test_cases: List of AutomotiveTestCase classes or instances.
-                           Classes will get instantiated in this initializer.
-        :param kwargs: Configuration for every AutomotiveTestCase in test_cases
-                       and for the AutomotiveTestCaseExecutor. TestCase local
-                       configuration and global configuration for all TestCase
-                       objects are possible. All keyword arguments given will
-                       be stored for every TestCase. To define a local
-                       configuration for one TestCase only, the keyword
-                       arguments need to be provided in a dictionary.
-                       To assign a configuration dictionary to a TestCase, the
-                       keyword need to identify the TestCase by the following
-                       pattern.
-                       ``MyTestCase_kwargs={"someConfig": 42}``
-                       The keyword is composed from the TestCase class name and
-                       the postfix '_kwargs'.
-
-                       >>> config = AutomotiveTestCaseExecutorConfiguration([MyTestCase], global_config=42, MyTestCase_kwargs={"localConfig": 1337})  # noqa: E501
-        """
-
         self.verbose = kwargs.get("verbose", False)
         self.debug = kwargs.get("debug", False)
         self.delay_state_change = kwargs.get("delay_state_change", 0.5)

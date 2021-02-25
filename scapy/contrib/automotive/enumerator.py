@@ -1036,37 +1036,36 @@ class AutomotiveTestCaseExecutor(ABC):
         while kill_time > time.time():
             test_case_executed = False
             log_interactive.debug("[i] Scan paths %s", self.state_paths)
-            for p in self.state_paths:
+            for p, test_case in product(
+                    self.state_paths, self.configuration.test_cases):
                 log_interactive.info("[i] Scan path %s", p)
-                for test_case in self.configuration.test_cases:
+                terminate = kill_time < time.time()
+                if terminate:
+                    log_interactive.debug(
+                        "[-] Execution time exceeded. Terminating scan!")
+                    break
 
-                    terminate = kill_time < time.time()
-                    if terminate:
-                        log_interactive.debug(
-                            "[-] Execution time exceeded. Terminating scan!")
-                        break
+                final_state = p[-1]
+                if test_case.has_completed(final_state):
+                    log_interactive.debug("[+] State %s for %s completed",
+                                          repr(final_state), test_case)
+                    continue
 
-                    final_state = p[-1]
-                    if test_case.has_completed(final_state):
-                        log_interactive.debug("[+] State %s for %s completed",
-                                              repr(final_state), test_case)
+                try:
+                    if not self.enter_state_path(p):
+                        log_interactive.error(
+                            "[-] Error entering path %s", p)
                         continue
-
-                    try:
-                        if not self.enter_state_path(p):
-                            log_interactive.error(
-                                "[-] Error entering path %s", p)
-                            continue
-                        log_interactive.info(
-                            "[i] Execute %s for path %s", str(test_case), p)
-                        with Profiler(p, test_case.__class__.__name__):
-                            self.execute_test_case(test_case)
-                            self.cleanup_state()
-                        test_case_executed = True
-                    except (OSError, ValueError, Scapy_Exception, BrokenPipeError) as e:  # noqa: E501
-                        log_interactive.critical("[-] Exception: %s", e)
-                        if self.configuration.debug:
-                            raise e
+                    log_interactive.info(
+                        "[i] Execute %s for path %s", str(test_case), p)
+                    with Profiler(p, test_case.__class__.__name__):
+                        self.execute_test_case(test_case)
+                        self.cleanup_state()
+                    test_case_executed = True
+                except (OSError, ValueError, Scapy_Exception, BrokenPipeError) as e:  # noqa: E501
+                    log_interactive.critical("[-] Exception: %s", e)
+                    if self.configuration.debug:
+                        raise e
 
             if not test_case_executed:
                 log_interactive.info(

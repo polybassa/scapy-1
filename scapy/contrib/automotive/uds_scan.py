@@ -674,7 +674,7 @@ class UDS_RCStartEnumerator(UDS_RCEnumerator):
 class UDS_RCSelectiveEnumerator(StagedAutomotiveTestCase):
     # Used to expand points to both sites
     # So, the total block size will be 132 * 2 = 264
-    expansion_width = 132
+    expansion_width = 253
 
     @staticmethod
     def points_to_ranges(pois):

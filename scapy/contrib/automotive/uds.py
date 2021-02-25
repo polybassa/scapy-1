@@ -1037,7 +1037,6 @@ class UDS_RCPR(Packet):
         ByteEnumField('routineControlType', 0, UDS_RC.routineControlTypes),
         XShortEnumField('routineIdentifier', 0,
                         UDS_RC.routineControlIdentifiers),
-        StrField('routineStatusRecord', b"", fmt="B"),
     ]
 
     def answers(self, other):
@@ -1049,8 +1048,7 @@ class UDS_RCPR(Packet):
     def get_log(pkt):
         return pkt.sprintf("%UDS.service%"),\
             (pkt.routineControlType,
-             pkt.routineIdentifier,
-             pkt.routineStatusRecord)
+             pkt.routineIdentifier)
 
 
 bind_layers(UDS, UDS_RCPR, service=0x71)

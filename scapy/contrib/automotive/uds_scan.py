@@ -460,10 +460,10 @@ class UDS_SAEnumerator(UDS_Enumerator):
         else:
             time.sleep(1)
 
-    def _evaluate_response(self, response, **kwargs):
-        # type: (Optional[Packet], Any) -> bool
+    def _evaluate_response(self, request, response, **kwargs):
+        # type: (Packet, Optional[Packet], Optional[Dict[str, Any]]) -> bool
         if super(UDS_SAEnumerator, self)._evaluate_response(
-                response, **kwargs):
+                request, response, **kwargs):
             return True
 
         if response is None:

@@ -20,7 +20,7 @@ from scapy.error import log_loading
 from scapy.utils import PeriodicSenderThread
 from scapy.contrib.isotp import ISOTP
 from scapy.contrib.automotive.ecu import EcuStateModifier, EcuState
-from scapy.compat import Dict, Union, Tuple, Any
+from scapy.compat import Dict, Union, Tuple, Any, Optional
 
 """
 UDS
@@ -155,8 +155,8 @@ class UDS_DSCPR(Packet, EcuStateModifier):
         return other.__class__ == UDS_DSC and \
             other.diagnosticSessionType == self.diagnosticSessionType
 
-    def modify_ecu_state(self, state):
-        # type: (EcuState) -> None
+    def modify_ecu_state(self, state, req=None):
+        # type: (EcuState, Optional[Packet]) -> None
         state.session = self.diagnosticSessionType
 
     @staticmethod
@@ -204,8 +204,8 @@ class UDS_ERPR(Packet, EcuStateModifier):
     def answers(self, other):
         return other.__class__ == UDS_ER
 
-    def modify_ecu_state(self, state):
-        # type: (EcuState) -> None
+    def modify_ecu_state(self, state, req=None):
+        # type: (EcuState, Optional[Packet]) -> None
         state.reset()
         state.session = 1
 
@@ -254,8 +254,8 @@ class UDS_SAPR(Packet, EcuStateModifier):
         return other.__class__ == UDS_SA \
             and other.securityAccessType == self.securityAccessType
 
-    def modify_ecu_state(self, state):
-        # type: (EcuState) -> None
+    def modify_ecu_state(self, state, req=None):
+        # type: (EcuState, Optional[Packet]) -> None
         if self.securityAccessType % 2 == 0:
             state.security_level = self.securityAccessType
 
@@ -328,8 +328,8 @@ class UDS_CCPR(Packet, EcuStateModifier):
         return other.__class__ == UDS_CC \
             and other.controlType == self.controlType
 
-    def modify_ecu_state(self, state):
-        # type: (EcuState) -> None
+    def modify_ecu_state(self, state, req=None):
+        # type: (EcuState, Optional[Packet]) -> None
         state.communication_control = self.controlType
 
     @staticmethod
@@ -365,8 +365,8 @@ class UDS_TPPR(Packet, EcuStateModifier):
     def answers(self, other):
         return other.__class__ == UDS_TP
 
-    def modify_ecu_state(self, state):
-        # type: (EcuState) -> None
+    def modify_ecu_state(self, state, req=None):
+        # type: (EcuState, Optional[Packet]) -> None
         state.tp = 1
 
     @staticmethod
@@ -723,8 +723,8 @@ class UDS_RDBPIPR(Packet, EcuStateModifier):
         return other.__class__ == UDS_RDBPI \
             and other.periodicDataIdentifier == self.periodicDataIdentifier
 
-    def modify_ecu_state(self, state):
-        # type: (EcuState) -> None
+    def modify_ecu_state(self, state, req=None):
+        # type: (EcuState, Optional[Packet]) -> None
         state.pdid = self.periodicDataIdentifier
 
 

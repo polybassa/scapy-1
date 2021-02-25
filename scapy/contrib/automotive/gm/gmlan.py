@@ -17,6 +17,7 @@ from scapy.config import conf
 from scapy.error import warning, log_loading
 from scapy.contrib.isotp import ISOTP
 from scapy.contrib.automotive.ecu import EcuStateModifier, EcuState
+from scapy.compat import Optional
 
 
 """
@@ -114,8 +115,8 @@ class GMLAN(ISOTP, EcuStateModifier):
             return struct.pack('B', self.requestServiceId)
         return struct.pack('B', self.service & ~0x40)
 
-    def modify_ecu_state(self, state):
-        # type: (EcuState) -> None
+    def modify_ecu_state(self, state, req=None):
+        # type: (EcuState, Optional[Packet]) -> None
         if self.service == 0x50:
             state.session = 3
         elif self.service == 0x60:
@@ -533,8 +534,8 @@ class GMLAN_SAPR(Packet, EcuStateModifier):
             return pkt.sprintf("%GMLAN.service%"), \
                 (pkt.subfunction, pkt.securitySeed)
 
-    def modify_ecu_state(self, state):
-        # type: (EcuState) -> None
+    def modify_ecu_state(self, state, req=None):
+        # type: (EcuState, Optional[Packet]) -> None
         if self.subfunction % 2 == 0:
             state.security_level = self.subfunction
 

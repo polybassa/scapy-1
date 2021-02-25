@@ -195,12 +195,13 @@ class StateGenerator(ABC):
             raise TypeError("Only AutomotiveTestCaseABC instances "
                             "can be a StateGenerator")
         try:
-            state, _, resp, _, _ = cast(AutomotiveTestCase, self).results[-1]
+            state, req, resp, _, _ = cast(AutomotiveTestCase, self).results[-1]
         except IndexError:
             return None
 
         if resp is not None and EcuStateModifier.modifies_ecu_state(resp):
-            new_state = EcuStateModifier.get_modified_ecu_state(resp, state)
+            new_state = EcuStateModifier.get_modified_ecu_state(
+                resp, state, req=req)
             if new_state == state:
                 return None
             else:
@@ -558,7 +559,7 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
 
             self._store_result(state, req, res)
 
-            if self._evaluate_response(res, **kwargs):
+            if self._evaluate_response(req, res, **kwargs):
                 log_interactive.debug("[i] Stop test_case execution because "
                                       "of response evaluation")
                 return
@@ -572,8 +573,8 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         pass
 
-    def _evaluate_response(self, response, **kwargs):
-        # type: (Optional[Packet], Optional[Dict[str, Any]]) -> bool
+    def _evaluate_response(self, request, response, **kwargs):
+        # type: (Packet, Optional[Packet], Optional[Dict[str, Any]]) -> bool
 
         if response is None:
             # Nothing to evaluate, return and continue execute
@@ -618,7 +619,7 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         if EcuStateModifier.modifies_ecu_state(response):
             state = self._results[-1].state
             if state != EcuStateModifier.get_modified_ecu_state(
-                    response, state):
+                    response, state, req=request):
                 log_interactive.debug(
                     "[-] Exit execute. Ecu state was modified!")
                 return True

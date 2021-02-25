@@ -144,9 +144,8 @@ class EcuStateModifier(object):
     Abstract class to signal that instances of this class can
     change an EcuState.
     """
-
-    def modify_ecu_state(self, state):
-        # type: (EcuState) -> None
+    def modify_ecu_state(self, state, req=None):
+        # type: (EcuState, Optional[Packet]) -> None
         raise NotImplementedError
 
     @staticmethod
@@ -162,14 +161,15 @@ class EcuStateModifier(object):
                    for layer in pkt.layers())
 
     @staticmethod
-    def get_modified_ecu_state(pkt, state, modify_in_place=False):
-        # type: (Packet, EcuState, bool) -> EcuState
+    def get_modified_ecu_state(res, state, modify_in_place=False, req=None):
+        # type: (Packet, EcuState, bool, Optional[Packet]) -> EcuState
         """
         Helper function to get a modified EcuState from a Packet and a
         previous EcuState.
-        :param pkt: Packet that supports `modify_ecu_state`
+        :param res: Response packet that supports `modify_ecu_state`
         :param state: A previous EcuState
         :param modify_in_place: If True, the given EcuState will be modified
+        :param req: Belonging request of the response that modifies the state
         :return: The modified EcuState as copy
         """
         if modify_in_place:
@@ -177,13 +177,13 @@ class EcuStateModifier(object):
         else:
             new_state = copy.copy(state)
 
-        for layer in pkt.layers():
+        for layer in res.layers():
             if not issubclass(layer, EcuStateModifier):
                 continue
             try:
-                layer.modify_ecu_state(pkt, new_state)
+                layer.modify_ecu_state(res, new_state, req)
             except TypeError:
-                layer.modify_ecu_state.im_func(pkt, new_state)
+                layer.modify_ecu_state.im_func(res, new_state, req)
         return new_state
 
 

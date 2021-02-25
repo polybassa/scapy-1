@@ -1018,16 +1018,14 @@ class UDS_RC(Packet):
     name = 'RoutineControl'
     fields_desc = [
         ByteEnumField('routineControlType', 0, routineControlTypes),
-        XShortEnumField('routineIdentifier', 0, routineControlIdentifiers),
-        StrField('routineControlOptionRecord', b"", fmt="B"),
+        XShortEnumField('routineIdentifier', 0, routineControlIdentifiers)
     ]
 
     @staticmethod
     def get_log(pkt):
         return pkt.sprintf("%UDS.service%"),\
             (pkt.routineControlType,
-             pkt.routineIdentifier,
-             pkt.routineControlOptionRecord)
+             pkt.routineIdentifier)
 
 
 bind_layers(UDS, UDS_RC, service=0x31)
@@ -1036,8 +1034,7 @@ bind_layers(UDS, UDS_RC, service=0x31)
 class UDS_RCPR(Packet):
     name = 'RoutineControlPositiveResponse'
     fields_desc = [
-        ByteEnumField('routineControlType', 0,
-                      UDS_RC.routineControlTypes),
+        ByteEnumField('routineControlType', 0, UDS_RC.routineControlTypes),
         XShortEnumField('routineIdentifier', 0,
                         UDS_RC.routineControlIdentifiers),
         StrField('routineStatusRecord', b"", fmt="B"),

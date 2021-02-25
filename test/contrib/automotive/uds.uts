@@ -799,7 +799,7 @@ rc = UDS(b'\x31\x03\xff\xee\xdd\xaa')
 assert rc.service == 0x31
 assert rc.routineControlType == 3
 assert rc.routineIdentifier == 0xffee
-assert rc.routineControlOptionRecord == b'\xdd\xaa'
+assert rc.load == b'\xdd\xaa'
 
 = Check UDS_RC
 
@@ -807,7 +807,7 @@ rc = UDS(b'\x31\x03\xff\xee\xdd\xaa')
 assert rc.service == 0x31
 assert rc.routineControlType == 3
 assert rc.routineIdentifier == 0xffee
-assert rc.routineControlOptionRecord == b'\xdd\xaa'
+assert rc.load == b'\xdd\xaa'
 
 
 = Check UDS_RCPR

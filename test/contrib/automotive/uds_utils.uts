@@ -247,6 +247,8 @@ with new_can_socket0() as isocan1, ISOTPSocket(isocan1, sid=0x241, did=0x641, ba
     tester.send(b"\xff\xff\xff")
     sim.join(timeout=2)
 
+
+scanner.state_graph.render(filename="SystemStateGraph.gv", view=False)
 print(scanner.state_paths)
 assert scanner.configuration.test_cases[0].completed
 print(len(scanner.configuration.test_cases[0].results_with_positive_response))

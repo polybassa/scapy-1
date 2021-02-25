@@ -816,7 +816,7 @@ rcpr = UDS(b'\x71\x03\xff\xee\xdd\xaa')
 assert rcpr.service == 0x71
 assert rcpr.routineControlType == 3
 assert rcpr.routineIdentifier == 0xffee
-assert rcpr.routineStatusRecord == b'\xdd\xaa'
+assert rcpr.load == b'\xdd\xaa'
 
 = Check UDS_RD
 

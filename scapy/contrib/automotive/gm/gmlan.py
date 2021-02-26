@@ -125,11 +125,6 @@ class GMLAN_IDO(Packet):
         ByteEnumField('subfunction', 0, subfunctions)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_IDO.subfunction%")
-
 
 bind_layers(GMLAN, GMLAN_IDO, service=0x10)
 
@@ -159,11 +154,6 @@ class GMLAN_RFRD(Packet):
                          lambda pkt: pkt.subfunction == 0x02)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_RFRD.subfunction%")
-
 
 bind_layers(GMLAN, GMLAN_RFRD, service=0x12)
 
@@ -177,11 +167,6 @@ class GMLAN_RFRDPR(Packet):
     def answers(self, other):
         return other.__class__ == GMLAN_RFRD and \
             other.subfunction == self.subfunction
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_RFRDPR.subfunction%")
 
 
 bind_layers(GMLAN, GMLAN_RFRDPR, service=0x52)
@@ -305,11 +290,6 @@ class GMLAN_RDBI(Packet):
         XByteEnumField('dataIdentifier', 0, dataIdentifiers)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_RDBI.dataIdentifier%")
-
 
 bind_layers(GMLAN, GMLAN_RDBI, service=0x1A)
 
@@ -319,12 +299,6 @@ class GMLAN_RDBIPR(Packet):
     fields_desc = [
         XByteEnumField('dataIdentifier', 0, GMLAN_RDBI.dataIdentifiers),
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            (pkt.sprintf("%GMLAN_RDBIPR.dataIdentifier%"),
-             bytes(pkt[1].payload))
 
     def answers(self, other):
         return other.__class__ == GMLAN_RDBI and \
@@ -348,11 +322,6 @@ class GMLAN_RDBPI(Packet):
                                        dataIdentifiers))
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_RDBPI.identifiers%")
-
 
 bind_layers(GMLAN, GMLAN_RDBPI, service=0x22)
 
@@ -362,11 +331,6 @@ class GMLAN_RDBPIPR(Packet):
     fields_desc = [
         XShortEnumField('parameterIdentifier', 0, GMLAN_RDBPI.dataIdentifiers),
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_RDBPIPR.parameterIdentifier%")
 
     def answers(self, other):
         return other.__class__ == GMLAN_RDBPI and \
@@ -394,11 +358,6 @@ class GMLAN_RDBPKTI(Packet):
                          lambda pkt: pkt.subfunction > 0x0)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_RDBPKTI.subfunction%")
-
 
 bind_layers(GMLAN, GMLAN_RDBPKTI, service=0xAA)
 
@@ -419,11 +378,6 @@ class GMLAN_RMBA(Packet):
             XIntField('memoryAddress', 0)),
         XShortField('memorySize', 0),
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_RMBA.memoryAddress%")
 
 
 bind_layers(GMLAN, GMLAN_RMBA, service=0x23)
@@ -448,11 +402,6 @@ class GMLAN_RMBAPR(Packet):
     def answers(self, other):
         return other.__class__ == GMLAN_RMBA and \
             other.memoryAddress == self.memoryAddress
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            (pkt.sprintf("%GMLAN_RMBAPR.memoryAddress%"), pkt.dataRecord)
 
 
 bind_layers(GMLAN, GMLAN_RMBAPR, service=0x63)
@@ -482,15 +431,6 @@ class GMLAN_SA(Packet):
                          lambda pkt: pkt.subfunction % 2 == 0)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        if pkt.subfunction % 2 == 1:
-            return pkt.sprintf("%GMLAN.service%"), \
-                (pkt.subfunction, None)
-        else:
-            return pkt.sprintf("%GMLAN.service%"), \
-                (pkt.subfunction, pkt.securityKey)
-
 
 bind_layers(GMLAN, GMLAN_SA, service=0x27)
 
@@ -507,15 +447,6 @@ class GMLAN_SAPR(Packet):
         return other.__class__ == GMLAN_SA \
             and other.subfunction == self.subfunction
 
-    @staticmethod
-    def get_log(pkt):
-        if pkt.subfunction % 2 == 0:
-            return pkt.sprintf("%GMLAN.service%"), \
-                (pkt.subfunction, None)
-        else:
-            return pkt.sprintf("%GMLAN.service%"), \
-                (pkt.subfunction, pkt.securitySeed)
-
 
 bind_layers(GMLAN, GMLAN_SAPR, service=0x67)
 
@@ -528,11 +459,6 @@ class GMLAN_DDM(Packet):
         StrField('PIDData', b'\x00\x00')
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            (pkt.sprintf("%GMLAN_DDM.DPIDIdentifier%"), pkt.PIDData)
-
 
 bind_layers(GMLAN, GMLAN_DDM, service=0x2C)
 
@@ -542,11 +468,6 @@ class GMLAN_DDMPR(Packet):
     fields_desc = [
         XByteField('DPIDIdentifier', 0)
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_DDMPR.DPIDIdentifier%")
 
     def answers(self, other):
         return other.__class__ == GMLAN_DDM \
@@ -574,11 +495,6 @@ class GMLAN_DPBA(Packet):
         XByteField('memorySize', 0),
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            (pkt.parameterIdentifier, pkt.memoryAddress, pkt.memorySize)
-
 
 bind_layers(GMLAN, GMLAN_DPBA, service=0x2D)
 
@@ -588,10 +504,6 @@ class GMLAN_DPBAPR(Packet):
     fields_desc = [
         XShortField('parameterIdentifier', 0),
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), pkt.parameterIdentifier
 
     def answers(self, other):
         return other.__class__ == GMLAN_DPBA \
@@ -617,11 +529,6 @@ class GMLAN_RD(Packet):
             ],
             XIntField('memorySize', 0))
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            (pkt.dataFormatIdentifier, pkt.memorySize)
 
 
 bind_layers(GMLAN, GMLAN_RD, service=0x34)
@@ -649,12 +556,6 @@ class GMLAN_TD(Packet):
         StrField("dataRecord", b"")
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            (pkt.sprintf("%GMLAN_TD.subfunction%"), pkt.startingAddress,
-             pkt.dataRecord)
-
 
 bind_layers(GMLAN, GMLAN_TD, service=0x36)
 
@@ -667,11 +568,6 @@ class GMLAN_WDBI(Packet):
         StrField("dataRecord", b'')
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            (pkt.sprintf("%GMLAN_WDBI.dataIdentifier%"), pkt.dataRecord)
-
 
 bind_layers(GMLAN, GMLAN_WDBI, service=0x3B)
 
@@ -681,11 +577,6 @@ class GMLAN_WDBIPR(Packet):
     fields_desc = [
         XByteEnumField('dataIdentifier', 0, GMLAN_RDBI.dataIdentifiers)
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_WDBIPR.dataIdentifier%")
 
     def answers(self, other):
         return other.__class__ == GMLAN_WDBI \
@@ -714,11 +605,6 @@ class GMLAN_RPSPR(Packet):
         ByteEnumField('programmedState', 0, programmedStates),
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_RPSPR.programmedState%")
-
 
 bind_layers(GMLAN, GMLAN_RPSPR, service=0xE2)
 
@@ -735,11 +621,6 @@ class GMLAN_PM(Packet):
         ByteEnumField('subfunction', 0, subfunctions),
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_PM.subfunction%")
-
 
 bind_layers(GMLAN, GMLAN_PM, service=0xA5)
 
@@ -755,11 +636,6 @@ class GMLAN_RDI(Packet):
     fields_desc = [
         ByteEnumField('subfunction', 0, subfunctions)
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_RDI.subfunction%")
 
 
 bind_layers(GMLAN, GMLAN_RDI, service=0xA9)
@@ -806,11 +682,6 @@ class GMLAN_DC(Packet):
         StrFixedLenField('CPIDControlBytes', b"", 5)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_DC.CPIDNumber%")
-
 
 bind_layers(GMLAN, GMLAN_DC, service=0xAE)
 
@@ -820,11 +691,6 @@ class GMLAN_DCPR(Packet):
     fields_desc = [
         XByteField('CPIDNumber', 0)
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            pkt.sprintf("%GMLAN_DCPR.CPIDNumber%")
 
     def answers(self, other):
         return other.__class__ == GMLAN_DC \
@@ -858,12 +724,6 @@ class GMLAN_NR(Packet):
         ByteEnumField('returnCode', 0, negativeResponseCodes),
         ShortField('deviceControlLimitExceeded', 0)
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%GMLAN.service%"), \
-            (pkt.sprintf("%GMLAN_NR.requestServiceId%"),
-             pkt.sprintf("%GMLAN_NR.returnCode%"))
 
     def answers(self, other):
         return self.requestServiceId == other.service and \

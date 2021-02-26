@@ -30,6 +30,8 @@ from scapy.error import Scapy_Exception, log_interactive
 from scapy.contrib.automotive.gm.gmlanutils import GMLAN_GetSecurityAccess, \
     GMLAN_InitDiagnostics, GMLAN_TesterPresentSender, GMLAN_RequestDownload
 
+from scapy.contrib.automotive.gm.gmlan_ecu_states import *  # noqa: F401, F403
+
 __all__ = ["GMLAN_Scanner", "GMLAN_ServiceEnumerator", "GMLAN_RDBIEnumerator",
            "GMLAN_RDBPIEnumerator", "GMLAN_RMBAEnumerator",
            "GMLAN_TPEnumerator", "GMLAN_IDOEnumerator", "GMLAN_PMEnumerator",

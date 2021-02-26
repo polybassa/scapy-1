@@ -19,7 +19,7 @@ from scapy.config import conf
 from scapy.error import log_loading
 from scapy.utils import PeriodicSenderThread
 from scapy.contrib.isotp import ISOTP
-from scapy.compat import Dict, Union, Tuple, Any
+from scapy.compat import Dict, Union
 
 """
 UDS
@@ -132,12 +132,6 @@ class UDS_DSC(Packet):
         ByteEnumField('diagnosticSessionType', 0, diagnosticSessionTypes)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        # type: (UDS_DSC) -> Tuple[str, Any]
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_DSC.diagnosticSessionType%")
-
 
 bind_layers(UDS, UDS_DSC, service=0x10)
 
@@ -153,11 +147,6 @@ class UDS_DSCPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_DSC and \
             other.diagnosticSessionType == self.diagnosticSessionType
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_DSCPR.diagnosticSessionType%")
 
 
 bind_layers(UDS, UDS_DSCPR, service=0x50)
@@ -179,11 +168,6 @@ class UDS_ER(Packet):
         ByteEnumField('resetType', 0, resetTypes)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_ER.resetType%")
-
 
 bind_layers(UDS, UDS_ER, service=0x11)
 
@@ -198,11 +182,6 @@ class UDS_ERPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_ER
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_ER.resetType%")
 
 
 bind_layers(UDS, UDS_ERPR, service=0x51)
@@ -219,15 +198,6 @@ class UDS_SA(Packet):
                          lambda pkt: pkt.securityAccessType % 2 == 0)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        if pkt.securityAccessType % 2 == 1:
-            return pkt.sprintf("%UDS.service%"),\
-                (pkt.securityAccessType, None)
-        else:
-            return pkt.sprintf("%UDS.service%"),\
-                (pkt.securityAccessType, pkt.securityKey)
-
 
 bind_layers(UDS, UDS_SA, service=0x27)
 
@@ -243,15 +213,6 @@ class UDS_SAPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_SA \
             and other.securityAccessType == self.securityAccessType
-
-    @staticmethod
-    def get_log(pkt):
-        if pkt.securityAccessType % 2 == 0:
-            return pkt.sprintf("%UDS.service%"),\
-                (pkt.securityAccessType, None)
-        else:
-            return pkt.sprintf("%UDS.service%"),\
-                (pkt.securityAccessType, pkt.securitySeed)
 
 
 bind_layers(UDS, UDS_SAPR, service=0x67)
@@ -294,11 +255,6 @@ class UDS_CC(Packet):
                       15: 'Disable/Enable network'})
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_CC.controlType%")
-
 
 bind_layers(UDS, UDS_CC, service=0x28)
 
@@ -313,11 +269,6 @@ class UDS_CCPR(Packet):
         return other.__class__ == UDS_CC \
             and other.controlType == self.controlType
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_CCPR.controlType%")
-
 
 bind_layers(UDS, UDS_CCPR, service=0x68)
 
@@ -328,10 +279,6 @@ class UDS_TP(Packet):
     fields_desc = [
         ByteField('subFunction', 0)
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.subFunction
 
 
 bind_layers(UDS, UDS_TP, service=0x3E)
@@ -345,10 +292,6 @@ class UDS_TPPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_TP
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.zeroSubFunction
 
 
 bind_layers(UDS, UDS_TPPR, service=0x7E)
@@ -400,10 +343,6 @@ class UDS_SDT(Packet):
         StrField('securityDataRequestRecord', b"")
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.securityDataRequestRecord
-
 
 bind_layers(UDS, UDS_SDT, service=0x84)
 
@@ -416,10 +355,6 @@ class UDS_SDTPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_SDT
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.securityDataResponseRecord
 
 
 bind_layers(UDS, UDS_SDTPR, service=0xC4)
@@ -438,11 +373,6 @@ class UDS_CDTCS(Packet):
         StrField('DTCSettingControlOptionRecord', b"")
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_CDTCS.DTCSettingType%")
-
 
 bind_layers(UDS, UDS_CDTCS, service=0x85)
 
@@ -455,11 +385,6 @@ class UDS_CDTCSPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_CDTCS
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_CDTCSPR.DTCSettingType%")
 
 
 bind_layers(UDS, UDS_CDTCSPR, service=0xC5)
@@ -521,11 +446,6 @@ class UDS_LC(Packet):
                          lambda pkt: pkt.linkControlType == 0x2)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS.linkControlType%")
-
 
 bind_layers(UDS, UDS_LC, service=0x87)
 
@@ -539,11 +459,6 @@ class UDS_LCPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_LC \
             and other.linkControlType == self.linkControlType
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS.linkControlType%")
 
 
 bind_layers(UDS, UDS_LCPR, service=0xC7)
@@ -559,11 +474,6 @@ class UDS_RDBI(Packet):
                                        dataIdentifiers))
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_RDBI.identifiers%")
-
 
 bind_layers(UDS, UDS_RDBI, service=0x22)
 
@@ -578,11 +488,6 @@ class UDS_RDBIPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_RDBI \
             and self.dataIdentifier in other.identifiers
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_RDBIPR.dataIdentifier%")
 
 
 bind_layers(UDS, UDS_RDBIPR, service=0x62)
@@ -612,12 +517,6 @@ class UDS_RMBA(Packet):
                          lambda pkt: pkt.memorySizeLen == 4),
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            (getattr(pkt, "memoryAddress%d" % pkt.memoryAddressLen),
-             getattr(pkt, "memorySize%d" % pkt.memorySizeLen))
-
 
 bind_layers(UDS, UDS_RMBA, service=0x23)
 
@@ -630,10 +529,6 @@ class UDS_RMBAPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_RMBA
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.dataRecord
 
 
 bind_layers(UDS, UDS_RMBAPR, service=0x63)
@@ -744,11 +639,6 @@ class UDS_WDBI(Packet):
                         UDS_RDBI.dataIdentifiers)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_WDBI.dataIdentifier%")
-
 
 bind_layers(UDS, UDS_WDBI, service=0x2E)
 
@@ -763,11 +653,6 @@ class UDS_WDBIPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_WDBI \
             and other.dataIdentifier == self.dataIdentifier
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            pkt.sprintf("%UDS_WDBIPR.dataIdentifier%")
 
 
 bind_layers(UDS, UDS_WDBIPR, service=0x6E)
@@ -798,12 +683,6 @@ class UDS_WMBA(Packet):
         StrField('dataRecord', b'', fmt="B"),
 
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        addr = getattr(pkt, "memoryAddress%d" % pkt.memoryAddressLen)
-        size = getattr(pkt, "memorySize%d" % pkt.memorySizeLen)
-        return pkt.sprintf("%UDS.service%"), (addr, size, pkt.dataRecord)
 
 
 bind_layers(UDS, UDS_WMBA, service=0x3D)
@@ -837,12 +716,6 @@ class UDS_WMBAPR(Packet):
             and other.memorySizeLen == self.memorySizeLen \
             and other.memoryAddressLen == self.memoryAddressLen
 
-    @staticmethod
-    def get_log(pkt):
-        addr = getattr(pkt, "memoryAddress%d" % pkt.memoryAddressLen)
-        size = getattr(pkt, "memorySize%d" % pkt.memorySizeLen)
-        return pkt.sprintf("%UDS.service%"), (addr, size)
-
 
 bind_layers(UDS, UDS_WMBAPR, service=0x7D)
 
@@ -856,12 +729,6 @@ class UDS_CDTCI(Packet):
         ByteField('groupOfDTCLowByte', 0),
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), (pkt.groupOfDTCHighByte,
-                                              pkt.groupOfDTCMiddleByte,
-                                              pkt.groupOfDTCLowByte)
-
 
 bind_layers(UDS, UDS_CDTCI, service=0x14)
 
@@ -871,10 +738,6 @@ class UDS_CDTCIPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_CDTCI
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), None
 
 
 bind_layers(UDS, UDS_CDTCIPR, service=0x54)
@@ -929,10 +792,6 @@ class UDS_RDTCI(Packet):
                          lambda pkt: pkt.reportType in [0x6, 0x10])
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), repr(pkt)
-
 
 bind_layers(UDS, UDS_RDTCI, service=0x19)
 
@@ -971,10 +830,6 @@ class UDS_RDTCIPR(Packet):
         return other.__class__ == UDS_RDTCI \
             and other.reportType == self.reportType
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), repr(pkt)
-
 
 bind_layers(UDS, UDS_RDTCIPR, service=0x59)
 
@@ -994,12 +849,6 @@ class UDS_RC(Packet):
         XShortEnumField('routineIdentifier', 0, routineControlIdentifiers)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"),\
-            (pkt.routineControlType,
-             pkt.routineIdentifier)
-
 
 bind_layers(UDS, UDS_RC, service=0x31)
 
@@ -1016,12 +865,6 @@ class UDS_RCPR(Packet):
         return other.__class__ == UDS_RC \
             and other.routineControlType == self.routineControlType \
             and other.routineIdentifier == self.routineIdentifier
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"),\
-            (pkt.routineControlType,
-             pkt.routineIdentifier)
 
 
 bind_layers(UDS, UDS_RCPR, service=0x71)
@@ -1055,12 +898,6 @@ class UDS_RD(Packet):
                          lambda pkt: pkt.memorySizeLen == 4)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        addr = getattr(pkt, "memoryAddress%d" % pkt.memoryAddressLen)
-        size = getattr(pkt, "memorySize%d" % pkt.memorySizeLen)
-        return pkt.sprintf("%UDS.service%"), (addr, size)
-
 
 bind_layers(UDS, UDS_RD, service=0x34)
 
@@ -1075,10 +912,6 @@ class UDS_RDPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_RD
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.memorySizeLen
 
 
 bind_layers(UDS, UDS_RDPR, service=0x74)
@@ -1110,12 +943,6 @@ class UDS_RU(Packet):
                          lambda pkt: pkt.memorySizeLen == 4)
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        addr = getattr(pkt, "memoryAddress%d" % pkt.memoryAddressLen)
-        size = getattr(pkt, "memorySize%d" % pkt.memorySizeLen)
-        return pkt.sprintf("%UDS.service%"), (addr, size)
-
 
 bind_layers(UDS, UDS_RU, service=0x35)
 
@@ -1131,10 +958,6 @@ class UDS_RUPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_RU
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.memorySizeLen
-
 
 bind_layers(UDS, UDS_RUPR, service=0x75)
 
@@ -1146,11 +969,6 @@ class UDS_TD(Packet):
         ByteField('blockSequenceCounter', 0),
         StrField('transferRequestParameterRecord', b"", fmt="B")
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"),\
-            (pkt.blockSequenceCounter, pkt.transferRequestParameterRecord)
 
 
 bind_layers(UDS, UDS_TD, service=0x36)
@@ -1167,10 +985,6 @@ class UDS_TDPR(Packet):
         return other.__class__ == UDS_TD \
             and other.blockSequenceCounter == self.blockSequenceCounter
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.blockSequenceCounter
-
 
 bind_layers(UDS, UDS_TDPR, service=0x76)
 
@@ -1181,11 +995,6 @@ class UDS_RTE(Packet):
     fields_desc = [
         StrField('transferRequestParameterRecord', b"", fmt="B")
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"),\
-            pkt.transferRequestParameterRecord
 
 
 bind_layers(UDS, UDS_RTE, service=0x37)
@@ -1199,11 +1008,6 @@ class UDS_RTEPR(Packet):
 
     def answers(self, other):
         return other.__class__ == UDS_RTE
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"),\
-            pkt.transferResponseParameterRecord
 
 
 bind_layers(UDS, UDS_RTEPR, service=0x77)
@@ -1249,11 +1053,6 @@ class UDS_RFT(Packet):
                          lambda p: UDS_RFT._contains_file_size(p))
     ]
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"),\
-            pkt.modeOfOperation
-
 
 bind_layers(UDS, UDS_RFT, service=0x38)
 
@@ -1295,11 +1094,6 @@ class UDS_RFTPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_RFT
 
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"),\
-            pkt.modeOfOperation
-
 
 bind_layers(UDS, UDS_RFTPR, service=0x78)
 
@@ -1313,10 +1107,6 @@ class UDS_IOCBI(Packet):
         ByteField('controlOptionRecord', 0),
         StrField('controlEnableMaskRecord', b"", fmt="B")
     ]
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.dataIdentifier
 
 
 bind_layers(UDS, UDS_IOCBI, service=0x2F)
@@ -1332,10 +1122,6 @@ class UDS_IOCBIPR(Packet):
     def answers(self, other):
         return other.__class__ == UDS_IOCBI \
             and other.dataIdentifier == self.dataIdentifier
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), pkt.dataIdentifier
 
 
 bind_layers(UDS, UDS_IOCBIPR, service=0x6F)
@@ -1400,12 +1186,6 @@ class UDS_NR(Packet):
         return self.requestServiceId == other.service and \
             (self.negativeResponseCode != 0x78 or
              conf.contribs['UDS']['treat-response-pending-as-answer'])
-
-    @staticmethod
-    def get_log(pkt):
-        return pkt.sprintf("%UDS.service%"), \
-            (pkt.sprintf("%UDS_NR.requestServiceId%"),
-             pkt.sprintf("%UDS_NR.negativeResponseCode%"))
 
 
 bind_layers(UDS, UDS_NR, service=0x7f)

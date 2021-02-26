@@ -30,7 +30,7 @@ from scapy.contrib.automotive.uds import UDS, UDS_NR, UDS_DSC, UDS_TP, \
     UDS_RDBI, UDS_WDBI, UDS_SA, UDS_RC, UDS_IOCBI, UDS_RMBA, UDS_ER, \
     UDS_TesterPresentSender, UDS_CC, UDS_RDBPI, UDS_RD, UDS_TD
 
-from scapy.contrib.automotive.uds_ecu_states import *
+from scapy.contrib.automotive.uds_ecu_states import *  # noqa: F401, F403
 
 
 # Definition outside the class UDS_RMBASequentialEnumerator
@@ -253,7 +253,7 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
         return (UDS(service=x) for x in range(0x100) if not x & 0x40)
 
     def execute(self, socket, state, **kwargs):
-        # type: (_SocketUnion, EcuState, Any) -> None  # noqa: E501
+        # type: (_SocketUnion, EcuState, Any) -> None
 
         # remove args from kwargs since they will be overwritten
         kwargs.pop("exit_if_service_not_supported", False)

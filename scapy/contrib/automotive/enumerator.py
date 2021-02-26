@@ -154,7 +154,7 @@ class AutomotiveTestCaseABC(ABC):
 
     @abstractmethod
     def execute(self, socket, state, **kwargs):
-        # type: (_SocketUnion, EcuState, Any) -> None  # noqa: E501
+        # type: (_SocketUnion, EcuState, Any) -> None
         raise NotImplementedError()
 
     @abstractmethod
@@ -525,8 +525,11 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         pass
 
-    def execute(self, socket, state, timeout=1, execution_time=1200, **kwargs):
-        # type: (_SocketUnion, EcuState, int, int, Any) -> None  # noqa: E501
+    def execute(self, socket, state, **kwargs):
+        # type: (_SocketUnion, EcuState, Any) -> None
+        timeout = kwargs.pop('timeout', 1)
+        execution_time = kwargs.pop("execution_time", 1200)
+
         it = self.__get_request_iterator(state, **kwargs)
 
         # log_interactive.debug("[i] Using iterator %s in state %s", it, state)

@@ -331,6 +331,22 @@ class Ecu(object):
         # type: () -> str
         return repr(self.state)
 
+    @staticmethod
+    def extend_pkt_with_logging(cls):
+        # type: (Type[Packet]) -> Callable[[Callable[[Packet], Tuple[str, Any]]], None]  # noqa: E501
+        """
+        Decorator to add a function as 'get_log' methode to a given
+        class. This allows dynamic modifications and additions to a protocol.
+        :param cls: A packet class to be modified
+        :return: Decorator function
+        """
+
+        def decorator_function(f):
+            # type: (Callable[[Packet], Tuple[str, Any]]) -> None
+            setattr(cls, "get_log", f)
+
+        return decorator_function
+
 
 class EcuSession(DefaultSession):
     """Tracks modification to an Ecu 'on-the-flow'.

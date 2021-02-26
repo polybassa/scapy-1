@@ -23,7 +23,9 @@ conf.contribs["CAN"]["swap-bytes"] = True
 
 load_contrib("automotive.ecu", globals_dict=globals())
 from scapy.contrib.automotive.uds_ecu_states import *
+from scapy.contrib.automotive.uds_logging import *
 from scapy.contrib.automotive.gm.gmlan_ecu_states import *
+from scapy.contrib.automotive.gm.gmlan_logging import *
 
 + EcuState Basic checks
 

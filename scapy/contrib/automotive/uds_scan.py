@@ -71,7 +71,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGenerator):
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
         session_range = kwargs.pop("session_range", range(2, 0x100))
-        return list(UDS() / UDS_DSC(diagnosticSessionType=session_range))
+        return UDS() / UDS_DSC(diagnosticSessionType=session_range)
 
     def execute(self, socket, state, timeout=3, execution_time=1200, **kwargs):
         # type: (_SocketUnion, EcuState, int, int, Any) -> None  # noqa: E501
@@ -250,6 +250,16 @@ class UDS_ServiceEnumerator(UDS_Enumerator):
         # Only generate services with unset positive response bit (0x40)
         return (UDS(service=x) for x in range(0x100) if not x & 0x40)
 
+    def execute(self, socket, state, **kwargs):
+        # type: (_SocketUnion, EcuState, Any) -> None  # noqa: E501
+
+        # remove args from kwargs since they will be overwritten
+        kwargs.pop("exit_if_service_not_supported", False)
+
+        super(UDS_ServiceEnumerator, self).execute(
+            socket, state,
+            exit_if_service_not_supported=False, **kwargs)
+
     @staticmethod
     def _get_table_entry(tup):
         # type: (_AutomotiveTestCaseScanResult) -> Tuple[EcuState, str, str]
@@ -308,11 +318,11 @@ class UDS_RDBISelectiveEnumerator(StagedAutomotiveTestCase):
              for p in rdbi_random.results_with_positive_response]
 
         scan_range = UDS_RDBISelectiveEnumerator. \
-            _poi_to_scan_range(identifiers_with_positive_response)
+            points_to_blocks(identifiers_with_positive_response)
         return {"scan_range": scan_range}
 
     @staticmethod
-    def _poi_to_scan_range(pois):
+    def points_to_blocks(pois):
         # type: (Sequence[int]) -> Iterable[int]
 
         if len(pois) == 0:
@@ -662,21 +672,24 @@ class UDS_RCStartEnumerator(UDS_RCEnumerator):
 
 
 class UDS_RCSelectiveEnumerator(StagedAutomotiveTestCase):
-    _left_right_width = 132
+    # Used to expand points to both sites
+    # So, the total block size will be 132 * 2 = 264
+    expansion_width = 253
 
     @staticmethod
-    def points_to_ranges(points_of_interest, range_size=_left_right_width):
-        # type: (Iterable[int], int) -> Iterable[int]
+    def points_to_ranges(pois):
+        # type: (Iterable[int]) -> Iterable[int]
+        expansion_width = UDS_RCSelectiveEnumerator.expansion_width
         generators = []
-        for identifier in points_of_interest:
-            start = max(identifier - range_size, 0)
-            end = min(identifier + range_size + 1, 0x10000)
+        for identifier in pois:
+            start = max(identifier - expansion_width, 0)
+            end = min(identifier + expansion_width + 1, 0x10000)
             generators.append(range(start, end))
         ranges_with_overlaps = itertools.chain.from_iterable(generators)
         return sorted(set(ranges_with_overlaps))
 
     @staticmethod
-    def __connector_start_to_rest(rc_start, rc_stop):
+    def __connector_start_to_rest(rc_start, _rc_stop):
         # type: (AutomotiveTestCaseABC, AutomotiveTestCaseABC) -> Dict[str, Any]  # noqa: E501
         rc_start = cast(UDS_Enumerator, rc_start)
         identifiers_with_pr = [resp.routineIdentifier for _, _, resp, _, _

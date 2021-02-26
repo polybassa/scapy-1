@@ -19,8 +19,7 @@ from scapy.config import conf
 from scapy.error import log_loading
 from scapy.utils import PeriodicSenderThread
 from scapy.contrib.isotp import ISOTP
-from scapy.contrib.automotive.ecu import EcuStateModifier, EcuState
-from scapy.compat import Dict, Union, Tuple, Any, Optional
+from scapy.compat import Dict, Union, Tuple, Any
 
 """
 UDS
@@ -143,7 +142,7 @@ class UDS_DSC(Packet):
 bind_layers(UDS, UDS_DSC, service=0x10)
 
 
-class UDS_DSCPR(Packet, EcuStateModifier):
+class UDS_DSCPR(Packet):
     name = 'DiagnosticSessionControlPositiveResponse'
     fields_desc = [
         ByteEnumField('diagnosticSessionType', 0,
@@ -154,10 +153,6 @@ class UDS_DSCPR(Packet, EcuStateModifier):
     def answers(self, other):
         return other.__class__ == UDS_DSC and \
             other.diagnosticSessionType == self.diagnosticSessionType
-
-    def modify_ecu_state(self, state, req=None):
-        # type: (EcuState, Optional[Packet]) -> None
-        state.session = self.diagnosticSessionType
 
     @staticmethod
     def get_log(pkt):
@@ -193,7 +188,7 @@ class UDS_ER(Packet):
 bind_layers(UDS, UDS_ER, service=0x11)
 
 
-class UDS_ERPR(Packet, EcuStateModifier):
+class UDS_ERPR(Packet):
     name = 'ECUResetPositiveResponse'
     fields_desc = [
         ByteEnumField('resetType', 0, UDS_ER.resetTypes),
@@ -203,11 +198,6 @@ class UDS_ERPR(Packet, EcuStateModifier):
 
     def answers(self, other):
         return other.__class__ == UDS_ER
-
-    def modify_ecu_state(self, state, req=None):
-        # type: (EcuState, Optional[Packet]) -> None
-        state.reset()
-        state.session = 1
 
     @staticmethod
     def get_log(pkt):
@@ -242,7 +232,7 @@ class UDS_SA(Packet):
 bind_layers(UDS, UDS_SA, service=0x27)
 
 
-class UDS_SAPR(Packet, EcuStateModifier):
+class UDS_SAPR(Packet):
     name = 'SecurityAccessPositiveResponse'
     fields_desc = [
         ByteField('securityAccessType', 0),
@@ -253,11 +243,6 @@ class UDS_SAPR(Packet, EcuStateModifier):
     def answers(self, other):
         return other.__class__ == UDS_SA \
             and other.securityAccessType == self.securityAccessType
-
-    def modify_ecu_state(self, state, req=None):
-        # type: (EcuState, Optional[Packet]) -> None
-        if self.securityAccessType % 2 == 0:
-            state.security_level = self.securityAccessType
 
     @staticmethod
     def get_log(pkt):
@@ -318,7 +303,7 @@ class UDS_CC(Packet):
 bind_layers(UDS, UDS_CC, service=0x28)
 
 
-class UDS_CCPR(Packet, EcuStateModifier):
+class UDS_CCPR(Packet):
     name = 'CommunicationControlPositiveResponse'
     fields_desc = [
         ByteEnumField('controlType', 0, UDS_CC.controlTypes)
@@ -327,10 +312,6 @@ class UDS_CCPR(Packet, EcuStateModifier):
     def answers(self, other):
         return other.__class__ == UDS_CC \
             and other.controlType == self.controlType
-
-    def modify_ecu_state(self, state, req=None):
-        # type: (EcuState, Optional[Packet]) -> None
-        state.communication_control = self.controlType
 
     @staticmethod
     def get_log(pkt):
@@ -356,7 +337,7 @@ class UDS_TP(Packet):
 bind_layers(UDS, UDS_TP, service=0x3E)
 
 
-class UDS_TPPR(Packet, EcuStateModifier):
+class UDS_TPPR(Packet):
     name = 'TesterPresentPositiveResponse'
     fields_desc = [
         ByteField('zeroSubFunction', 0)
@@ -364,10 +345,6 @@ class UDS_TPPR(Packet, EcuStateModifier):
 
     def answers(self, other):
         return other.__class__ == UDS_TP
-
-    def modify_ecu_state(self, state, req=None):
-        # type: (EcuState, Optional[Packet]) -> None
-        state.tp = 1
 
     @staticmethod
     def get_log(pkt):
@@ -712,7 +689,7 @@ bind_layers(UDS, UDS_RDBPI, service=0x2A)
 
 
 # TODO: Implement correct scaling here, instead of using just the dataRecord
-class UDS_RDBPIPR(Packet, EcuStateModifier):
+class UDS_RDBPIPR(Packet):
     name = 'ReadDataByPeriodicIdentifierPositiveResponse'
     fields_desc = [
         ByteField('periodicDataIdentifier', 0),
@@ -722,10 +699,6 @@ class UDS_RDBPIPR(Packet, EcuStateModifier):
     def answers(self, other):
         return other.__class__ == UDS_RDBPI \
             and other.periodicDataIdentifier == self.periodicDataIdentifier
-
-    def modify_ecu_state(self, state, req=None):
-        # type: (EcuState, Optional[Packet]) -> None
-        state.pdid = self.periodicDataIdentifier
 
 
 bind_layers(UDS, UDS_RDBPIPR, service=0x6A)

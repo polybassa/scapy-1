@@ -20,8 +20,7 @@ from scapy.utils import make_lined_table, SingleConversationSocket, EDecimal
 import scapy.modules.six as six
 from scapy.supersocket import SuperSocket
 from scapy.packet import Packet
-from scapy.contrib.automotive.ecu import EcuState, EcuStateModifier, \
-    EcuResponse
+from scapy.contrib.automotive.ecu import EcuState, EcuResponse
 
 if six.PY34:
     from abc import ABC, abstractmethod
@@ -199,9 +198,8 @@ class StateGenerator(ABC):
         except IndexError:
             return None
 
-        if resp is not None and EcuStateModifier.modifies_ecu_state(resp):
-            new_state = EcuStateModifier.get_modified_ecu_state(
-                resp, state, req=req)
+        if resp is not None and EcuState.is_modifier_pkt(resp):
+            new_state = EcuState.get_modified_ecu_state(resp, req, state)
             if new_state == state:
                 return None
             else:
@@ -616,10 +614,10 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
         else:
             self._retry_pkt = None
 
-        if EcuStateModifier.modifies_ecu_state(response):
+        if EcuState.is_modifier_pkt(response):
             state = self._results[-1].state
-            if state != EcuStateModifier.get_modified_ecu_state(
-                    response, state, req=request):
+            if state != EcuState.get_modified_ecu_state(
+                    response, request, state):
                 log_interactive.debug(
                     "[-] Exit execute. Ecu state was modified!")
                 return True

@@ -44,7 +44,9 @@ scapy/contrib/automotive/graph.py
 scapy/contrib/automotive/profiler.py
 scapy/contrib/automotive/ecu.py
 scapy/contrib/automotive/uds_scan.py
+scapy/contrib/automotive/uds_ecu_states.py
 scapy/contrib/automotive/gm/gmlanscan.py
+scapy/contrib/automotive/gm/gmlan_ecu_states.py
 scapy/contrib/automotive/gm/gmlanutils.py
 scapy/contrib/automotive/bmw/hsfz.py
 scapy/contrib/automotive/doip.py

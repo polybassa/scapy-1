@@ -30,6 +30,8 @@ from scapy.contrib.automotive.uds import UDS, UDS_NR, UDS_DSC, UDS_TP, \
     UDS_RDBI, UDS_WDBI, UDS_SA, UDS_RC, UDS_IOCBI, UDS_RMBA, UDS_ER, \
     UDS_TesterPresentSender, UDS_CC, UDS_RDBPI, UDS_RD, UDS_TD
 
+from scapy.contrib.automotive.uds_ecu_states import *
+
 
 # Definition outside the class UDS_RMBASequentialEnumerator
 # to allow pickling

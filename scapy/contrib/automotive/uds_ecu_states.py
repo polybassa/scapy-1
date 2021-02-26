@@ -7,7 +7,7 @@
 # scapy.contrib.status = library
 
 from scapy.contrib.automotive.uds import UDS_DSCPR, UDS_ERPR, UDS_SAPR, \
-    UDS_RDBPIPR, UDS_CCPR, UDS_TPPR
+    UDS_RDBPIPR, UDS_CCPR, UDS_TPPR, UDS_RDPR, UDS_RTEPR
 from scapy.packet import Packet
 from scapy.contrib.automotive.ecu import EcuState
 
@@ -48,3 +48,17 @@ def UDS_TPPR_modify_ecu_state(self, req, state):
 def UDS_RDBPIPR_modify_ecu_state(self, req, state):
     # type: (Packet, Packet, EcuState) -> None
     state.pdid = self.periodicDataIdentifier  # type: ignore
+
+
+@EcuState.extend_pkt_with_modifier(UDS_RDPR)
+def UDS_RDPR_modify_ecu_state(self, req, state):
+    # type: (Packet, Packet, EcuState) -> None
+    oldstr = getattr(state, "req_download", "")
+    newstr = str((req.memoryAddress1, req.memorySize4))
+    state.req_download = oldstr if newstr in oldstr else oldstr + newstr
+
+
+@EcuState.extend_pkt_with_modifier(UDS_RTEPR)
+def UDS_RTEPR_modify_ecu_state(self, req, state):
+    # type: (Packet, Packet, EcuState) -> None
+    state.req_download = ""

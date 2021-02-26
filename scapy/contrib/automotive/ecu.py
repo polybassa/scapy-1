@@ -142,7 +142,7 @@ class EcuState(object):
     def extend_pkt_with_modifier(cls):
         # type: (Type[Packet]) -> Callable[[Callable[[Packet, Packet, EcuState], None]], None]  # noqa: E501
         """
-        Decorator to add a function as 'modify_ecu_state' methode to a given
+        Decorator to add a function as 'modify_ecu_state' method to a given
         class. This allows dynamic modifications and additions to a protocol.
         :param cls: A packet class to be modified
         :return: Decorator function
@@ -178,7 +178,7 @@ class EcuState(object):
                         the state of the Ecu
         :param state: The previous/current EcuState
         :param modify_in_place: If True, the given EcuState will be modified
-        :return: The modified EcuState as copy
+        :return: The modified EcuState or a modified copy
         """
         if modify_in_place:
             new_state = state
@@ -283,7 +283,11 @@ class Ecu(object):
         for layer in pkt.layers():
             if not hasattr(layer, "get_log"):
                 continue
-            log_key, log_value = layer.get_log(pkt)
+            try:
+                log_key, log_value = layer.get_log(pkt)
+            except TypeError:
+                log_key, log_value = layer.get_log.im_func(pkt)
+
             self.log[log_key].append((pkt.time, log_value))
 
     def __update_supported_responses(self, pkt):
@@ -375,7 +379,7 @@ class Ecu(object):
     def extend_pkt_with_logging(cls):
         # type: (Type[Packet]) -> Callable[[Callable[[Packet], Tuple[str, Any]]], None]  # noqa: E501
         """
-        Decorator to add a function as 'get_log' methode to a given
+        Decorator to add a function as 'get_log' method to a given
         class. This allows dynamic modifications and additions to a protocol.
         :param cls: A packet class to be modified
         :return: Decorator function

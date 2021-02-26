@@ -673,7 +673,7 @@ class UDS_RCStartEnumerator(UDS_RCEnumerator):
 
 class UDS_RCSelectiveEnumerator(StagedAutomotiveTestCase):
     # Used to expand points to both sites
-    # So, the total block size will be 132 * 2 = 264
+    # So, the total block size will be 253 * 2 = 506
     expansion_width = 253
 
     @staticmethod

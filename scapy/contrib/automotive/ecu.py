@@ -197,40 +197,37 @@ class EcuState(object):
 
 class Ecu(object):
     """An Ecu object can be used to
-        - track the states of an Ecu.
-        - to log all modification to an Ecu.
-        - to extract supported responses of a real Ecu.
+        * track the states of an Ecu.
+        * to log all modification to an Ecu.
+        * to extract supported responses of a real Ecu.
 
-    Usage:
-    >>> print("This ecu logs, tracks and creates supported responses")
-    >>> my_virtual_ecu = Ecu()
-    >>> my_virtual_ecu.update(PacketList([...]))
-    >>> my_virtual_ecu.supported_responses
-    >>> print("Another ecu just tracks")
-    >>> my_tracking_ecu = Ecu(logging=False, store_supported_responses=False)
-    >>> my_tracking_ecu.update(PacketList([...]))
-    >>> print("Another ecu just logs all modifications to it")
-    >>> my_logging_ecu = Ecu(verbose=False, store_supported_responses=False)
-    >>> my_logging_ecu.update(PacketList([...]))
-    >>> my_logging_ecu.log
-    >>> print("Another ecu just creates supported responses")
-    >>> my_response_ecu = Ecu(verbose=False, logging=False)
-    >>> my_response_ecu.update(PacketList([...]))
-    >>> my_response_ecu.supported_responses
-    """
+    Example:
+        >>> print("This ecu logs, tracks and creates supported responses")
+        >>> my_virtual_ecu = Ecu()
+        >>> my_virtual_ecu.update(PacketList([...]))
+        >>> my_virtual_ecu.supported_responses
+        >>> print("Another ecu just tracks")
+        >>> my_tracking_ecu = Ecu(logging=False, store_supported_responses=False)
+        >>> my_tracking_ecu.update(PacketList([...]))
+        >>> print("Another ecu just logs all modifications to it")
+        >>> my_logging_ecu = Ecu(verbose=False, store_supported_responses=False)
+        >>> my_logging_ecu.update(PacketList([...]))
+        >>> my_logging_ecu.log
+        >>> print("Another ecu just creates supported responses")
+        >>> my_response_ecu = Ecu(verbose=False, logging=False)
+        >>> my_response_ecu.update(PacketList([...]))
+        >>> my_response_ecu.supported_responses
+
+    Parameters to initialize an Ecu object
+
+    :param logging: Turn logging on or off. Default is on.
+    :param verbose: Turn tracking on or off. Default is on.
+    :param store_supported_responses: Create a list of supported responses if True.
+    :param lookahead: Configuration for lookahead when computing supported responses
+    """    # noqa: E501
     def __init__(self, logging=True, verbose=True,
                  store_supported_responses=True, lookahead=10):
         # type: (bool, bool, bool, int) -> None
-        """
-        Initialize an Ecu object
-
-        :param logging: Turn logging on or off. Default is on.
-        :param verbose: Turn tracking on or off. Default is on.
-        :param store_supported_responses: Create list of supported responses
-                                          if True.
-        :param lookahead: Configuration for lookahead when computing supported
-                          responses
-        """
         self.state = EcuState()
         self.verbose = verbose
         self.logging = logging
@@ -242,10 +239,18 @@ class Ecu(object):
 
     def reset(self):
         # type: () -> None
+        """
+        Resets the internal state to a default EcuState.
+        """
         self.state = EcuState(session=1)
 
     def update(self, p):
         # type: (Union[Packet, PacketList]) -> None
+        """
+        Processes a Packet or a list of Packets, according to the chosen
+        configuration.
+        :param p: Packet or list of Packets
+        """
         if isinstance(p, PacketList):
             for pkt in p:
                 self.update(pkt)
@@ -256,6 +261,10 @@ class Ecu(object):
 
     def __update(self, pkt):
         # type: (Packet) -> None
+        """
+        Processes a Packet according to the chosen configuration.
+        :param pkt: Packet to be processed
+        """
         if self.verbose:
             print(repr(self), repr(pkt))
         if self.logging:
@@ -264,13 +273,29 @@ class Ecu(object):
 
     def __update_log(self, pkt):
         # type: (Packet) -> None
+        """
+        Checks if a packet or a layer of this packet supports the function
+        `get_log`. If `get_log` is supported, this function will be executed
+        and the returned log information is stored in the intern log of this
+        Ecu object.
+        :param pkt: A Packet to be processed for log information.
+        """
         for layer in pkt.layers():
-            if hasattr(layer, "get_log"):
-                log_key, log_value = layer.get_log(pkt)
-                self.log[log_key].append((pkt.time, log_value))
+            if not hasattr(layer, "get_log"):
+                continue
+            log_key, log_value = layer.get_log(pkt)
+            self.log[log_key].append((pkt.time, log_value))
 
     def __update_supported_responses(self, pkt):
         # type: (Packet) -> None
+        """
+        Stores a given packet as supported response, if a matching request
+        packet is found in a list of the latest unanswered packets. For
+        performance improvements, this list of unanswered packets only contains
+        a fixed number of packets, defined by the `lookahead` parameter of
+        this Ecu.
+        :param pkt: Packet to be processed.
+        """
         self.__unanswered_packets.append(pkt)
         reduced_plist = self.__unanswered_packets[-self.lookahead:]
         answered, unanswered = reduced_plist.sr(lookahead=self.lookahead)
@@ -300,31 +325,46 @@ class Ecu(object):
                 print("[+] ", repr(ecu_resp))
             self.__supported_responses.append(ecu_resp)
 
+    @staticmethod
+    def sort_key_func(resp):
+        # type: (EcuResponse) -> Tuple[bool, int, int, int]
+        """
+        This sorts responses in the following order:
+        1. Positive responses first
+        2. Lower ServiceIDs first
+        3. Less supported states first
+        4. Longer (more specific) responses first
+        :param resp: EcuResponse to be sorted
+        :return: Tuple as sort key
+        """
+        # TODO: Is there a more performant way, to get only the first byte
+        #       of a packet, without the need to build it?
+        return (bytes(resp.key_response)[0] == 0x7f,
+                bytes(resp.key_response)[0],
+                0xffffffff - len(resp.states or []),
+                0xffffffff - len(resp.key_response))
+
     @property
     def supported_responses(self):
         # type: () -> List[EcuResponse]
-        def sort_key_func(resp):
-            # type: (EcuResponse) -> Tuple[bool, int, int, int]
-            """
-            This sorts responses in the following order:
-            1. Positive responses first
-            2. Lower ServiceID first
-            3. Less states first
-            4. Longer (more specific) responses first
-            :param resp: EcuResponse to be sorted
-            :return: Tuple as sort key
-            """
-            return (resp.key_response.service == 0x7f,
-                    resp.key_response.service,
-                    0xffffffff - len(resp.states or []),
-                    0xffffffff - len(resp.key_response))
-
-        self.__supported_responses.sort(key=sort_key_func)
+        """
+        Returns a sorted list of supported responses. The sort is done in a way
+        to provide the best possible results, if this list of supported
+        responses is used to simulate an real world Ecu with the
+        EcuAnsweringMachine object.
+        :return:
+        """
+        self.__supported_responses.sort(key=self.sort_key_func)
         return self.__supported_responses
 
     @property
     def unanswered_packets(self):
         # type: () -> PacketList
+        """
+        A list of all unanswered packets, which were processed by this Ecu
+        object.
+        :return: PacketList of unanswered packets
+        """
         return self.__unanswered_packets
 
     def __repr__(self):
@@ -349,10 +389,19 @@ class Ecu(object):
 
 
 class EcuSession(DefaultSession):
-    """Tracks modification to an Ecu 'on-the-flow'.
+    """
+    Tracks modification to an Ecu object 'on-the-flow'.
 
-    Usage:
-    >>> sniff(session=EcuSession)
+    The parameters for the internal Ecu object are obtained from the kwargs
+    dict.
+
+    `logging`: Turn logging on or off. Default is on.
+    `verbose`: Turn tracking on or off. Default is on.
+    `store_supported_responses`: Create a list of supported responses, if True.
+
+    Example:
+        >>> sniff(session=EcuSession)
+
     """
     def __init__(self, *args, **kwargs):
         # type: (Any, Any) -> None
@@ -362,12 +411,8 @@ class EcuSession(DefaultSession):
                        store_supported_responses=kwargs.pop("store_supported_responses", True))  # noqa: E501
 
     def on_packet_received(self, pkt):
-        # type: (Optional[Union[Packet, List[Packet]]]) -> None
+        # type: (Optional[Packet]) -> None
         if not pkt:
-            return
-        if isinstance(pkt, list):
-            for p in pkt:
-                EcuSession.on_packet_received(self, p)
             return
         self.ecu.update(pkt)
         DefaultSession.on_packet_received(self, pkt)
@@ -375,33 +420,32 @@ class EcuSession(DefaultSession):
 
 class EcuResponse:
     """Encapsulates responses and the according EcuStates.
-    A list of this objects can be used to configure an Ecu_am.
+    A list of this objects can be used to configure an EcuAnsweringMachine.
     This is useful, if you want to clone the behaviour of a real Ecu.
 
-    Usage:
-    >>> EcuResponse(EcuState(session=2, security_level=2), responses=UDS()/UDS_RDBIPR(dataIdentifier=2)/Raw(b"deadbeef1"))  # noqa: E501
-    >>> EcuResponse([EcuState(session=range(2, 5), security_level=2), EcuState(session=3, security_level=5)], responses=UDS()/UDS_RDBIPR(dataIdentifier=9)/Raw(b"deadbeef4"))  # noqa: E501
-    """
+    Example:
+        >>> EcuResponse(EcuState(session=2, security_level=2), responses=UDS()/UDS_RDBIPR(dataIdentifier=2)/Raw(b"deadbeef1"))
+        >>> EcuResponse([EcuState(session=range(2, 5), security_level=2), EcuState(session=3, security_level=5)], responses=UDS()/UDS_RDBIPR(dataIdentifier=9)/Raw(b"deadbeef4"))
+
+    Initialize an EcuResponse capsule
+
+    :param state: EcuState or list of EcuStates in which this response
+                  is allowed to be sent. If no state provided, the response
+                  packet will always be send.
+    :param responses: A Packet or a list of Packet objects. By default the
+                      last packet is asked if it answers an incoming
+                      packet. This allows to send for example
+                      `requestCorrectlyReceived-ResponsePending` packets.
+    :param answers: Optional argument to provide a custom answer here:
+                    `lambda resp, req: return resp.answers(req)`
+                    This allows the modification of a response depending
+                    on a request. Custom SecurityAccess mechanisms can
+                    be implemented in this way or generic NegativeResponse
+                    messages which answers to everything can be realized
+                    in this way.
+    """   # noqa: E501
     def __init__(self, state=None, responses=Raw(b"\x7f\x10"), answers=None):
         # type: (Optional[Union[EcuState, Iterable[EcuState]]], Union[Iterable[Packet], PacketList, Packet], Optional[Callable[[Packet, Packet], bool]]) -> None  # noqa: E501
-        """
-        Initialize an EcuResponse capsule
-
-        :param state: EcuState or list of EcuStates in which this response
-                      is allowed to be sent. If no state provided, the response
-                      packet will always be send.
-        :param responses: A Packet or a list of Packet objects. By default the
-                          last packet is asked if it answers an incoming
-                          packet. This allows to send for example
-                          `requestCorrectlyReceived-ResponsePending` packets.
-        :param answers: Optional argument to provide a custom answer here:
-                        `lambda resp, req: return resp.answers(req)`
-                        This allows the modification of a response depending
-                        on a request. Custom SecurityAccess mechanisms can
-                        be implemented in this way or generic NegativeResponse
-                        messages which answers to everything can be realized
-                        in this way.
-        """
         if state is None:
             self.__states = None  # type: Optional[List[EcuState]]
         else:
@@ -498,16 +542,16 @@ conf.contribs['EcuAnsweringMachine'] = {'send_delay': 0}
 
 class EcuAnsweringMachine(AnsweringMachine):
     """AnsweringMachine which emulates the basic behaviour of a real world ECU.
-    Provide a list of ``EcuResponse`` objects to configure the behaviour of this
+    Provide a list of ``EcuResponse`` objects to configure the behaviour of a
     AnsweringMachine.
 
     Usage:
-    >>> resp = EcuResponse(session=range(0,255), security_level=0, responses=UDS() / UDS_NR(negativeResponseCode=0x7f, requestServiceId=0x10))
-    >>> sock = ISOTPSocket(can_iface, sid=0x700, did=0x600, basecls=UDS)
-    >>> answering_machine = EcuAnsweringMachine(supported_responses=[resp], main_socket=sock, basecls=UDS)
-    >>> sim = threading.Thread(target=answering_machine, kwargs={'count': 4, 'timeout':5})
-    >>> sim.start()  # noqa: E501
-    """
+        >>> resp = EcuResponse(session=range(0,255), security_level=0, responses=UDS() / UDS_NR(negativeResponseCode=0x7f, requestServiceId=0x10))
+        >>> sock = ISOTPSocket(can_iface, sid=0x700, did=0x600, basecls=UDS)
+        >>> answering_machine = EcuAnsweringMachine(supported_responses=[resp], main_socket=sock, basecls=UDS)
+        >>> sim = threading.Thread(target=answering_machine, kwargs={'count': 4, 'timeout':5})
+        >>> sim.start()
+    """  # noqa: E501
     function_name = "EcuAnsweringMachine"
     sniff_options_list = ["store", "opened_socket", "count", "filter", "prn",
                           "stop_filter", "timeout"]
@@ -559,11 +603,24 @@ class EcuAnsweringMachine(AnsweringMachine):
 
     def make_reply(self, req):
         # type: (Packet) -> PacketList
+        """
+        Checks if a given request can be answered by the internal list of
+        EcuResponses. First, it's evaluated if the internal EcuState of this
+        AnsweringMachine is supported by an EcuResponse, next it's evaluated if
+        a request answers the key_response of this EcuResponse object. The
+        first fitting EcuResponse is used. If this EcuResponse modified the
+        EcuState, the internal EcuState of this AnsweringMachine is updated,
+        and the list of response Packets of the selected EcuResponse is
+        returned. If no EcuResponse if found, a PacketList with a generic
+        NegativeResponse is returned.
+        :param req: A request packet
+        :return: A list of response packets
+        """
         if self.__supported_responses is not None:
             for resp in self.__supported_responses:
                 if not isinstance(resp, EcuResponse):
                     raise TypeError("Unsupported type for response. "
-                                    "Please use `EcuResponse` objects. ")
+                                    "Please use `EcuResponse` objects.")
 
                 if not resp.supports_state(self.__ecu_state):
                     continue
@@ -581,6 +638,13 @@ class EcuAnsweringMachine(AnsweringMachine):
 
     def send_reply(self, reply):
         # type: (PacketList) -> None
+        """
+        Sends all Packets of a EcuResponse object. This allows to send multiple
+        packets up on a request. If the list contains more than one packet,
+        a random time between each packet is waited until the next packet will
+        be sent.
+        :param reply: List of packets to be sent.
+        """
         for p in reply:
             time.sleep(conf.contribs['EcuAnsweringMachine']['send_delay'])
             if len(reply) > 1:

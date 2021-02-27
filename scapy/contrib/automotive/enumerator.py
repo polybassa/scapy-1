@@ -188,7 +188,8 @@ class TestCaseGenerator(ABC):
 
 
 class StateGenerator(ABC):
-    _edge_requests = dict()  # type: Dict[_Edge, Packet]
+    def __init__(self):
+        self._edge_requests = dict()  # type: Dict[_Edge, Packet]
 
     def get_new_edge(self, socket, config):
         # type: (_SocketUnion, AutomotiveTestCaseExecutorConfiguration) -> Optional[_Edge]  # noqa: E501
@@ -206,7 +207,7 @@ class StateGenerator(ABC):
                 return None
             else:
                 edge = (state, new_state)
-                StateGenerator._edge_requests[edge] = req
+                self._edge_requests[edge] = req
                 return edge
         else:
             return None

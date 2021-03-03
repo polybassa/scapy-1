@@ -61,4 +61,8 @@ def UDS_RDPR_modify_ecu_state(self, req, state):
 @EcuState.extend_pkt_with_modifier(UDS_RTEPR)
 def UDS_RTEPR_modify_ecu_state(self, req, state):
     # type: (Packet, Packet, EcuState) -> None
+    try:
+        state.download_complete = state.req_download
+    except (KeyError, AttributeError):
+        pass
     state.req_download = ""

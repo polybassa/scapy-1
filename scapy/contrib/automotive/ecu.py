@@ -42,6 +42,10 @@ class EcuState(object):
                 v = list(v)
             self.__setattr__(k, v)
 
+    def __len__(self):
+        # type: () -> int
+        return len(self.__dict__.keys())
+
     def __getitem__(self, item):
         # type: (str) -> Any
         return self.__dict__[item]
@@ -88,10 +92,10 @@ class EcuState(object):
         if self == other:
             return False
 
-        if len(self.__dict__.keys()) < len(other.__dict__.keys()):
+        if len(self) < len(other):
             return True
 
-        if len(self.__dict__.keys()) > len(other.__dict__.keys()):
+        if len(self) > len(other):
             return False
 
         common = set(self.__dict__.keys()).intersection(

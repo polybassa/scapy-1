@@ -134,10 +134,13 @@ assert "The following negative response codes are blacklisted: ['serviceNotSuppo
 
 = AutomotiveTestCase filtered results after show
 
-print(len(e.filtered_results))
 assert len(e.filtered_results) == 3
 assert e.filtered_results[0] == pkts[0]
 assert e.filtered_results[1] == pkts[2]
+
+= AutomotiveTestCase supported responses
+
+assert len(e.supported_responses) == 3
 
 = TestCaseExecutor dump check
 

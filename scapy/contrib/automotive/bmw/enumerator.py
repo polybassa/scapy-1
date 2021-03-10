@@ -10,7 +10,7 @@
 from scapy.packet import Packet
 from scapy.compat import Any, Iterable, Tuple
 from scapy.contrib.automotive.ecu import EcuState
-from scapy.contrib.automotive.enumerator import _AutomotiveTestCaseScanResult
+from scapy.contrib.automotive.scanner.test_case import _AutomotiveTestCaseScanResult
 from scapy.contrib.automotive.uds import UDS
 from scapy.contrib.automotive.bmw.definitions import DEV_JOB
 from scapy.contrib.automotive.uds_scan import UDS_Enumerator

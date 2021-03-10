@@ -4,11 +4,12 @@
 
 = Load contribution layer
 
-from scapy.contrib.automotive.enumerator import *
+from scapy.contrib.automotive.scanner.test_case import *
+from scapy.contrib.automotive.scanner.executor import *
 from scapy.contrib.automotive.uds import *
 from scapy.contrib.automotive.uds_scan import UDS_Enumerator
 
-from scapy.contrib.automotive.enumerator import _AutomotiveTestCaseScanResult, _AutomotiveTestCaseFilteredScanResult
+from scapy.contrib.automotive.scanner.test_case import _AutomotiveTestCaseScanResult, _AutomotiveTestCaseFilteredScanResult
 
 
 + Basic checks
@@ -90,6 +91,7 @@ assert {"s1", "s2"} == e.scanned_states
 
 assert len(e.results_with_positive_response) == 1
 assert len(e.results_with_negative_response) == 2
+assert len(e.results_without_response) == 1
 
 = AutomotiveTestCase get_label
 

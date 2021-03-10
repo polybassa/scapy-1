@@ -444,23 +444,39 @@ class AutomotiveTestCase(AutomotiveTestCaseABC):
 
     @property
     def scanned_states(self):
+        """
+        Helper function to get all sacnned states in results
+        :return: all scanned states
+        """
         # type: () -> Set[EcuState]
         return set([tup.state for tup in self._results])
 
     @property
     def results_with_negative_response(self):
+        """
+        Helper function to get all results with negative response
+        :return: all results with negative response
+        """
         # type: () -> List[_AutomotiveTestCaseFilteredScanResult]
         return [cast(_AutomotiveTestCaseFilteredScanResult, r) for r in self._results  # noqa: E501
                 if r.resp and r.resp.service == 0x7f]
 
     @property
     def results_with_positive_response(self):
+        """
+        Helper function to get all results with positive response
+        :return: all results with positive response
+        """
         # type: () -> List[_AutomotiveTestCaseFilteredScanResult]
         return [cast(_AutomotiveTestCaseFilteredScanResult, r) for r in self._results  # noqa: E501
                 if r.resp and r.resp.service != 0x7f]
 
     @property
     def results_without_response(self):
+        """
+        Helper function to get all results without response
+        :return: all results without response
+        """
         # type: () -> List[_AutomotiveTestCaseScanResult]
         return [r for r in self._results if r.resp is None]
 

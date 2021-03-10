@@ -27,7 +27,10 @@ if six.PY2 or not LINUX or conf.use_pypy:
 from scapy.contrib.isotp import ISOTPSocket                    # noqa: E402
 from scapy.contrib.cansocket import CANSocket, PYTHON_CAN      # noqa: E402
 from scapy.contrib.automotive.obd.obd import OBD               # noqa: E402
-from scapy.contrib.automotive.obd.scanner import OBD_Scanner, OBD_S01_Enumerator, OBD_S02_Enumerator, OBD_S03_Enumerator, OBD_S06_Enumerator, OBD_S07_Enumerator, OBD_S08_Enumerator, OBD_S09_Enumerator, OBD_S0A_Enumerator  # noqa: E402 E501
+from scapy.contrib.automotive.obd.scanner import OBD_Scanner, \
+    OBD_S01_Enumerator, OBD_S02_Enumerator, OBD_S03_Enumerator, \
+    OBD_S06_Enumerator, OBD_S07_Enumerator, OBD_S08_Enumerator, \
+    OBD_S09_Enumerator, OBD_S0A_Enumerator  # noqa: E402
 
 
 def signal_handler(sig, frame):

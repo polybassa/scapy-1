@@ -12,6 +12,12 @@ from scapy.packet import Packet
 from scapy.contrib.automotive.ecu import EcuState
 
 
+__all__ = ["UDS_DSCPR_modify_ecu_state", "UDS_CCPR_modify_ecu_state",
+           "UDS_ERPR_modify_ecu_state", "UDS_RDBPIPR_modify_ecu_state",
+           "UDS_TPPR_modify_ecu_state", "UDS_SAPR_modify_ecu_state",
+           "UDS_RDPR_modify_ecu_state"]
+
+
 @EcuState.extend_pkt_with_modifier(UDS_DSCPR)
 def UDS_DSCPR_modify_ecu_state(self, req, state):
     # type: (Packet, Packet, EcuState) -> None

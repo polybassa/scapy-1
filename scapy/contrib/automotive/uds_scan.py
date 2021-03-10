@@ -17,18 +17,22 @@ from typing import Sequence
 
 from scapy.compat import Dict, Optional, List, Type, Any, Iterable, Tuple, \
     cast, Union, NamedTuple
-from scapy.packet import Raw
+from scapy.packet import Raw, Packet
 from scapy.error import Scapy_Exception, log_interactive
-from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \
-    AutomotiveTestCaseExecutor, AutomotiveTestCaseABC, StateGenerator, \
-    AutomotiveTestCaseExecutorConfiguration, StagedAutomotiveTestCase, \
-    _SocketUnion, _TransitionTuple, \
-    _AutomotiveTestCaseScanResult, _AutomotiveTestCaseFilteredScanResult
-from scapy.contrib.automotive.scanner.graph import _Edge
-from scapy.contrib.automotive.uds import UDS_NR, UDS_DSC, UDS_TP, \
+from scapy.contrib.automotive.uds import UDS, UDS_NR, UDS_DSC, UDS_TP, \
     UDS_RDBI, UDS_WDBI, UDS_SA, UDS_RC, UDS_IOCBI, UDS_RMBA, UDS_ER, \
     UDS_TesterPresentSender, UDS_CC, UDS_RDBPI, UDS_RD, UDS_TD
 
+from scapy.contrib.automotive.ecu import EcuState
+from scapy.contrib.automotive.scanner.test_case import AutomotiveTestCase, \
+    AutomotiveTestCaseABC, StateGenerator, _SocketUnion, _TransitionTuple, \
+    _AutomotiveTestCaseScanResult, _AutomotiveTestCaseFilteredScanResult
+from scapy.contrib.automotive.scanner.configuration import AutomotiveTestCaseExecutorConfiguration  # noqa: E501
+from scapy.contrib.automotive.scanner.graph import _Edge
+from scapy.contrib.automotive.scanner.staged_test_case import StagedAutomotiveTestCase  # noqa: E501
+from scapy.contrib.automotive.scanner.executor import AutomotiveTestCaseExecutor  # noqa: E501
+
+# TODO: Refactor this import
 from scapy.contrib.automotive.uds_ecu_states import *  # noqa: F401, F403
 
 

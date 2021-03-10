@@ -10,13 +10,13 @@ from collections import defaultdict
 
 from scapy.compat import Union, List, Optional, Dict, Tuple, Set, TYPE_CHECKING
 from scapy.contrib.automotive.ecu import EcuState
-from scapy.contrib.automotive.profiler import Profiler
+from scapy.contrib.automotive.scanner.profiler import Profiler
 from scapy.error import log_interactive
 
 _Edge = Tuple[EcuState, EcuState]
 
 if TYPE_CHECKING:
-    from scapy.contrib.automotive.enumerator import _TransitionTuple
+    pass
 
 
 class Graph(object):

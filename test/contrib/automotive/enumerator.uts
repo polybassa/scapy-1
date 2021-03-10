@@ -86,6 +86,11 @@ assert stats["num_negative_resps"] == '2'
 assert len(e.scanned_states) == 2
 assert {"s1", "s2"} == e.scanned_states
 
+= AutomotiveTestCase scanned results
+
+assert len(e.results_with_positive_response) == 1
+assert len(e.results_with_negative_response) == 2
+
 = AutomotiveTestCase get_label
 
 assert e._get_label(pkts[0].resp) == "PR: PositiveResponse"

@@ -16,7 +16,7 @@ from scapy.error import log_interactive
 _Edge = Tuple[EcuState, EcuState]
 
 if TYPE_CHECKING:
-    pass
+    from scapy.contrib.automotive.scanner.test_case import _TransitionTuple
 
 
 class Graph(object):

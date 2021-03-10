@@ -14,20 +14,25 @@ import random
 from collections import defaultdict
 
 from scapy.compat import Optional, List, Type, Any, Tuple, Iterable, Dict, cast
-from scapy.contrib.automotive.gm.gmlan import GMLAN_SA, GMLAN_RD, \
+from scapy.contrib.automotive.gm.gmlan import GMLAN, GMLAN_SA, GMLAN_RD, \
     GMLAN_TD, GMLAN_RMBA, GMLAN_RDBI, GMLAN_RDBPI, GMLAN_IDO, \
-    GMLAN_NR, GMLAN_WDBI, GMLAN_DC, GMLAN_PM
-from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \
-    AutomotiveTestCaseExecutor, StateGenerator, \
-    AutomotiveTestCaseExecutorConfiguration, AutomotiveTestCaseABC, \
-    StagedAutomotiveTestCase, _TransitionTuple, _SocketUnion, \
-    _AutomotiveTestCaseScanResult
-from scapy.contrib.automotive.scanner.graph import _Edge
+    GMLAN_NR, GMLAN_WDBI, GMLAN_SAPR, GMLAN_DC, GMLAN_PM
+from scapy.contrib.automotive.ecu import EcuState
+from scapy.packet import Packet
 from scapy.contrib.isotp import ISOTPSocket
 from scapy.error import Scapy_Exception, log_interactive
 from scapy.contrib.automotive.gm.gmlanutils import GMLAN_GetSecurityAccess, \
     GMLAN_InitDiagnostics, GMLAN_TesterPresentSender, GMLAN_RequestDownload
 
+from scapy.contrib.automotive.scanner.test_case import AutomotiveTestCase, \
+    AutomotiveTestCaseABC, StateGenerator, _SocketUnion, _TransitionTuple, \
+    _AutomotiveTestCaseScanResult
+from scapy.contrib.automotive.scanner.configuration import AutomotiveTestCaseExecutorConfiguration  # noqa: E501
+from scapy.contrib.automotive.scanner.graph import _Edge
+from scapy.contrib.automotive.scanner.staged_test_case import StagedAutomotiveTestCase  # noqa: E501
+from scapy.contrib.automotive.scanner.executor import AutomotiveTestCaseExecutor  # noqa: E501
+
+# TODO: Refactor this import
 from scapy.contrib.automotive.gm.gmlan_ecu_states import *  # noqa: F401, F403
 
 __all__ = ["GMLAN_Scanner", "GMLAN_ServiceEnumerator", "GMLAN_RDBIEnumerator",

@@ -11,11 +11,13 @@
 from scapy.compat import List, Type
 from scapy.contrib.automotive.obd.obd import OBD, OBD_S03, OBD_S07, OBD_S0A, \
     OBD_S01, OBD_S06, OBD_S08, OBD_S09, OBD_NR, OBD_S02, OBD_S02_Record
-from scapy.contrib.automotive.enumerator import AutomotiveTestCaseExecutor, \
-    AutomotiveTestCase, AutomotiveTestCaseABC
 from scapy.config import conf
 from scapy.packet import Packet
 from scapy.themes import BlackAndWhite
+
+from scapy.contrib.automotive.scanner.test_case import AutomotiveTestCase, \
+    AutomotiveTestCaseABC
+from scapy.contrib.automotive.scanner.executor import AutomotiveTestCaseExecutor  # noqa: E501
 
 
 class OBD_Enumerator(AutomotiveTestCase):

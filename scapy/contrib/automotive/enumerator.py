@@ -13,8 +13,8 @@ from itertools import product
 
 from scapy.compat import Any, Union, List, Optional, Iterable, \
     Dict, Tuple, Set, Callable, Type, cast, NamedTuple, FAKE_TYPING, orb
-from scapy.contrib.automotive.graph import Graph, _Edge
-from scapy.contrib.automotive.profiler import Profiler, profile
+from scapy.contrib.automotive.scanner.graph import Graph, _Edge
+from scapy.contrib.automotive.scanner.profiler import Profiler, profile
 from scapy.error import Scapy_Exception, log_interactive
 from scapy.utils import make_lined_table, SingleConversationSocket, EDecimal
 import scapy.modules.six as six

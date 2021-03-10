@@ -17,16 +17,15 @@ from typing import Sequence
 
 from scapy.compat import Dict, Optional, List, Type, Any, Iterable, Tuple, \
     cast, Union, NamedTuple
-from scapy.packet import Packet, Raw
+from scapy.packet import Raw
 from scapy.error import Scapy_Exception, log_interactive
 from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \
     AutomotiveTestCaseExecutor, AutomotiveTestCaseABC, StateGenerator, \
     AutomotiveTestCaseExecutorConfiguration, StagedAutomotiveTestCase, \
     _SocketUnion, _TransitionTuple, \
     _AutomotiveTestCaseScanResult, _AutomotiveTestCaseFilteredScanResult
-from scapy.contrib.automotive.graph import _Edge
-from scapy.contrib.automotive.ecu import EcuState
-from scapy.contrib.automotive.uds import UDS, UDS_NR, UDS_DSC, UDS_TP, \
+from scapy.contrib.automotive.scanner.graph import _Edge
+from scapy.contrib.automotive.uds import UDS_NR, UDS_DSC, UDS_TP, \
     UDS_RDBI, UDS_WDBI, UDS_SA, UDS_RC, UDS_IOCBI, UDS_RMBA, UDS_ER, \
     UDS_TesterPresentSender, UDS_CC, UDS_RDBPI, UDS_RD, UDS_TD
 

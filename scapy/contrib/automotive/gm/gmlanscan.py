@@ -14,17 +14,15 @@ import random
 from collections import defaultdict
 
 from scapy.compat import Optional, List, Type, Any, Tuple, Iterable, Dict, cast
-from scapy.contrib.automotive.gm.gmlan import GMLAN, GMLAN_SA, GMLAN_RD, \
+from scapy.contrib.automotive.gm.gmlan import GMLAN_SA, GMLAN_RD, \
     GMLAN_TD, GMLAN_RMBA, GMLAN_RDBI, GMLAN_RDBPI, GMLAN_IDO, \
-    GMLAN_NR, GMLAN_WDBI, GMLAN_SAPR, GMLAN_DC, GMLAN_PM
+    GMLAN_NR, GMLAN_WDBI, GMLAN_DC, GMLAN_PM
 from scapy.contrib.automotive.enumerator import AutomotiveTestCase, \
     AutomotiveTestCaseExecutor, StateGenerator, \
     AutomotiveTestCaseExecutorConfiguration, AutomotiveTestCaseABC, \
     StagedAutomotiveTestCase, _TransitionTuple, _SocketUnion, \
     _AutomotiveTestCaseScanResult
-from scapy.contrib.automotive.graph import _Edge
-from scapy.contrib.automotive.ecu import EcuState
-from scapy.packet import Packet
+from scapy.contrib.automotive.scanner.graph import _Edge
 from scapy.contrib.isotp import ISOTPSocket
 from scapy.error import Scapy_Exception, log_interactive
 from scapy.contrib.automotive.gm.gmlanutils import GMLAN_GetSecurityAccess, \

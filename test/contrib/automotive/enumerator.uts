@@ -4,13 +4,10 @@
 
 = Load contribution layer
 
-from scapy.contrib.automotive.scanner.test_case import *
-from scapy.contrib.automotive.scanner.executor import *
+from scapy.contrib.automotive.scanner.test_case import _AutomotiveTestCaseScanResult, AutomotiveTestCase
+from scapy.contrib.automotive.scanner.executor import AutomotiveTestCaseExecutor
 from scapy.contrib.automotive.uds import *
 from scapy.contrib.automotive.uds_scan import UDS_Enumerator
-
-from scapy.contrib.automotive.scanner.test_case import _AutomotiveTestCaseScanResult, _AutomotiveTestCaseFilteredScanResult
-
 
 + Basic checks
 = AutomotiveTestCase basecls checks

@@ -8,18 +8,17 @@
 
 
 import time
-
 from collections import defaultdict, OrderedDict
 
 from scapy.compat import Any, Union, List, Optional, Iterable, \
     Dict, Tuple, Set, Callable, cast, NamedTuple, FAKE_TYPING, orb, \
     TYPE_CHECKING
-from scapy.contrib.automotive.scanner.graph import _Edge
 from scapy.error import Scapy_Exception, log_interactive
 from scapy.utils import make_lined_table, SingleConversationSocket, EDecimal
 import scapy.modules.six as six
 from scapy.supersocket import SuperSocket
 from scapy.packet import Packet
+from scapy.contrib.automotive.scanner.graph import _Edge
 from scapy.contrib.automotive.ecu import EcuState, EcuResponse
 
 
@@ -72,14 +71,34 @@ _TransitionTuple = Tuple[_TransitionCallable, Dict[str, Any], Optional[_CleanupC
 
 
 class AutomotiveTestCaseABC(ABC):
+    """
+    Base class for "TestCase" objects. In automotive scanners, these TestCase
+    objects are used for individual tasks, for example enumerating over one
+    kind of functionality of the protocol. It is also possible, that
+    these TestCase objects execute complex tests on an ECU.
+    The TestCaseExecuter object has a list of TestCases. The executer
+    manipulates a device under test (DUT), to enter a certain state. In this
+    state, the TestCase object gets executed.
+    """
     @abstractmethod
     def has_completed(self, state):
         # type: (EcuState) -> bool
+        """
+        Tells if this TestCase was executed for a certain state
+        :param state: State of interest
+        :return: True, if TestCase was executed in the questioned state
+        """
         raise NotImplementedError()
 
     @abstractmethod
     def pre_execute(self, socket, state, global_configuration):
         # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
+        """
+        Will be executed previously to ``execute``
+        :param socket: Socket object with the connection to a DUT
+        :param state: Current state of the DUT
+        :param global_configuration: Configuration of the TestCaseExecutor
+        """
         raise NotImplementedError()
 
     @abstractmethod

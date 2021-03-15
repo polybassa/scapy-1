@@ -104,28 +104,55 @@ class AutomotiveTestCaseABC(ABC):
     @abstractmethod
     def execute(self, socket, state, **kwargs):
         # type: (_SocketUnion, EcuState, Any) -> None
+        """
+        Executes TestCase
+        :param socket: Socket object with the connection to a DUT
+        :param state: Current state of the DUT
+        :param kwargs: Local configuration of the TestCasesExecutor
+        """
         raise NotImplementedError()
 
     @abstractmethod
     def post_execute(self, socket, state, global_configuration):
         # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
+        """
+        Will be executed subsequently to ``execute``
+        :param socket: Socket object with the connection to a DUT
+        :param state: Current state of the DUT
+        :param global_configuration: Configuration of the TestCaseExecutor
+        """
         raise NotImplementedError()
 
     @abstractmethod
     def show(self, dump=False, filtered=True, verbose=False):
         # type: (bool, bool, bool) -> Optional[str]
+        """
+        Shows results of TestCase
+        :param dump: If True, the results will be returned; If False, the results will be printed.
+        :param filtered: If True, the negative responses will be filtered dynamically.
+        :param verbose: If True, the state information will be presented in a table.
+        :return: test results of TestCase if parameter ``dump`` is True
+        """
         raise NotImplementedError()
 
     @property
     @abstractmethod
     def completed(self):
         # type: () -> bool
+        """
+        Tells if this TestCase is completely executed
+        :return: True, if TestCase is completely executed
+        """
         raise NotImplementedError
 
     @property
     @abstractmethod
     def supported_responses(self):
         # type: () -> List[EcuResponse]
+        """
+        Tells the supported responses in TestCase
+        :return: The list of supported responses
+        """
         raise NotImplementedError
 
 

@@ -21,6 +21,7 @@ import logging
 import os
 import os.path
 import sys
+import threading
 import time
 import traceback
 import warnings
@@ -28,10 +29,11 @@ import zlib
 
 from scapy.consts import WINDOWS
 import scapy.modules.six as six
-from scapy.modules.six.moves import range
+from scapy.modules.six.moves import range, queue
 from scapy.config import conf
 from scapy.compat import base64_bytes, bytes_hex, plain_str
 from scapy.themes import DefaultTheme, BlackAndWhite
+from scapy.utils import tex_escape
 
 
 # Check UTF-8 support #
@@ -517,11 +519,27 @@ def remove_empty_testsets(test_campaign):
 
 # RUN TEST #
 
+def _run_test_timeout(test, get_interactive_session, verb=3, my_globals=None):
+    """Run a test with timeout"""
+    q = queue.Queue()
+
+    def _runner():
+        output, res = get_interactive_session(test, verb=verb, my_globals=my_globals)
+        q.put((output, res))
+    th = threading.Thread(target=_runner)
+    th.daemon = True
+    th.start()
+    th.join(60 * 3)  # 3 min timeout
+    if th.is_alive():
+        return "Test timed out", False
+    return q.get()
+
+
 def run_test(test, get_interactive_session, theme, verb=3,
              my_globals=None):
     """An internal UTScapy function to run a single test"""
     start_time = time.time()
-    test.output, res = get_interactive_session(test.test.strip(), verb=verb, my_globals=my_globals)
+    test.output, res = _run_test_timeout(test.test.strip(), get_interactive_session, verb=verb, my_globals=my_globals)
     test.result = "failed"
     try:
         if res is None or res:
@@ -644,6 +662,14 @@ def html_info_line(test_campaign):
         return """Run %s by <a href="http://www.secdev.org/projects/UTscapy/">UTscapy</a><br>""" % time.ctime()  # noqa: E501
     else:
         return """Run %s from [%s] by <a href="http://www.secdev.org/projects/UTscapy/">UTscapy</a><br>""" % (time.ctime(), filename)  # noqa: E501
+
+
+def latex_info_line(test_campaign):
+    filename = test_campaign.filename
+    if filename is None:
+        return """by UTscapy""", """%s""" % time.ctime()
+    else:
+        return """from %s by UTscapy""" % tex_escape(filename), """%s""" % time.ctime()
 
 
 #    CAMPAIGN TO something    #
@@ -775,19 +801,9 @@ def pack_html_campaigns(runned_campaigns, data, local=False, title=None):
 
 
 def campaign_to_LATEX(test_campaign):
-    output = r"""\documentclass{report}
-\usepackage{alltt}
-\usepackage{xcolor}
-\usepackage{a4wide}
-\usepackage{hyperref}
-
-\title{%(title)s}
-\date{%%s}
-
-\begin{document}
-\maketitle
-\tableofcontents
-
+    output = r"""
+\chapter{%(title)s}
+Run %%s on \date{%%s}
 \begin{description}
 \item[Passed:] %(passed)i
 \item[Failed:] %(failed)i
@@ -796,15 +812,16 @@ def campaign_to_LATEX(test_campaign):
 %(headcomments)s
 
 """ % test_campaign
-    output %= info_line(test_campaign)
+    output %= latex_info_line(test_campaign)
 
     for testset in test_campaign:
-        output += "\\chapter{%(name)s}\n\n%(comments)s\n\n" % testset
+        output += "\\section{%(name)s}\n\n%(comments)s\n\n" % testset
         for t in testset:
+            t.comments = tex_escape(t.comments)
             if t.expand:
-                output += r"""\section{%(name)s}
+                output += r"""\subsection{%(name)s}
 
-[%(num)03i] [%(result)s]
+Test result: \textbf{%(result)s}\newline
 
 %(comments)s
 \begin{alltt}
@@ -813,7 +830,30 @@ def campaign_to_LATEX(test_campaign):
 
 """ % t
 
-    output += "\\end{document}\n"
+    return output
+
+
+def pack_latex_campaigns(runned_campaigns, data, local=False, title=None):
+    output = r"""
+\documentclass{report}
+\usepackage{alltt}
+\usepackage{xcolor}
+\usepackage{a4wide}
+\usepackage{hyperref}
+
+\title{%(title)s}
+
+\begin{document}
+\maketitle
+\tableofcontents
+
+%(data)s
+\end{document}\n
+"""
+
+    out_dict = {'data': data, 'title': title if title else "UTScapy tests"}
+
+    output %= out_dict
     return output
 
 
@@ -1069,7 +1109,6 @@ def main():
     try:
         if NON_ROOT or os.getuid() != 0:  # Non root
             # Discard root tests
-            KW_KO.append("netaccess")
             KW_KO.append("needs_root")
             if VERB > 2:
                 print(" " + arrow + " Non-root mode")
@@ -1181,6 +1220,8 @@ def main():
     # Concenate outputs
     if FORMAT == Format.HTML:
         glob_output = pack_html_campaigns(runned_campaigns, glob_output, LOCAL, glob_title)
+    if FORMAT == Format.LATEX:
+        glob_output = pack_latex_campaigns(runned_campaigns, glob_output, LOCAL, glob_title)
 
     # Write the final output
     # Note: on Python 2, we force-encode to ignore ascii errors

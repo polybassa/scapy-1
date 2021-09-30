@@ -9,16 +9,15 @@
 import os
 import subprocess
 import sys
-import time
 
 from platform import python_implementation
 
 from scapy.main import load_layer, load_contrib
 from scapy.config import conf
-from scapy.error import log_runtime, Scapy_Exception, warning
+from scapy.error import log_runtime, Scapy_Exception
 import scapy.modules.six as six
 from scapy.consts import LINUX
-from scapy.automaton import ObjectPipe
+from scapy.automaton import ObjectPipe, select_objects
 from scapy.data import MTU
 from scapy.packet import Packet
 from scapy.compat import Optional, Type, Tuple, Any
@@ -119,11 +118,10 @@ def cleanup_interfaces():
 
     :return: True on success
     """
-    import threading
-    from scapy.contrib.isotp.isotp_soft_socket import CANReceiverThread
-    for t in threading.enumerate():
-        if isinstance(t, CANReceiverThread):
-            t.join(10)
+    global open_test_sockets
+    for sock in open_test_sockets:
+        sock.close()
+        del sock
 
     if LINUX and _not_pypy and _root:
         if 0 != subprocess.call(["ip", "link", "delete", iface0]):
@@ -226,16 +224,20 @@ conf.contribs['EcuAnsweringMachine']['send_delay'] = 0.004
 # """ Define custom SuperSocket for unit tests """
 # ############################################################################
 
+open_test_sockets = list()
+
 
 class TestSocket(ObjectPipe, object):
-    nonblocking_socket = True  # type: bool
+    nonblocking_socket = False  # type: bool
 
     def __init__(self, basecls=None):
         # type: (Optional[Type[Packet]]) -> None
+        global open_test_sockets
         super(TestSocket, self).__init__()
         self.basecls = basecls
-        self.__paired_socket = None  # type: Optional[TestSocket]
+        self.paired_sockets = list()  # type: List[TestSocket]
         self.closed = False
+        open_test_sockets.append(self)
 
     def close(self):
         self.closed = True
@@ -243,19 +245,14 @@ class TestSocket(ObjectPipe, object):
 
     def pair(self, sock):
         # type: (TestSocket) -> None
-        if sock.__paired_socket or self.__paired_socket:
-            raise Scapy_Exception("Socket already paired")
-        self.__paired_socket = sock
-        sock.__paired_socket = self
+        self.paired_sockets += [sock]
+        sock.paired_sockets += [self]
 
     def send(self, x):
         # type: (Packet) -> int
-        if not self.__paired_socket:
-            self.close()
-            raise Scapy_Exception("Socket not paired!")
-
         sx = bytes(x)
-        super(TestSocket, self.__paired_socket).send(sx)
+        for r in self.paired_sockets:
+            super(TestSocket, r).send(sx)
         try:
             x.sent_time = time.time()
         except AttributeError:
@@ -282,3 +279,17 @@ class TestSocket(ObjectPipe, object):
             return SuperSocket.sr1(self, *args, **kargs)
         else:
             return SuperSocket.sr1.im_func(self, *args, **kargs)
+
+    def sniff(self, *args, **kargs):
+        # type: (Any, Any) -> PacketList
+        if six.PY3:
+            return SuperSocket.sniff(self, *args, **kargs)
+        else:
+            return SuperSocket.sniff.im_func(self, *args, **kargs)
+
+    @staticmethod
+    def select(sockets, remain=conf.recv_poll_rate):
+        # type: (List[SuperSocket], Optional[float]) -> List[SuperSocket]
+        sock = [s for s in sockets if isinstance(s, ObjectPipe)
+                and not s._closed]
+        return select_objects(sock, remain)

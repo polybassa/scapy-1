@@ -1151,6 +1151,8 @@ class Packet(six.with_metaclass(Packet_metaclass,  # type: ignore
                     else:
                         len2 += 1
                 length *= len2 or 1
+            elif isinstance(val, types.GeneratorType):
+                length *= SetGen(val).__iterlen__()
         if not isinstance(self.payload, NoPayload):
             return length * self.payload.__iterlen__()
         return length
@@ -1579,15 +1581,18 @@ values.
                     if num > 1:
                         val = self.payload.sprintf("%%%s,%s:%s.%s%%" % (f, cls, num - 1, fld), relax)  # noqa: E501
                         f = "s"
-                    elif f[-1] == "r":  # Raw field value
-                        val = getattr(self, fld)
-                        f = f[:-1]
-                        if not f:
-                            f = "s"
                     else:
-                        val = getattr(self, fld)
-                        if fld in self.fieldtype:
-                            val = self.fieldtype[fld].i2repr(self, val)
+                        try:
+                            val = self.getfieldval(fld)
+                        except AttributeError:
+                            val = getattr(self, fld)
+                        if f[-1] == "r":  # Raw field value
+                            f = f[:-1]
+                            if not f:
+                                f = "s"
+                        else:
+                            if fld in self.fieldtype:
+                                val = self.fieldtype[fld].i2repr(self, val)
                 else:
                     val = self.payload.sprintf("%%%s%%" % sfclsfld, relax)
                     f = "s"

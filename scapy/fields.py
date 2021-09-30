@@ -257,13 +257,14 @@ class Field(Generic[I, M]):
 
     def do_copy(self, x):
         # type: (I) -> I
-        if hasattr(x, "copy"):
-            return x.copy()  # type: ignore
         if isinstance(x, list):
             x = x[:]  # type: ignore
             for i in range(len(x)):
                 if isinstance(x[i], BasePacket):
                     x[i] = x[i].copy()
+            return x  # type: ignore
+        if hasattr(x, "copy"):
+            return x.copy()  # type: ignore
         return x
 
     def __repr__(self):
@@ -1375,7 +1376,7 @@ class StrFieldUtf16(StrField):
 
     def i2repr(self, pkt, x):
         # type: (Optional[Packet], bytes) -> str
-        return plain_str(x)
+        return plain_str(self.i2h(pkt, x))
 
     def i2h(self, pkt, x):
         # type: (Optional[Packet], bytes) -> str
@@ -1857,7 +1858,7 @@ class StrLenFieldUtf16(StrLenField):
 
     def i2repr(self, pkt, x):
         # type: (Optional[Packet], bytes) -> str
-        return plain_str(x)
+        return plain_str(self.i2h(pkt, x))
 
     def i2h(self,
             pkt,  # type: Optional[Packet]

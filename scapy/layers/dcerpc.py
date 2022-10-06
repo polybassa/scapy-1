@@ -13,6 +13,9 @@ Distributed Computing Environment / Remote Procedure Calls
 
 Based on [C706] - aka DCE/RPC 1.1
 https://pubs.opengroup.org/onlinepubs/9629399/toc.pdf
+
+And on [MS-RPCE]
+https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-rpce/290c38b1-92fe-4229-91e6-4fc376610c15
 """
 
 from functools import partial
@@ -109,6 +112,7 @@ DCE_RPC_TYPE = {
     13: "bind_nak",
     14: "alter_context",
     15: "alter_context_resp",
+    16: "auth3",
     17: "shutdown",
     18: "co_cancel",
     19: "orphaned",
@@ -226,7 +230,7 @@ class DceRpc4(Packet):
 # Exceptionally, we define those 2 here.
 
 
-class NetlogonAuthMessage(Packet):
+class NL_AUTH_MESSAGE(Packet):
     # [MS-NRPC] sect 2.2.1.3.1
     name = "NL_AUTH_MESSAGE"
     fields_desc = [
@@ -275,7 +279,7 @@ class NetlogonAuthMessage(Packet):
     ]
 
 
-class NetlogonAuthSignature(Packet):
+class NL_AUTH_SIGNATURE(Packet):
     # [MS-NRPC] sect 2.2.1.3.2/2.2.1.3.3
     name = "NL_AUTH_(SHA2_)SIGNATURE"
     fields_desc = [
@@ -297,13 +301,17 @@ class NetlogonAuthSignature(Packet):
             },
         ),
         XLEShortField("Pad", 0xFFFF),
-        ShortField("Reserved", 0),
-        XLELongField("SequenceNumber", 0),
+        ShortField("Flags", 0),
+        XStrFixedLenField("SequenceNumber", b"", length=8),
         XStrFixedLenField("Checksum", b"", length=8),
-        XStrFixedLenField("Confounder", b"", length=8),
         ConditionalField(
-            StrFixedLenField("Reserved2", b"", length=24),
-            lambda pkt: pkt.SignatureAlgorithm == 0x0013,
+            XStrFixedLenField("Confounder", b"", length=8),
+            lambda pkt: pkt.SealAlgorithm != 0xFFFF,
+        ),
+        MultipleTypeField([
+            (StrFixedLenField("Reserved2", b"", length=24),
+             lambda pkt: pkt.SignatureAlgorithm == 0x0013),
+        ], StrField("Reserved2", b"")
         ),
     ]
 
@@ -330,7 +338,7 @@ _MSRPCE_SECURITY_AUTHLEVELS = {
     0x03: "RPC_C_AUTHN_LEVEL_CALL",
     0x04: "RPC_C_AUTHN_LEVEL_PKT",
     0x05: "RPC_C_AUTHN_LEVEL_PKT_INTEGRITY",
-    0x06: "RPC_C_AUTHN_LEVEL_PRIVACY",
+    0x06: "RPC_C_AUTHN_LEVEL_PKT_PRIVACY",
 }
 
 
@@ -379,30 +387,30 @@ class CommonAuthVerifier(Packet):
                 (
                     PacketLenField(
                         "auth_value",
-                        NetlogonAuthMessage(),
-                        NetlogonAuthMessage,
+                        NL_AUTH_MESSAGE(),
+                        NL_AUTH_MESSAGE,
                         length_from=lambda pkt: pkt.parent.auth_len,
                     ),
                     lambda pkt: pkt.auth_type == 0x44 and
                     pkt.parent and
-                    pkt.parent.ptype in [11, 12, 13],
+                    pkt.parent.ptype in [11, 12, 13, 14, 15],
                 ),
                 (
                     PacketLenField(
                         "auth_value",
-                        NetlogonAuthSignature(),
-                        NetlogonAuthSignature,
+                        NL_AUTH_SIGNATURE(),
+                        NL_AUTH_SIGNATURE,
                         length_from=lambda pkt: pkt.parent.auth_len,
                     ),
                     lambda pkt: pkt.auth_type == 0x44 and
-                    (not pkt.parent or pkt.parent.ptype not in [11, 12, 13]),
+                    (not pkt.parent or pkt.parent.ptype not in [11, 12, 13, 14, 15]),
                 ),
             ],
             PacketLenField(
                 "auth_value",
                 None,
                 conf.raw_layer,
-                length_from=lambda pkt: pkt.parent.auth_len,
+                length_from=lambda pkt: pkt.parent and pkt.parent.auth_len or 0,
             ),
         ),
     ]
@@ -413,7 +421,12 @@ class CommonAuthVerifier(Packet):
                 self.auth_value.innerContextToken,
                 (KRB5_GSS_Wrap_RFC1964, KRB5_GSS_Wrap),
             )
+        elif self.auth_type == 0x44:
+            return (not self.parent or self.parent.ptype not in [11, 12, 13, 14, 15])
         return False
+
+    def default_payload_class(self, pkt):
+        return conf.padding_layer
 
 
 # sect 12.6
@@ -493,25 +506,18 @@ class DceRpc5(Packet):
                 ),
                 lambda pkt: pkt.auth_len != 0,
             ),
-            ConditionalField(
-                TrailerField(
-                    StrLenField(
-                        "auth_pad",
-                        None,
-                        length_from=lambda pkt: pkt.auth_verifier.auth_pad_length or 0,
-                    )
-                ),
-                lambda pkt: pkt.auth_verifier and pkt.auth_verifier.auth_pad_length,
-            ),
         ]
     )
 
     def post_build(self, pkt, pay):
-        if self.auth_verifier and self.auth_pad is None:
+        if self.auth_verifier and self.auth_verifier.auth_pad_length is None:
             # Compute auth_len and add padding
             auth_len = self.get_field("auth_len").getfield(self, pkt[10:12])[1] + 8
             auth_verifier, pay = pay[-auth_len:], pay[:-auth_len]
-            padlen = (-(len(pkt) + len(pay) - 8)) % 16
+            # [MS-RPCE]
+            # > The sec_trailer structure MUST be 16-byte aligned
+            # > with respect to the beginning of the PDU Body<
+            padlen = (-(len(pay) - 8)) % 16
             auth_verifier = (
                 auth_verifier[:2] + struct.pack("B", padlen) + auth_verifier[3:]
             )
@@ -643,59 +649,6 @@ class DceRpc5PortAny(EPacket):
     ]
 
 
-# sec 12.6.4.1
-
-
-class DceRpc5AlterContext(_DceRpcPayload):
-    name = "DCE/RPC v5 - AlterContext"
-    fields_desc = [
-        _EField(ShortField("max_xmit_frag", 5840)),
-        _EField(ShortField("max_recv_frag", 8192)),
-        _EField(IntField("assoc_group_id", 0)),
-        # p_result_list_t
-        _EField(FieldLenField("n_results", None, count_of="results", fmt="B")),
-        StrFixedLenField("reserved", 0, length=3),
-        EPacketListField(
-            "results",
-            [],
-            DceRpc5Result,
-            count_from=lambda pkt: pkt.n_results,
-            endianness_from=_dce_rpc_endianess,
-        ),
-    ]
-
-
-bind_layers(DceRpc5, DceRpc5AlterContext, ptype=14)
-
-
-# sec 12.6.4.2
-
-
-class DceRpc5AlterContextResp(_DceRpcPayload):
-    name = "DCE/RPC v5 - AlterContextResp"
-    fields_desc = [
-        _EField(ShortField("max_xmit_frag", 5840)),
-        _EField(ShortField("max_recv_frag", 8192)),
-        _EField(IntField("assoc_group_id", 0)),
-        PadField(
-            EPacketField("sec_addr", None, DceRpc5PortAny),
-            align=4,
-        ),
-        # p_result_list_t
-        _EField(FieldLenField("n_results", None, count_of="results", fmt="B")),
-        StrFixedLenField("reserved", 0, length=3),
-        EPacketListField(
-            "results",
-            [],
-            DceRpc5Result,
-            count_from=lambda pkt: pkt.n_results,
-            endianness_from=_dce_rpc_endianess,
-        ),
-    ]
-
-
-bind_layers(DceRpc5, DceRpc5AlterContextResp, ptype=15)
-
 # sec 12.6.4.3
 
 
@@ -779,6 +732,38 @@ class DceRpc5BindNak(_DceRpcPayload):
 
 bind_layers(DceRpc5, DceRpc5BindNak, ptype=13)
 
+
+# sec 12.6.4.1
+
+
+class DceRpc5AlterContext(_DceRpcPayload):
+    name = "DCE/RPC v5 - AlterContext"
+    fields_desc = DceRpc5Bind.fields_desc
+
+
+bind_layers(DceRpc5, DceRpc5AlterContext, ptype=14)
+
+
+# sec 12.6.4.2
+
+
+class DceRpc5AlterContextResp(_DceRpcPayload):
+    name = "DCE/RPC v5 - AlterContextResp"
+    fields_desc = DceRpc5BindAck.fields_desc
+
+
+bind_layers(DceRpc5, DceRpc5AlterContextResp, ptype=15)
+
+# [MS-RPCE] sect 2.2.2.10 - rpc_auth_3
+
+
+class DceRpc5Auth3(Packet):
+    name = "DCE/RPC v5 - Auth3"
+    fields_desc = [StrFixedLenField("pad", b"", length=4)]
+
+
+bind_layers(DceRpc5, DceRpc5Auth3, ptype=16)
+
 # sec 12.6.4.7
 
 
@@ -811,7 +796,7 @@ class DceRpc5Request(_DceRpcPayload):
                 _EField(UUIDField("object", None)),
                 align=8,
             ),
-            lambda pkt: pkt.underlayer.pfc_flags.OBJECT_UUID,
+            lambda pkt: pkt.underlayer and pkt.underlayer.pfc_flags.OBJECT_UUID,
         ),
     ]
 
@@ -1371,6 +1356,18 @@ class _NDRPacketListField(NDRConstructedType, PacketListField):
         return len(x)
 
 
+class NDRFieldListField(NDRConstructedType, FieldListField):
+    """
+    A FieldListField for NDR
+    """
+
+    islist = 1
+
+    def __init__(self, *args, **kwargs):
+        FieldListField.__init__(self, *args, **kwargs)
+        NDRConstructedType.__init__(self, [self.field])
+
+
 class NDRVaryingArray(_NDRPacket):
     fields_desc = [
         MultipleTypeField(
@@ -1499,13 +1496,13 @@ class _NDRConfField(object):
                 "Expected NDRConformantString in %s. You are using it wrong!"
                 % self.name
             )
-        elif not isinstance(val, NDRConformantArray):
+        elif not self.CONFORMANT_STRING and not isinstance(val, NDRConformantArray):
             raise ValueError(
                 "Expected NDRConformantArray in %s. You are using it wrong!" % self.name
             )
         fmt = ["<I", "<Q"][pkt.ndr64]
         _set_ndr_on(val.value, pkt.ndr64)
-        if not self.CONFORMANT_STRING and isinstance(val.value[0], NDRVaryingArray):
+        if isinstance(val.value[0], NDRVaryingArray):
             value = val.value[0]
         else:
             value = val.value
@@ -1577,7 +1574,7 @@ class NDRConfVarPacketListField(_NDRConfField, _NDRVarField, _NDRPacketListField
     pass
 
 
-class NDRConfFieldListField(_NDRConfField, FieldListField):
+class NDRConfFieldListField(_NDRConfField, NDRFieldListField):
     """
     NDR Conformant FieldListField
     """
@@ -1585,7 +1582,7 @@ class NDRConfFieldListField(_NDRConfField, FieldListField):
     pass
 
 
-class NDRConfVarFieldListField(_NDRConfField, _NDRVarField, FieldListField):
+class NDRConfVarFieldListField(_NDRConfField, _NDRVarField, NDRFieldListField):
     """
     NDR Conformant Varying FieldListField
     """
@@ -1701,9 +1698,7 @@ class _NDRUnionField(MultipleTypeField):
         # First, align the whole tag+union against the align param
         s = NDRAlign(Field("", 0, fmt=fmt), align=self.align).addfield(pkt, s, val.tag)
         # Then, compute the subfield with its own alignment
-        return super(_NDRUnionField, self).addfield(
-            pkt, s, val
-        )
+        return super(_NDRUnionField, self).addfield(pkt, s, val)
 
     def _find_fld_pkt_val(self, pkt, val):
         fld, val = super(_NDRUnionField, self)._find_fld_pkt_val(pkt, val)
@@ -1775,6 +1770,65 @@ class NDRContextHandle(NDRPacket):
         return conf.padding_layer
 
 
+# --- Type Serialization Version 1 - [MSRPCE] sect 2.2.6
+
+
+class NDRSerialization1Header(Packet):
+    fields_desc = [
+        ByteField("Version", 1),
+        ByteEnumField("Endianness", 0, {0x00: "Big-endian", 0x10: "Little-endian"}),
+        LEShortField("CommonHeaderLength", 8),
+        XLEIntField("Filler", 0xCCCCCCCC),
+    ]
+
+
+class NDRSerialization1PrivateHeader(Packet):
+    fields_desc = [
+        LEIntField("ObjectBufferLength", 0),
+        LEIntField("Filler", 0),
+    ]
+
+
+def ndr_deserialize1(b, cls, ndr64=False):
+    """
+    Deserialize Type Serialization Version 1 according to [MS-RPCE] sect 2.2.6
+    """
+    if issubclass(cls, NDRPacket):
+        return (
+            NDRSerialization1Header(b[:8]) /
+            NDRSerialization1PrivateHeader(b[8:16]) /
+            NDRPointer(
+                ndr64=ndr64,
+                referent_id=struct.unpack("<I", b[16:20])[0],
+                value=cls(b[20:], ndr64=ndr64),
+            )
+        )
+    return NDRSerialization1Header(b[:8]) / cls(b[8:])
+
+
+def ndr_serialize1(pkt, ndr64=False):
+    """
+    Serialize Type Serialization Version 1
+    """
+    pkt = pkt.copy()
+    if not isinstance(pkt, NDRSerialization1Header):
+        if isinstance(pkt, NDRPacket):
+            if not isinstance(pkt, NDRPointer):
+                pkt = NDRPointer(ndr64=ndr64, referent_id=0x20000, value=pkt)
+            pkt = (
+                NDRSerialization1Header() /
+                NDRSerialization1PrivateHeader(
+                    ObjectBufferLength=len(pkt.value),
+                ) /
+                pkt
+            )
+        else:
+            return bytes(NDRSerialization1Header() / pkt)
+    pay = struct.pack("<I", pkt.referent_id) + bytes(pkt.value)
+    pkt[NDRPointer].underlayer.remove_payload()
+    return bytes(pkt) + pay
+
+
 # --- DCE/RPC session
 
 
@@ -1788,6 +1842,22 @@ class DceRpcSession(DefaultSession):
         self.ndr64 = False
         self.map_callid_opnum = {}
         super(DceRpcSession, self).__init__(*args, **kwargs)
+
+    def _parse_with_opnum(self, pkt, opnum, opts):
+        # use opnum to parse the payload
+        is_response = DceRpc5Response in pkt
+        try:
+            cls = self.rpc_bind_interface.opnums[opnum][is_response]
+        except KeyError:
+            log_runtime.warning(
+                "Unknown opnum %s for interface %s"
+                % (opnum, self.rpc_bind_interface)
+            )
+            return
+        # Dissect payload using class
+        payload = cls(bytes(pkt[conf.raw_layer]), ndr64=self.ndr64, **opts)
+        pkt[conf.raw_layer].underlayer.remove_payload()
+        return pkt / payload
 
     def _process_dcerpc_packet(self, pkt):
         opnum = None
@@ -1825,19 +1895,7 @@ class DceRpcSession(DefaultSession):
         # Try to parse the payload
         if opnum is not None and self.rpc_bind_interface and conf.raw_layer in pkt:
             # use opnum to parse the payload
-            is_response = DceRpc5Response in pkt
-            try:
-                cls = self.rpc_bind_interface.opnums[opnum][is_response]
-            except KeyError:
-                log_runtime.warning(
-                    "Unknown opnum %s for interface %s"
-                    % (opnum, self.rpc_bind_interface)
-                )
-                return
-            # Dissect payload using class
-            payload = cls(pkt[conf.raw_layer].load, ndr64=self.ndr64, **opts)
-            pkt[conf.raw_layer].underlayer.remove_payload()
-            pkt = pkt / payload
+            pkt = self._parse_with_opnum(pkt, opnum, opts)
         return pkt
 
     def on_packet_received(self, pkt):

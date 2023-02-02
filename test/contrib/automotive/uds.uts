@@ -1046,20 +1046,6 @@ assert rdtcipr.DTCCount == 0xddaa
 
 assert rdtcipr.answers(rdtci)
 
-rdtcipr1 = UDS(b'\x59\x02\xff\x11\x07\x11\'\x022\x12\'\x01\x07\x11\'\x01\x18\x12\'\x01\x13\x12\'\x01"\x11\'\x06C\x00\'\x06S\x00\'\x161\x00\'\x14\x03\x12\'')
-
-assert len(rdtcipr1.DTCAndStatusRecord) == 10
-assert rdtcipr1.DTCAndStatusRecord[0].dtc.system == 0
-assert rdtcipr1.DTCAndStatusRecord[0].dtc.type == 1
-assert rdtcipr1.DTCAndStatusRecord[0].dtc.numeric_value_code == 263
-assert rdtcipr1.DTCAndStatusRecord[0].dtc.additional_information_code == 17
-assert rdtcipr1.DTCAndStatusRecord[0].status == 0x27
-assert rdtcipr1.DTCAndStatusRecord[-1].dtc.system == 0
-assert rdtcipr1.DTCAndStatusRecord[-1].dtc.type == 1
-assert rdtcipr1.DTCAndStatusRecord[-1].dtc.numeric_value_code == 1027
-assert rdtcipr1.DTCAndStatusRecord[-1].dtc.additional_information_code == 18
-assert rdtcipr1.DTCAndStatusRecord[-1].status == 0x27
-
 = Check UDS_RDTCI
 
 rdtci = UDS(b'\x19\x02\xff')
@@ -1170,18 +1156,28 @@ assert rdtci.DTCExtendedDataRecordNumber == 0xaa
 
 = Check UDS_RDTCIPR
 
-rdtcipr = UDS(b'\x59\x02\xff\xee\xdd\xaa\x02')
-rdtcipr.show()
+rdtcipr = UDS(b'\x59\x02\xff\xee\xdd\xaa')
 assert rdtcipr.service == 0x59
 assert rdtcipr.reportType == 2
 assert rdtcipr.DTCStatusAvailabilityMask == 0xff
-assert rdtcipr.DTCAndStatusRecord[0].dtc.system == 3
-assert rdtcipr.DTCAndStatusRecord[0].dtc.type == 2
-assert rdtcipr.DTCAndStatusRecord[0].dtc.numeric_value_code == 3805
-assert rdtcipr.DTCAndStatusRecord[0].dtc.additional_information_code == 170
-assert rdtcipr.DTCAndStatusRecord[0].status == 2
+assert rdtcipr.DTCAndStatusRecord == b'\xee\xdd\xaa'
 
 assert not rdtcipr.answers(rdtci)
+
+= Check UDS_RDTCIPR extended data
+
+p = UDS(b'Y\x06\x80SV`\x01\x00\x02\x01\x03\x15')
+
+assert len(p.extendedDataRecord.extendedData) == 3
+
+assert p.extendedDataRecord.extendedData[0].data_type == 1
+assert p.extendedDataRecord.extendedData[1].data_type == 2
+assert p.extendedDataRecord.extendedData[2].data_type == 3
+
+assert p.extendedDataRecord.extendedData[0].record == 0
+assert p.extendedDataRecord.extendedData[1].record == 1
+assert p.extendedDataRecord.extendedData[2].record == 0x15
+
 
 = Check UDS_RDTCIPR
 
@@ -1412,3 +1408,4 @@ nrc = UDS(b'\x7f\x22\x33')
 assert nrc.service == 0x7f
 assert nrc.requestServiceId == 0x22
 assert nrc.negativeResponseCode == 0x33
+

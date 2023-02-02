@@ -93,7 +93,8 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGeneratingServiceEnumerator):
     _supported_kwargs = copy.copy(ServiceEnumerator._supported_kwargs)
     _supported_kwargs.update({
         'delay_state_change': (int, lambda x: x >= 0),
-        'overwrite_timeout': (bool, None)
+        'overwrite_timeout': (bool, None),
+        'close_socket_when_entering_session_2': (bool, None)
     })
     _supported_kwargs["scan_range"] = (
         (list, tuple, range), lambda x: max(x) < 0x100 and min(x) >= 0)
@@ -112,7 +113,12 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGeneratingServiceEnumerator):
                                        unit-test scenarios, this value should
                                        be set to False, in order to use the
                                        timeout specified by the 'timeout'
-                                       argument."""
+                                       argument.
+        :param bool close_socket_when_entering_session_2: False by default.
+                                       This enumerator will close the socket
+                                       if session 2 (ProgrammingSession)
+                                       was entered, if True. This will
+                                       force a reconnect by the executor."""
 
     def _get_initial_requests(self, **kwargs):
         # type: (Any) -> Iterable[Packet]
@@ -165,10 +171,21 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGeneratingServiceEnumerator):
                      config  # type: AutomotiveTestCaseExecutorConfiguration
                      ):  # type: (...) -> Optional[_Edge]
         edge = super(UDS_DSCEnumerator, self).get_new_edge(socket, config)
+
+        try:
+            close_socket = config[UDS_DSCEnumerator.__name__]["close_socket_when_entering_session_2"]  # noqa: E501
+        except KeyError:
+            close_socket = False
+
         if edge:
             state, new_state = edge
             # Force TesterPresent if session is changed
             new_state.tp = 1  # type: ignore
+            try:
+                if close_socket and new_state.session == 2:  # type: ignore
+                    new_state.tp = 0  # type: ignore
+            except (AttributeError, KeyError):
+                pass
             return state, new_state
         return None
 
@@ -184,9 +201,30 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGeneratingServiceEnumerator):
             delay = conf[UDS_DSCEnumerator.__name__]["delay_state_change"]
         except KeyError:
             delay = 5
+
+        try:
+            close_socket = conf[UDS_DSCEnumerator.__name__]["close_socket_when_entering_session_2"]  # noqa: E501
+        except KeyError:
+            close_socket = False
+
         conf.stop_event.wait(delay)
         state_changed = UDS_DSCEnumerator.enter_state(
             sock, conf, kwargs["req"])
+
+        try:
+            session = kwargs["req"].diagnosticSessionType
+        except AttributeError:
+            session = 0
+
+        if close_socket and session == 2:
+            if not hasattr(sock, "ip"):
+                log_automotive.warning("Likely closing a CAN based socket! "
+                                       "This might be a configuration issue.")
+            log_automotive.info(
+                "Entered Programming Session: Closing socket connection")
+            sock.close()
+            conf.stop_event.wait(delay)
+
         if not state_changed:
             UDS_TPEnumerator.cleanup(sock, conf)
         return state_changed

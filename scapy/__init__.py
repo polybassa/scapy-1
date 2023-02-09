@@ -80,6 +80,7 @@ def _version_from_git_describe():
             raise subprocess.CalledProcessError(process.returncode, err)
 
     tag = _git("git describe --always")
+    print("desc tag: ", tag)
     if not tag.startswith("v"):
         # Upstream was not fetched
         commit = _git("git rev-list --tags --max-count=1")
@@ -114,8 +115,10 @@ def _version():
             return "git-archive." + sha1
         return 'unknown.version'
     # Fallback to calling git
+    print("Y")
     version_file = os.path.join(_SCAPY_PKG_DIR, 'VERSION')
     try:
+        print("X")
         tag = _version_from_git_describe()
         # successfully read the tag from git, write it in VERSION for
         # installation and/or archive generation.

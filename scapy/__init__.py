@@ -27,6 +27,8 @@ def _parse_tag(tag):
         v2.3.2-346-g164a52c075c8 -> '2.3.2.dev346'
     """
     match = re.match('^v?(.+?)-(\\d+)-g[a-f0-9]+$', tag)
+    print("TAG: %s" % tag)
+    print(match)
     if match:
         # remove the 'v' prefix and add a '.devN' suffix
         return '%s.dev%s' % (match.group(1), match.group(2))
@@ -98,14 +100,17 @@ def _version():
     git_archive_id = '$Format:%h %(describe)$'.strip().split()
     sha1 = git_archive_id[0]
     tag = git_archive_id[1]
+    print("1")
     if "Format" not in sha1:
         # We are in a git archive
         if "describe" in tag:
             # git is too old!
             tag = ""
         if tag:
+            print("2")
             return _parse_tag(tag)
         elif sha1:
+            print("3")
             return "git-archive." + sha1
         return 'unknown.version'
     # Fallback to calling git

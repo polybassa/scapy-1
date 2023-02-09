@@ -27,8 +27,6 @@ def _parse_tag(tag):
         v2.3.2-346-g164a52c075c8 -> '2.3.2.dev346'
     """
     match = re.match('^v?(.+?)-(\\d+)-g[a-f0-9]+$', tag)
-    print("TAG: %s" % tag)
-    print(match)
     if match:
         # remove the 'v' prefix and add a '.devN' suffix
         return '%s.dev%s' % (match.group(1), match.group(2))
@@ -80,7 +78,6 @@ def _version_from_git_describe():
             raise subprocess.CalledProcessError(process.returncode, err)
 
     tag = _git("git describe --always")
-    print("desc tag: ", tag)
     if not tag.startswith("v"):
         # Upstream was not fetched
         commit = _git("git rev-list --tags --max-count=1")
@@ -101,24 +98,19 @@ def _version():
     git_archive_id = '$Format:%h %(describe)$'.strip().split()
     sha1 = git_archive_id[0]
     tag = git_archive_id[1]
-    print("1")
     if "Format" not in sha1:
         # We are in a git archive
         if "describe" in tag:
             # git is too old!
             tag = ""
         if tag:
-            print("2")
             return _parse_tag(tag)
         elif sha1:
-            print("3")
             return "git-archive." + sha1
         return 'unknown.version'
     # Fallback to calling git
-    print("Y")
     version_file = os.path.join(_SCAPY_PKG_DIR, 'VERSION')
     try:
-        print("X")
         tag = _version_from_git_describe()
         # successfully read the tag from git, write it in VERSION for
         # installation and/or archive generation.

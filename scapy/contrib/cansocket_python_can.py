@@ -127,7 +127,8 @@ class _SocketsPool(object):
         """This calls the mux() function of all SocketMapper
         objects in this SocketPool
         """
-        if time.monotonic() - self.last_call < 0.001:
+        now = time.monotonic()
+        if now - self.last_call < 0.001:
             # Avoid starvation if multiple threads are doing selects, since
             # this object is singleton and all python-CAN sockets are using
             # the same instance and locking the same locks.
@@ -135,7 +136,7 @@ class _SocketsPool(object):
         with self.pool_mutex:
             for t in self.pool.values():
                 t.mux()
-        self.last_call = time.monotonic()
+        self.last_call = now
 
     def register(self, socket, *args, **kwargs):
         # type: (SocketWrapper, Tuple[Any, ...], Dict[str, Any]) -> None

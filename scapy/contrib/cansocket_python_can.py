@@ -319,10 +319,6 @@ class PythonCANSocket(SuperSocket):
         """
         ready_sockets = \
             [s for s in sockets if isinstance(s, PythonCANSocket) and
-            # checking the queue length without locking might sound
-            # dangerous, but for the purpose of this select, if another
-            # thread is reading the same socket, then even proper locking
-            # wouldn't help
              len(s.can_iface.rx_queue)]
         # checking the queue length without locking might sound
         # dangerous, but for the purpose of this select, if another

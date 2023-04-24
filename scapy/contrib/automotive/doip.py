@@ -38,8 +38,6 @@ from typing import (
     Optional,
 )
 
-# ISO 13400-2 sect 9.2
-
 
 class DoIP(Packet):
     """

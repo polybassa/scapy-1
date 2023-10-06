@@ -45,6 +45,8 @@ py311_root:
   tags:
     - docker-priviledged
   script:
+    - apt update
+    - apt install iproute2 -y
     - ./.config/ci/test.sh 3.11 root
 
 pypy3:

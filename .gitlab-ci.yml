@@ -36,7 +36,7 @@ mypy:
 py311:
   image: dissecto/scapy-tests:latest
   tags:
-    - docker-priviledged
+    - docker
   script:
     - ./.config/ci/test.sh 3.11 non_root
 
@@ -50,7 +50,7 @@ py311_root:
 pypy3:
   image: dissecto/scapy-tests-pypy:latest
   tags:
-    - docker-priviledged
+    - docker
   script:
     - ./.config/ci/test.sh pypy3 non_root
 

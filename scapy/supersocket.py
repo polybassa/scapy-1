@@ -205,8 +205,8 @@ class SuperSocket(metaclass=_SuperSocket_metaclass):
         """
         return conf.raw_layer, self.ins.recv(x), None
 
-    def recv(self, x=MTU):
-        # type: (int) -> Optional[Packet]
+    def recv(self, x=MTU, **kwargs):
+        # type: (int, **Any) -> Optional[Packet]
         """Receive a Packet according to the `basecls` of this socket
 
         :param x: Maximum number of bytes to be received, defaults to MTU

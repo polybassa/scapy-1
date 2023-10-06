@@ -19,10 +19,6 @@ cache:
   tags:
     - docker
   before_script:
-    - uname -a
-    - pip install virtualenv
-    - virtualenv venv
-    - source venv/bin/activate
     - pip install tox
 
 health:
@@ -38,30 +34,17 @@ mypy:
     - tox -e mypy
 
 py39:
-  extends: .default
-  image: python:3.11
+  image: dissecto/scapy-tests:latest
+  tags:
+    - docker-priviledged
   script:
-    - apt update
-    - apt install -qy sudo
-    - apt install -qy tcpdump
-    - DEBIAN_FRONTEND=noninteractive apt install -qy --force-yes wireshark-common
-    - ./.config/ci/install.sh ''
     - ./.config/ci/test.sh 3.11 non_root
 
 pypy3:
-  image: pypy:3
+  image: dissecto/scapy-tests-pypy:latest
   tags:
-    - docker
+    - docker-priviledged
   script:
-    - pip install virtualenv
-    - virtualenv venv_pypy
-    - source venv_pypy/bin/activate
-    - pip install tox
-    - apt update
-    - apt install -qy sudo
-    - apt install -qy tcpdump
-    - DEBIAN_FRONTEND=noninteractive apt install -qy --force-yes wireshark-common
-    - ./.config/ci/install.sh ''
     - ./.config/ci/test.sh pypy3 non_root
 
 

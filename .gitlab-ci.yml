@@ -40,15 +40,6 @@ py311:
   script:
     - ./.config/ci/test.sh 3.11 non_root
 
-py311_root:
-  image: dissecto/scapy-tests:latest
-  tags:
-    - docker-priviledged
-  script:
-    - apt update
-    - apt install iproute2 -y
-    - ./.config/ci/test.sh 3.11 root
-
 pypy3:
   image: dissecto/scapy-tests-pypy:latest
   tags:

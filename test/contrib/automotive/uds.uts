@@ -1156,11 +1156,16 @@ assert rdtci.DTCExtendedDataRecordNumber == 0xaa
 
 = Check UDS_RDTCIPR
 
-rdtcipr = UDS(b'\x59\x02\xff\xee\xdd\xaa')
+rdtcipr = UDS(b'\x59\x02\xff\xee\xdd\xaa\x02')
+rdtcipr.show()
 assert rdtcipr.service == 0x59
 assert rdtcipr.reportType == 2
 assert rdtcipr.DTCStatusAvailabilityMask == 0xff
-assert rdtcipr.DTCAndStatusRecord == b'\xee\xdd\xaa'
+assert rdtcipr.DTCAndStatusRecord[0].dtc.system == 3
+assert rdtcipr.DTCAndStatusRecord[0].dtc.type == 2
+assert rdtcipr.DTCAndStatusRecord[0].dtc.numeric_value_code == 3805
+assert rdtcipr.DTCAndStatusRecord[0].dtc.additional_information_code == 170
+assert rdtcipr.DTCAndStatusRecord[0].status == 2
 
 assert not rdtcipr.answers(rdtci)
 
@@ -1408,4 +1413,3 @@ nrc = UDS(b'\x7f\x22\x33')
 assert nrc.service == 0x7f
 assert nrc.requestServiceId == 0x22
 assert nrc.negativeResponseCode == 0x33
-

@@ -17,7 +17,7 @@ cache:
 .default:
   image: python:3.11
   tags:
-    - docker
+    - docker-ipv6
   before_script:
     - pip install tox
 
@@ -36,14 +36,14 @@ mypy:
 py311:
   image: dissecto/scapy-tests:latest
   tags:
-    - docker
+    - docker-ipv6
   script:
     - ./.config/ci/test.sh 3.11 non_root
 
 pypy3:
   image: dissecto/scapy-tests-pypy:latest
   tags:
-    - docker
+    - docker-ipv6
   script:
     - ./.config/ci/test.sh pypy3 non_root
 

@@ -9,7 +9,7 @@
 
 from scapy.packet import Packet, bind_layers
 from scapy.fields import ByteField, ShortField, ByteEnumField, X3BytesField, \
-    StrField, StrFixedLenField, LEIntField, LEThreeBytesField, \
+    StrField, StrFixedLenField, LEThreeBytesField, \
     PacketListField, IntField, IPField, ThreeBytesField, ShortEnumField, \
     XStrFixedLenField
 from scapy.contrib.automotive.uds import UDS, UDS_RDBI, UDS_DSC, UDS_IOCBI, \

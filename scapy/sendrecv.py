@@ -1365,6 +1365,7 @@ class AsyncSniffer(object):
                         try:
                             # Make sure it's closed
                             s.close()
+                            log_interactive.exception("Closed socket %s", s)
                         except Exception as ex2:
                             msg = " close() failed with '%s'" % ex2
                         warning(

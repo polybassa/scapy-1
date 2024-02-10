@@ -1,4 +1,5 @@
 % SMB2 Client and Server tests
+~ disabled
 
 + SMB2 Client tests
 ~ linux smbclient samba

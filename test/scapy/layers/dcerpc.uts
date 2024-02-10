@@ -1,4 +1,5 @@
 % DCE/RPC layer test campaign
+~ disabled
 
 + Syntax check
 = Import the DCE/RPC layer

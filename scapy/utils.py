@@ -3795,11 +3795,9 @@ class PeriodicSenderThread(threading.Thread):
         threading.Thread.__init__(self)
 
     def enable(self):
-        # type: () -> None
         self._enabled.set()
 
     def disable(self):
-        # type: () -> None
         self._enabled.clear()
 
     def run(self):

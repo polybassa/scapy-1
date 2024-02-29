@@ -280,9 +280,9 @@ class ServiceEnumerator(AutomotiveTestCase, metaclass=abc.ABCMeta):
     def pre_execute(self, socket, state, global_configuration):
         # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         try:
-            self._tester_present_sender = global_configuration.get("tps", None)
+            self._tester_present_sender = global_configuration["tps"]
         except KeyError:
-            pass
+            self._tester_present_sender = None
 
     def execute(self, socket, state, **kwargs):
         # type: (_SocketUnion, EcuState, Any) -> None

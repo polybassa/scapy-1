@@ -790,7 +790,7 @@ portmapserver = DCERPC_Server.spawn(
 )
 
 = Functional: Connect to the server with samba's rpcclient over NCACN_IP_TCP with NTMLSSP
-~ linux samba needs_root disabled
+~ linux samba needs_root
 
 # Note: this is broken in rpcclient < 4.16 .. D:
 # https://github.com/samba-team/samba/commit/b5e56a30dfd33e89cfb602b1e7480e210434d600

@@ -14,10 +14,10 @@ from scapy.layers.inet6 import IP6Field
 from scapy.compat import raw, orb
 from scapy.config import conf
 from scapy.packet import Packet, Raw, bind_top_down, bind_bottom_up
-from scapy.fields import XShortField, BitEnumField, ConditionalField, \
-    BitField, XBitField, IntField, XByteField, ByteEnumField, \
+from scapy.fields import XShortField, ConditionalField, \
+    BitField, XBitField, XByteField, ByteEnumField, \
     ShortField, X3BytesField, StrLenField, IPField, FieldLenField, \
-    PacketListField, XIntField, MultipleTypeField
+    PacketListField, XIntField, MultipleTypeField, FlagsField, IntField
 
 
 class SOMEIP(Packet):

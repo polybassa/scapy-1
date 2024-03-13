@@ -108,21 +108,18 @@ class SOMEIP(Packet):
             RET_E_MALFORMED_MSG: "E_MALFORMED_MESSAGE",
             RET_E_WRONG_MESSAGE_TYPE: "E_WRONG_MESSAGE_TYPE",
         }),
-        ConditionalField(
-            BitScalingField("offset", 0, 28, scaling=16, unit="bytes"),
-            lambda pkt: SOMEIP._is_tp(pkt)),  # noqa: E501
-        ConditionalField(
-            BitField("res", 0, 3),
-            lambda pkt: SOMEIP._is_tp(pkt)),  # noqa: E501
-        ConditionalField(
-            BitField("more_seg", 0, 1),
-            lambda pkt: SOMEIP._is_tp(pkt)),  # noqa: E501
+        ConditionalField(BitScalingField("offset", 0, 28, scaling=16, unit="bytes"),
+                         lambda pkt: SOMEIP._is_tp(pkt) and pkt.len > SOMEIP.LEN_OFFSET),
+        ConditionalField(BitField("res", 0, 3),
+                         lambda pkt: SOMEIP._is_tp(pkt) and pkt.len > SOMEIP.LEN_OFFSET),
+        ConditionalField(BitField("more_seg", 0, 1),
+                         lambda pkt: SOMEIP._is_tp(pkt) and pkt.len > SOMEIP.LEN_OFFSET),
         ConditionalField(PacketListField(
             "data", [Raw()], Raw,
-            length_from=lambda pkt: pkt.len - (SOMEIP.LEN_OFFSET_TP if (SOMEIP._is_tp(pkt) and (pkt.len is None or pkt.len >= SOMEIP.LEN_OFFSET_TP)) else SOMEIP.LEN_OFFSET),  # noqa: E501
+            length_from=lambda pkt: pkt.len - SOMEIP.LEN_OFFSET_TP,
             next_cls_cb=lambda pkt, lst, cur, remain:
                 SOMEIP.get_payload_cls_by_srv_id(pkt, lst, cur, remain)),
-            lambda pkt: SOMEIP._is_tp(pkt))  # noqa: E501
+            lambda pkt: SOMEIP._is_tp(pkt) and pkt.len > SOMEIP.LEN_OFFSET)
     ]
 
     payload_cls_by_srv_id = dict()  # To be customized
@@ -161,13 +158,11 @@ class SOMEIP(Packet):
         else:
             return pkt[15] & 0x20
 
-    @staticmethod
-    def _is_sd(pkt):
-        """Returns true if pkt is using SOMEIP-SD, else returns false."""
-        if isinstance(pkt, Packet):
-            return pkt.srv_id == 0xffff and pkt.sub_id == 0x8100
+    def default_payload_class(self, payload):
+        if self._is_tp(self):
+            return SOMEIP
         else:
-            return pkt[:4] == b"\xff\xff\x81\x00"
+            return Raw
 
     def fragment(self, fragsize=1392):
         """Fragment SOME/IP-TP"""

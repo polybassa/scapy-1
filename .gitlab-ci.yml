@@ -48,6 +48,10 @@ pypy3:
     - ./.config/ci/test.sh pypy3 non_root
 
 publish:
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      when: always
+    - when: never
   image: python:latest
   needs:
     - pypy3
@@ -59,7 +63,7 @@ publish:
   script:
     - pip install build twine
     - python -m build
-    - TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python -m twine upload --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
+    - TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python -m twine upload --verbose --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
 
 
 

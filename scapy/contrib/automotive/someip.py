@@ -224,11 +224,11 @@ SDENTRY_OVERALL_LEN = 16
 
 def _MAKE_SDENTRY_COMMON_FIELDS_DESC(type):
     return [
-        XByteEnumField("type", type,
-                       {0: "FindService",
-                        1: "OfferService",
-                        6: "SubscribeEventgroup",
-                        7: "SubscribeEventgroupACK"}),
+        XByteEnumField("type", type, {
+            0: "FindService",
+            1: "OfferService",
+            6: "SubscribeEventgroup",
+            7: "SubscribeEventgroupACK"}),
         XByteField("index_1", 0),
         XByteField("index_2", 0),
         XBitField("n_opt_1", 0, 4),

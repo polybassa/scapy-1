@@ -320,6 +320,21 @@ class ISOTPNativeSocket(SuperSocket):
                                       "object as iface parameter")
 
         self.iface = cast(str, iface) or conf.contribs['NativeCANSocket']['iface']  # noqa: E501
+        # store arguments internally
+        self.tx_id = tx_id
+        self.rx_id = rx_id
+        self.ext_address = ext_address
+        self.rx_ext_address = rx_ext_address
+        self.bs = bs
+        self.stmin = stmin
+        self.padding = padding
+        self.listen_only = listen_only
+        self.frame_txtime = frame_txtime
+        self.fd = fd
+        if basecls is None:
+            log_isotp.warning('Provide a basecls ')
+        self.basecls = basecls
+
         self.can_socket = socket.socket(socket.PF_CAN, socket.SOCK_DGRAM,
                                         CAN_ISOTP)
         self.__set_option_flags(self.can_socket,
@@ -328,11 +343,6 @@ class ISOTPNativeSocket(SuperSocket):
                                 listen_only,
                                 padding,
                                 frame_txtime)
-
-        self.tx_id = tx_id
-        self.rx_id = rx_id
-        self.ext_address = ext_address
-        self.rx_ext_address = rx_ext_address
 
         self.can_socket.setsockopt(SOL_CAN_ISOTP,
                                    CAN_ISOTP_RECV_FC,
@@ -354,9 +364,6 @@ class ISOTPNativeSocket(SuperSocket):
         self.__bind_socket(self.can_socket, self.iface, tx_id, rx_id)
         self.ins = self.can_socket
         self.outs = self.can_socket
-        if basecls is None:
-            log_isotp.warning('Provide a basecls ')
-        self.basecls = basecls
 
     def recv_raw(self, x=0xffff):
         # type: (int) -> Tuple[Optional[Type[Packet]], Optional[bytes], Optional[float]]  # noqa: E501

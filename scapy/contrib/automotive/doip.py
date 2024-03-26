@@ -261,6 +261,16 @@ class DoIP(Packet):
             return b"", None
 
 
+bind_bottom_up(UDP, DoIP, sport=13400)
+bind_bottom_up(UDP, DoIP, dport=13400)
+bind_layers(UDP, DoIP, sport=13400, dport=13400)
+
+bind_layers(TCP, DoIP, sport=13400)
+bind_layers(TCP, DoIP, dport=13400)
+
+bind_layers(DoIP, UDS, payload_type=0x8001)
+
+
 class _DoIPSocketBase(StreamSocket):
     """ Custom BaseSocket for DoIP communication. This sockets automatically
     sends a routing activation request as soon as a TCP connection is
@@ -330,7 +340,7 @@ class _DoIPSocketBase(StreamSocket):
                           target_address,  # type: int
                           activation_type,  # type: int
                           reserved_oem=b""  # type: bytes
-                          ):  # type: (...) -> None
+                          ):  # type: (...) -> int
         resp = self.sr1(
             DoIP(payload_type=0x5, activation_type=activation_type,
                  source_address=source_address, reserved_oem=reserved_oem),
@@ -345,6 +355,11 @@ class _DoIPSocketBase(StreamSocket):
         else:
             log_automotive.error(
                 "Routing activation failed! Response: %s", repr(resp))
+
+        if resp and resp.payload_type == 0x6:
+            return resp.routing_activation_response
+        else:
+            return -1
 
 
 class DoIPSocket(_DoIPSocketBase, StreamSocket):
@@ -609,11 +624,102 @@ class UDS_DoIPSslSocket6(_UDS_DoIPSocketBase, DoIPSslSocket6):
     pass
 
 
-bind_bottom_up(UDP, DoIP, sport=13400)
-bind_bottom_up(UDP, DoIP, dport=13400)
-bind_layers(UDP, DoIP, sport=13400, dport=13400)
+class DualDoIPSocket(object):
+    """ DoIPSocket that combines TLS and TCP DoIP communication.
 
-bind_layers(TCP, DoIP, sport=13400)
-bind_layers(TCP, DoIP, dport=13400)
+    :param ip: IP address of destination
+    :param port: destination port, usually 13400
+    :param tls_port: destination port for tls connection, usually 3496
+    :param source_address: DoIP source address
+    :param target_address: DoIP target address, this is automatically
+                           determined if routing activation request is sent
+    :param activation_type: This allows to set a different activation type for
+                            the routing activation request
+    :param reserved_oem: Optional parameter to set value for reserved_oem field
+                         of routing activation request
+    :param context: Optional ssl.SSLContext object for initialization of ssl socket
+                    connections.
 
-bind_layers(DoIP, UDS, payload_type=0x8001)
+    Example:
+        >>> socket = DoIPSocket("169.254.0.131")
+        >>> pkt = DoIP(payload_type=0x8001, source_address=0xe80, target_address=0x1000) / UDS() / UDS_RDBI(identifiers=[0x1000])
+        >>> resp = socket.sr1(pkt, timeout=1)
+    """  # noqa: E501
+
+    _doip_socket_cls = DoIPSocket
+    _doip_ssl_socket_cls = DoIPSslSocket
+
+    def __init__(self, ip='127.0.0.1', port=13400, tls_port=3496,
+                 source_address=0xe80, target_address=0, activation_type=0,
+                 reserved_oem=b"", context=None):
+        # type: (str, int, int, int, int, int, bytes, Optional[ssl.SSLContext]) -> None
+
+        socket = self._doip_socket_cls(
+            ip=ip, port=port, activate_routing=False,
+            source_address=source_address,
+            target_address=target_address,
+            activation_type=activation_type,
+            reserved_oem=reserved_oem)
+
+        activation_return = socket._activate_routing(
+            source_address=source_address, target_address=target_address,
+            activation_type=activation_type, reserved_oem=reserved_oem)
+        if activation_return == 0x10:
+            # Routing successfully activated.
+            self._inner = socket
+        elif activation_return == 0x07:
+            # Routing activation denied because the specified activation
+            # type requires a secure TLS TCP_DATA socket.
+            socket.close()
+            ssl_socket = self._doip_ssl_socket_cls(
+                ip=ip, port=tls_port, activate_routing=False,
+                source_address=source_address,
+                target_address=target_address,
+                activation_type=activation_type,
+                reserved_oem=reserved_oem,
+                context=context)
+            activation_return = ssl_socket._activate_routing(
+                source_address=source_address,
+                target_address=target_address,
+                activation_type=activation_type,
+                reserved_oem=reserved_oem)
+            if activation_return == 0x10:
+                # Routing successfully activated.
+                self._inner = ssl_socket  # type: ignore
+            else:
+                ssl_socket.close()
+                raise Exception(
+                    "DoIPSocket activate_routing failed with "
+                    "routing_activation_response 0x%x" % activation_return)
+
+        elif activation_return == -1:
+            socket.close()
+            raise Exception("DoIPSocket._activate_routing failed")
+        else:
+            socket.close()
+            raise Exception(
+                "DoIPSocket activate_routing failed with "
+                "routing_activation_response 0x%x!" % activation_return)
+
+    @property
+    def __dict__(self):  # type: ignore
+        return self._inner.__dict__
+
+    def __getattr__(self, name):
+        # type: (str) -> Any
+        return getattr(self._inner, name)
+
+
+class DualDoIPSocket6(DualDoIPSocket):
+    _doip_socket_cls = DoIPSocket6
+    _doip_ssl_socket_cls = DoIPSslSocket6
+
+
+class UDS_DualDoIPSocket(DualDoIPSocket):
+    _doip_socket_cls = UDS_DoIPSocket
+    _doip_ssl_socket_cls = UDS_DoIPSslSocket
+
+
+class UDS_DualDoIPSocket6(DualDoIPSocket):
+    _doip_socket_cls = UDS_DoIPSocket6
+    _doip_ssl_socket_cls = UDS_DoIPSslSocket6

@@ -427,6 +427,7 @@ class DoIPSslSocket(_DoIPSocketBase, SSLStreamSocket):
         if self.context is None:
             raise ValueError("SSLContext 'context' can not be None")
         s = socket.socket(sock_family, socket.SOCK_STREAM)
+        s.settimeout(5)
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         ss = self.context.wrap_socket(s)
@@ -527,6 +528,7 @@ class DoIPSslSocket6(DoIPSslSocket):
         if self.context is None:
             raise ValueError("SSLContext 'context' can not be None")
         s = socket.socket(sock_family, socket.SOCK_STREAM)
+        s.settimeout(5)
         s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         ss = self.context.wrap_socket(s)

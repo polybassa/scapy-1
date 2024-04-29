@@ -171,9 +171,9 @@ class AutomotiveTestCaseExecutor(metaclass=abc.ABCMeta):
             else:
                 self.socket = socket
 
-        if self.socket and self.socket.closed:
-            raise Scapy_Exception(
-                "Socket closed even after reconnect. Stop scan!")
+            if self.socket and self.socket.closed:
+                raise Scapy_Exception(
+                    "Socket closed even after reconnect. Stop scan!")
 
     def execute_test_case(self, test_case, kill_time=None):
         # type: (AutomotiveTestCaseABC, Optional[float]) -> None
@@ -394,6 +394,10 @@ class AutomotiveTestCaseExecutor(metaclass=abc.ABCMeta):
         trans_func, trans_kwargs, clean_func = funcs
         state_changed = trans_func(
             self.socket, self.configuration, trans_kwargs)
+
+        if self.socket.closed:
+            self.reconnect()
+
         if state_changed:
             self.target_state = next_state
 

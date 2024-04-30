@@ -609,7 +609,7 @@ server_up.wait(timeout=1)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 context.check_hostname = False
 context.verify_mode = ssl.CERT_NONE
-sock = DoIPSslSocket(activate_routing=False, port=3496, context=context)
+sock = DoIPSocket(activate_routing=False, force_tls=True, context=context)
 
 pkts = sock.sniff(timeout=1, count=2)
 server_thread.join(timeout=1)
@@ -646,7 +646,7 @@ server_up.wait(timeout=1)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 context.check_hostname = False
 context.verify_mode = ssl.CERT_NONE
-sock = DoIPSslSocket6(activate_routing=False, port=3496, context=context)
+sock = DoIPSocket6(activate_routing=False, force_tls=True, context=context)
 
 pkts = sock.sniff(timeout=1, count=2)
 server_thread.join(timeout=1)
@@ -683,7 +683,7 @@ server_up.wait(timeout=1)
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 context.check_hostname = False
 context.verify_mode = ssl.CERT_NONE
-sock = UDS_DoIPSslSocket6(activate_routing=False, port=3496, context=context)
+sock = UDS_DoIPSocket6(activate_routing=False, force_tls=True, context=context)
 
 pkts = sock.sniff(timeout=1, count=2)
 server_thread.join(timeout=1)
@@ -743,7 +743,7 @@ context.check_hostname = False
 context.verify_mode = ssl.CERT_NONE
 
 
-sock = UDS_DualDoIPSocket6(ip="::1", context=context)
+sock = UDS_DoIPSocket6(ip="::1", context=context)
 
 pkts = sock.sniff(timeout=1, count=2)
 server_tcp_thread.join(timeout=1)

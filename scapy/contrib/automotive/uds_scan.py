@@ -200,7 +200,12 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGeneratingServiceEnumerator):
         state_changed = UDS_DSCEnumerator.enter_state(
             sock, conf, kwargs["req"])
 
-        if close_socket and kwargs["req"].diagnosticSessionControl == 2:
+        try:
+            session = kwargs["req"].diagnosticSessionType == 2
+        except AttributeError:
+            session = 0
+
+        if close_socket and session == 2:
             if not hasattr(sock, "ip"):
                 log_automotive.warning("Likely closing a CAN based socket! "
                                        "This might be a configuration issue.")

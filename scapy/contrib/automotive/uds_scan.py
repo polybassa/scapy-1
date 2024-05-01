@@ -201,7 +201,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGeneratingServiceEnumerator):
             sock, conf, kwargs["req"])
 
         try:
-            session = kwargs["req"].diagnosticSessionType == 2
+            session = kwargs["req"].diagnosticSessionType
         except AttributeError:
             session = 0
 

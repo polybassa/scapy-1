@@ -396,7 +396,17 @@ class AutomotiveTestCaseExecutor(metaclass=abc.ABCMeta):
             self.socket, self.configuration, trans_kwargs)
 
         if self.socket.closed:
-            self.reconnect()
+            for i in range(5):
+                try:
+                    self.reconnect()
+                    break
+                except Exception:
+                    if i == 4:
+                        raise
+                    if self.configuration.stop_event:
+                        self.configuration.stop_event.wait(1)
+                    else:
+                        time.sleep(1)
 
         if state_changed:
             self.target_state = next_state

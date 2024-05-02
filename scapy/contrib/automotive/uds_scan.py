@@ -171,10 +171,18 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGeneratingServiceEnumerator):
                      config  # type: AutomotiveTestCaseExecutorConfiguration
                      ):  # type: (...) -> Optional[_Edge]
         edge = super(UDS_DSCEnumerator, self).get_new_edge(socket, config)
+
+        try:
+            close_socket = config[UDS_DSCEnumerator.__name__]["close_socket_when_entering_session_2"]  # noqa: E501
+        except KeyError:
+            close_socket = False
+
         if edge:
             state, new_state = edge
             # Force TesterPresent if session is changed
             new_state.tp = 1  # type: ignore
+            if close_socket:
+                new_state.tp = 0
             return state, new_state
         return None
 
@@ -209,8 +217,9 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGeneratingServiceEnumerator):
             if not hasattr(sock, "ip"):
                 log_automotive.warning("Likely closing a CAN based socket! "
                                        "This might be a configuration issue.")
-            log_automotive.info("Closing socket connection")
+            log_automotive.info("Entered Programming Session: Closing socket connection")
             sock.close()
+            conf.stop_event.wait(delay)
 
         if not state_changed:
             UDS_TPEnumerator.cleanup(sock, conf)

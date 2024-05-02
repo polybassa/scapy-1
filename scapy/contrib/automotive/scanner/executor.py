@@ -156,24 +156,24 @@ class AutomotiveTestCaseExecutor(metaclass=abc.ABCMeta):
 
     def reconnect(self):
         # type: () -> None
-        if self.reconnect_handler:
-            try:
-                if self.socket:
-                    self.socket.close()
-            except Exception as e:
-                log_automotive.exception(
-                    "Exception '%s' during socket.close", e)
+        if not self.reconnect_handler:
+            return
 
-            log_automotive.info("Target reconnect")
-            socket = self.reconnect_handler()
-            if not isinstance(socket, SingleConversationSocket):
-                self.socket = SingleConversationSocket(socket)
-            else:
-                self.socket = socket
+        try:
+            if self.socket:
+                self.socket.close()
+        except Exception as e:
+            log_automotive.exception(
+                "Exception '%s' during socket.close", e)
 
-            if self.socket and self.socket.closed:
-                raise Scapy_Exception(
-                    "Socket closed even after reconnect. Stop scan!")
+        log_automotive.info("Target reconnect")
+        socket = self.reconnect_handler()
+        self.socket = socket if isinstance(socket, SingleConversationSocket) \
+            else SingleConversationSocket(socket)
+
+        if self.socket and self.socket.closed:
+            raise Scapy_Exception(
+                "Socket closed even after reconnect. Stop scan!")
 
     def execute_test_case(self, test_case, kill_time=None):
         # type: (AutomotiveTestCaseABC, Optional[float]) -> None

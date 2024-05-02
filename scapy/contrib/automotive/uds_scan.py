@@ -181,7 +181,7 @@ class UDS_DSCEnumerator(UDS_Enumerator, StateGeneratingServiceEnumerator):
             state, new_state = edge
             # Force TesterPresent if session is changed
             new_state.tp = 1  # type: ignore
-            if close_socket:
+            if close_socket and new_state.session == 2:
                 new_state.tp = 0
             return state, new_state
         return None

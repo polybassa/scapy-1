@@ -15,7 +15,7 @@ from collections import defaultdict
 from types import GeneratorType
 from threading import Lock
 
-from scapy.compat import orb
+from scapy.compat import orb, Self
 from scapy.packet import Raw, Packet
 from scapy.plist import PacketList
 from scapy.sessions import DefaultSession
@@ -253,6 +253,10 @@ class EcuState(object):
             except TypeError:
                 layer.modify_ecu_state.im_func(response, request, new_state)
         return new_state
+
+    def __reduce__(self):
+        # type: () -> Tuple[Type[Self], Tuple[str], Tuple[Dict[str, Any]]]
+        return self.__class__, ("EcuState",), (self.__dict__,)
 
 
 class Ecu(object):

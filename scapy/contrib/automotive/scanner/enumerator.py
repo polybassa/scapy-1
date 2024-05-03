@@ -294,7 +294,7 @@ class ServiceEnumerator(AutomotiveTestCase, metaclass=abc.ABCMeta):
             self._tester_present_sender = None
 
     def post_execute(self, socket, state, global_configuration):
-        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None
+        # type: (_SocketUnion, EcuState, AutomotiveTestCaseExecutorConfiguration) -> None  # noqa: E501
         self._tester_present_sender = None
 
     def execute(self, socket, state, **kwargs):

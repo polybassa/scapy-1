@@ -23,7 +23,7 @@ iff
 implementors
 inout
 interaktive
-joinin
+JoinIn
 merchantibility
 microsof
 mitre

@@ -1095,7 +1095,7 @@ class SixLoWPAN(Packet):
 
     @classmethod
     def dispatch_hook(cls, _pkt=b"", *args, **kargs):
-        """Depending on the payload content, the frame type we should interpret"""
+        """Depending on the payload content, the frame type we should interpret"""  # noqa: E501
         if _pkt and len(_pkt) >= 1:
             fb = ord(_pkt[:1])
             if fb == 0x41:

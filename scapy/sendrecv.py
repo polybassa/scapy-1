@@ -129,6 +129,9 @@ _DOC_SNDRCV_PARAMS_BODY = """
     :param chainEX: If True, exceptions during send will be forwarded.
                     Defaults to False.
     :type chainEX: Optional[bool]
+    :param stop_filter: Python function applied to each packet to determine if
+                        we have to stop the capture after this packet.
+    :type stop_filter: Optional[Callable[[Packet], bool]]
 """
 
 _DOC_SNDRCV_PARAMS_TAIL = """

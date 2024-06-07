@@ -35,11 +35,11 @@ try:
     if conf.contribs['UDS']['treat-response-pending-as-answer']:
         pass
 except KeyError:
-    log_loading.info("Specify \"conf.contribs['UDS'] = "
-                     "{'treat-response-pending-as-answer': True}\" to treat "
-                     "a negative response 'requestCorrectlyReceived-"
-                     "ResponsePending' as answer of a request. \n"
-                     "The default value is False.")
+    # log_loading.info("Specify \"conf.contribs['UDS'] = "
+    #                 "{'treat-response-pending-as-answer': True}\" to treat "
+    #                 "a negative response 'requestCorrectlyReceived-"
+    #                 "ResponsePending' as answer of a request. \n"
+    #                 "The default value is False.")
     conf.contribs['UDS'] = {'treat-response-pending-as-answer': False}
 
 

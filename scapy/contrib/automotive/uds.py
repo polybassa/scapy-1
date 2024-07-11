@@ -21,7 +21,6 @@ from scapy.fields import ByteEnumField, StrField, ConditionalField, \
     PacketField
 from scapy.packet import Packet, bind_layers, NoPayload, Raw
 from scapy.config import conf
-from scapy.error import log_loading
 from scapy.utils import PeriodicSenderThread
 from scapy.contrib.isotp import ISOTP
 

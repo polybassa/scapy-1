@@ -29,7 +29,6 @@ from scapy.cbor.cbor import (
     CBOR_UNDEFINED,
     CBOR_FLOAT,
     CBOR_DECODING_ERROR,
-    RandCBORObject,
 )
 
 from scapy.cbor.cborcodec import (
@@ -42,6 +41,26 @@ from scapy.cbor.cborcodec import (
     CBORcodec_MAP,
     CBORcodec_SEMANTIC_TAG,
     CBORcodec_SIMPLE_AND_FLOAT,
+)
+
+from scapy.cbor.cborfields import (
+    CBORF_element,
+    CBORF_field,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_NEGATIVE_INTEGER,
+    CBORF_INTEGER,
+    CBORF_BYTE_STRING,
+    CBORF_TEXT_STRING,
+    CBORF_BOOLEAN,
+    CBORF_NULL,
+    CBORF_UNDEFINED,
+    CBORF_FLOAT,
+    CBORF_ARRAY,
+    CBORF_ARRAY_OF,
+    CBORF_MAP,
+    CBORF_SEMANTIC_TAG,
+    CBORF_optional,
+    CBORF_PACKET,
 )
 
 __all__ = [
@@ -69,8 +88,6 @@ __all__ = [
     "CBOR_UNDEFINED",
     "CBOR_FLOAT",
     "CBOR_DECODING_ERROR",
-    # Random/Fuzzing
-    "RandCBORObject",
     # Codec classes
     "CBORcodec_Object",
     "CBORcodec_UNSIGNED_INTEGER",
@@ -81,4 +98,25 @@ __all__ = [
     "CBORcodec_MAP",
     "CBORcodec_SEMANTIC_TAG",
     "CBORcodec_SIMPLE_AND_FLOAT",
+    # Field base classes
+    "CBORF_element",
+    "CBORF_field",
+    # Scalar fields
+    "CBORF_UNSIGNED_INTEGER",
+    "CBORF_NEGATIVE_INTEGER",
+    "CBORF_INTEGER",
+    "CBORF_BYTE_STRING",
+    "CBORF_TEXT_STRING",
+    "CBORF_BOOLEAN",
+    "CBORF_NULL",
+    "CBORF_UNDEFINED",
+    "CBORF_FLOAT",
+    # Structured fields
+    "CBORF_ARRAY",
+    "CBORF_ARRAY_OF",
+    "CBORF_MAP",
+    "CBORF_SEMANTIC_TAG",
+    # Complex fields
+    "CBORF_optional",
+    "CBORF_PACKET",
 ]

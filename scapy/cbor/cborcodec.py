@@ -238,7 +238,8 @@ class CBORcodec_UNSIGNED_INTEGER(CBORcodec_Object[int]):
         i = obj.val if isinstance(obj, CBOR_Object) else obj
         if i < 0:
             raise CBOR_Codec_Encoding_Error(
-                "Cannot encode negative value as unsigned integer")
+                "Cannot encode negative value as unsigned integer. "
+                "Use CBOR_NEGATIVE_INTEGER for negative values.")
         return CBOR_encode_head(0, i)
 
     @classmethod
@@ -268,7 +269,8 @@ class CBORcodec_NEGATIVE_INTEGER(CBORcodec_Object[int]):
         i = obj.val if isinstance(obj, CBOR_Object) else obj
         if i >= 0:
             raise CBOR_Codec_Encoding_Error(
-                "Cannot encode non-negative value as negative integer")
+                "Cannot encode non-negative value as negative integer. "
+                "Use CBOR_UNSIGNED_INTEGER for non-negative values.")
         # CBOR negative integer: -1 - n
         return CBOR_encode_head(1, -1 - i)
 
@@ -567,16 +569,38 @@ class CBORcodec_SIMPLE_AND_FLOAT(CBORcodec_Object[Union[int, float, bool, None]]
         elif additional_info == 23:
             return CBOR_UNDEFINED(), s[1:]
         elif additional_info == 25:
-            # Half precision float (2 bytes)
+            # Half precision float (2 bytes) - IEEE 754 binary16
             if len(s) < 3:
                 raise CBOR_Codec_Decoding_Error(
                     "Not enough bytes for half float", remaining=s)
-            # Simplified: convert to full float
-            # In production, proper half-float conversion should be used
             half_bytes = s[1:3]
             remainder = s[3:]
-            # For simplicity, we'll just indicate it's a float
-            return CBOR_FLOAT(0.0), remainder
+            # Convert IEEE 754 binary16 to binary64 (double)
+            half_int = struct.unpack(">H", half_bytes)[0]
+            sign = (half_int >> 15) & 0x1
+            exponent = (half_int >> 10) & 0x1f
+            fraction = half_int & 0x3ff
+            
+            # Handle special cases
+            if exponent == 0:
+                if fraction == 0:
+                    # Zero
+                    float_val = -0.0 if sign else 0.0
+                else:
+                    # Subnormal number
+                    float_val = ((-1) ** sign) * (fraction / 1024.0) * (2 ** -14)
+            elif exponent == 31:
+                if fraction == 0:
+                    # Infinity
+                    float_val = float('-inf') if sign else float('inf')
+                else:
+                    # NaN
+                    float_val = float('nan')
+            else:
+                # Normalized number
+                float_val = ((-1) ** sign) * (1 + fraction / 1024.0) * (2 ** (exponent - 15))
+            
+            return CBOR_FLOAT(float_val), remainder
         elif additional_info == 26:
             # Single precision float (4 bytes)
             if len(s) < 5:

@@ -245,17 +245,17 @@ isinstance(decoded, CBOR_MAP) and len(decoded.val) == 2
 
 = Encode nested structure
 from scapy.cbor.cborcodec import CBORcodec_MAP
-data = {
+input_dict = {
     "name": "John",
     "age": 30,
     "active": True
 }
-encoded = CBORcodec_MAP.enc(data)
+encoded = CBORcodec_MAP.enc(input_dict)
 len(encoded) > 0
 
 = Decode nested structure
-data = b'\xa3\x64name\x64John\x63age\x18\x1e\x66active\xf5'
-obj, remainder = CBOR_Codecs.CBOR.dec(data)
+encoded_data = b'\xa3\x64name\x64John\x63age\x18\x1e\x66active\xf5'
+obj, remainder = CBOR_Codecs.CBOR.dec(encoded_data)
 isinstance(obj, CBOR_MAP) and remainder == b''
 
 + CBOR Error Handling

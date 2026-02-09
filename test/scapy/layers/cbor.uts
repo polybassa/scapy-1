@@ -1,0 +1,279 @@
+% Tests for CBOR encoding/decoding
+# Following the ASN.1 test paradigm
+#
+# Try me with:
+# bash test/run_tests -t test/scapy/layers/cbor.uts -F
+
+########### CBOR Basic Types #######################################
+
++ CBOR Unsigned Integer
+
+= Encode small unsigned integer (0-23)
+from scapy.cbor import *
+obj = CBOR_UNSIGNED_INTEGER(0)
+bytes(obj) == b'\x00'
+
+= Encode unsigned integer with 1-byte value
+obj = CBOR_UNSIGNED_INTEGER(24)
+bytes(obj) == b'\x18\x18'
+
+= Encode unsigned integer with 2-byte value
+obj = CBOR_UNSIGNED_INTEGER(1000)
+bytes(obj) == b'\x19\x03\xe8'
+
+= Encode unsigned integer with 4-byte value
+obj = CBOR_UNSIGNED_INTEGER(1000000)
+bytes(obj) == b'\x1a\x00\x0f\x42\x40'
+
+= Decode small unsigned integer
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x00')
+obj.val == 0 and remainder == b''
+
+= Decode unsigned integer with 1-byte value
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x18\x18')
+obj.val == 24 and remainder == b''
+
+= Decode unsigned integer with 2-byte value
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x19\x03\xe8')
+obj.val == 1000 and remainder == b''
+
++ CBOR Negative Integer
+
+= Encode negative integer -1
+obj = CBOR_NEGATIVE_INTEGER(-1)
+bytes(obj) == b'\x20'
+
+= Encode negative integer -10
+obj = CBOR_NEGATIVE_INTEGER(-10)
+bytes(obj) == b'\x29'
+
+= Encode negative integer -100
+obj = CBOR_NEGATIVE_INTEGER(-100)
+bytes(obj) == b'\x38\x63'
+
+= Decode negative integer -1
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x20')
+obj.val == -1 and remainder == b''
+
+= Decode negative integer -100
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x38\x63')
+obj.val == -100 and remainder == b''
+
++ CBOR Byte String
+
+= Encode empty byte string
+obj = CBOR_BYTE_STRING(b'')
+bytes(obj) == b'\x40'
+
+= Encode byte string
+obj = CBOR_BYTE_STRING(b'hello')
+bytes(obj) == b'\x45hello'
+
+= Decode empty byte string
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x40')
+obj.val == b'' and remainder == b''
+
+= Decode byte string
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x45hello')
+obj.val == b'hello' and remainder == b''
+
++ CBOR Text String
+
+= Encode empty text string
+obj = CBOR_TEXT_STRING('')
+bytes(obj) == b'\x60'
+
+= Encode text string
+obj = CBOR_TEXT_STRING('hello')
+bytes(obj) == b'\x65hello'
+
+= Encode UTF-8 text string
+obj = CBOR_TEXT_STRING('café')
+bytes(obj) == b'\x65caf\xc3\xa9'
+
+= Decode empty text string
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x60')
+obj.val == '' and remainder == b''
+
+= Decode text string
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x65hello')
+obj.val == 'hello' and remainder == b''
+
+= Decode UTF-8 text string
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x65caf\xc3\xa9')
+obj.val == 'café' and remainder == b''
+
++ CBOR Simple Values
+
+= Encode false
+obj = CBOR_FALSE()
+bytes(obj) == b'\xf4'
+
+= Encode true
+obj = CBOR_TRUE()
+bytes(obj) == b'\xf5'
+
+= Encode null
+obj = CBOR_NULL()
+bytes(obj) == b'\xf6'
+
+= Encode undefined
+obj = CBOR_UNDEFINED()
+bytes(obj) == b'\xf7'
+
+= Decode false
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\xf4')
+isinstance(obj, CBOR_FALSE) and obj.val is False and remainder == b''
+
+= Decode true
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\xf5')
+isinstance(obj, CBOR_TRUE) and obj.val is True and remainder == b''
+
+= Decode null
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\xf6')
+isinstance(obj, CBOR_NULL) and obj.val is None and remainder == b''
+
+= Decode undefined
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\xf7')
+isinstance(obj, CBOR_UNDEFINED) and remainder == b''
+
++ CBOR Float
+
+= Encode double precision float
+obj = CBOR_FLOAT(1.5)
+bytes(obj) == b'\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00'
+
+= Decode double precision float
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00')
+abs(obj.val - 1.5) < 0.0001 and remainder == b''
+
++ CBOR Array
+
+= Encode empty array
+obj = CBOR_ARRAY([])
+bytes(obj) == b'\x80'
+
+= Encode array with integers
+from scapy.cbor.cborcodec import CBORcodec_ARRAY
+obj = CBOR_ARRAY([CBOR_UNSIGNED_INTEGER(1), CBOR_UNSIGNED_INTEGER(2), CBOR_UNSIGNED_INTEGER(3)])
+bytes(obj) == b'\x83\x01\x02\x03'
+
+= Encode array with Python integers
+result = CBORcodec_ARRAY.enc([1, 2, 3])
+result == b'\x83\x01\x02\x03'
+
+= Decode empty array
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x80')
+isinstance(obj, CBOR_ARRAY) and obj.val == [] and remainder == b''
+
+= Decode array with integers
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x83\x01\x02\x03')
+isinstance(obj, CBOR_ARRAY) and len(obj.val) == 3
+
+= Decode nested array
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\x82\x01\x82\x02\x03')
+isinstance(obj, CBOR_ARRAY) and len(obj.val) == 2
+
++ CBOR Map
+
+= Encode empty map
+obj = CBOR_MAP({})
+bytes(obj) == b'\xa0'
+
+= Encode map with string keys
+from scapy.cbor.cborcodec import CBORcodec_MAP
+result = CBORcodec_MAP.enc({"a": 1, "b": 2})
+result == b'\xa2\x61a\x01\x61b\x02' or result == b'\xa2\x61b\x02\x61a\x01'
+
+= Decode empty map
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\xa0')
+isinstance(obj, CBOR_MAP) and obj.val == {} and remainder == b''
+
+= Decode map with integer values
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\xa2\x61a\x01\x61b\x02')
+isinstance(obj, CBOR_MAP) and len(obj.val) == 2
+
++ CBOR Semantic Tag
+
+= Encode semantic tag (datetime)
+obj = CBOR_SEMANTIC_TAG((0, CBOR_TEXT_STRING("2013-03-21T20:04:00Z")))
+bytes(obj) == b'\xc0\x74' + b'2013-03-21T20:04:00Z'
+
+= Decode semantic tag
+obj, remainder = CBOR_Codecs.CBOR.dec(b'\xc0\x74' + b'2013-03-21T20:04:00Z')
+isinstance(obj, CBOR_SEMANTIC_TAG) and obj.val[0] == 0 and remainder == b''
+
++ CBOR Roundtrip Tests
+
+= Roundtrip unsigned integer
+original = CBOR_UNSIGNED_INTEGER(42)
+encoded = bytes(original)
+decoded, _ = CBOR_Codecs.CBOR.dec(encoded)
+decoded.val == original.val
+
+= Roundtrip negative integer
+original = CBOR_NEGATIVE_INTEGER(-42)
+encoded = bytes(original)
+decoded, _ = CBOR_Codecs.CBOR.dec(encoded)
+decoded.val == original.val
+
+= Roundtrip byte string
+original = CBOR_BYTE_STRING(b'test data')
+encoded = bytes(original)
+decoded, _ = CBOR_Codecs.CBOR.dec(encoded)
+decoded.val == original.val
+
+= Roundtrip text string
+original = CBOR_TEXT_STRING('test string')
+encoded = bytes(original)
+decoded, _ = CBOR_Codecs.CBOR.dec(encoded)
+decoded.val == original.val
+
+= Roundtrip array
+from scapy.cbor.cborcodec import CBORcodec_ARRAY
+encoded = CBORcodec_ARRAY.enc([1, 2, 3, 4, 5])
+decoded, _ = CBOR_Codecs.CBOR.dec(encoded)
+isinstance(decoded, CBOR_ARRAY) and len(decoded.val) == 5
+
+= Roundtrip map
+from scapy.cbor.cborcodec import CBORcodec_MAP
+encoded = CBORcodec_MAP.enc({"x": 100, "y": 200})
+decoded, _ = CBOR_Codecs.CBOR.dec(encoded)
+isinstance(decoded, CBOR_MAP) and len(decoded.val) == 2
+
++ CBOR Complex Structures
+
+= Encode nested structure
+from scapy.cbor.cborcodec import CBORcodec_MAP
+data = {
+    "name": "John",
+    "age": 30,
+    "active": True
+}
+encoded = CBORcodec_MAP.enc(data)
+len(encoded) > 0
+
+= Decode nested structure
+data = b'\xa3\x64name\x64John\x63age\x18\x1e\x66active\xf5'
+obj, remainder = CBOR_Codecs.CBOR.dec(data)
+isinstance(obj, CBOR_MAP) and remainder == b''
+
++ CBOR Error Handling
+
+= Safe decode with invalid data
+obj, remainder = CBOR_Codecs.CBOR.safedec(b'\xff\xff\xff')
+isinstance(obj, CBOR_DECODING_ERROR)
+
+= Decode with insufficient bytes for length
+try:
+    obj, remainder = CBOR_Codecs.CBOR.dec(b'\x18')
+    False
+except:
+    True
+
+= Decode byte string with insufficient data
+try:
+    obj, remainder = CBOR_Codecs.CBOR.dec(b'\x45hel')
+    False
+except:
+    True

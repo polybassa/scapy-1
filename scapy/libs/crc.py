@@ -230,7 +230,8 @@ class CRCParam:
         """
         sig_end = ((self.reflect_input << 3) | (self.reflect_output << 2)
                    | (bool(self.header) << 1) | bool(self.trailer))
-        return f"{self.poly:0{self.size // 4}x}_{self.init_crc:x}_{self.xor:x}_{sig_end:x}"  # noqa: E231,E501
+        # Use consistent zero-padding for all hex fields in signature
+        return f"{self.poly:0{self.size // 4}x}_{self.init_crc:0{self.size // 4}x}_{self.xor:0{self.size // 4}x}_{sig_end:x}"  # noqa: E231,E501
 
 
 class _CRC_metaclass(type):
@@ -497,7 +498,9 @@ class _CRC_metaclass(type):
         for (tvin, tvout) in self.param.test_vectors:
             out = self(tvin)
             ok &= (out == tvout)
-            print(f"{self.name}\t({tvin.hex()})\t = {out:#0{self.size // 4}x}\t{'ok' if out == tvout else f'FAILED. Expected {tvout:#0{self.size // 4}x}'}".expandtabs(32))  # noqa: E501,E231
+            # Format with 0x prefix and proper zero-padding (size//4 + 2 for '0x')
+            width = self.size // 4 + 2
+            print(f"{self.name}\t({tvin.hex()})\t = {out:#0{width}x}\t{'ok' if out == tvout else f'FAILED. Expected {tvout:#0{width}x}'}".expandtabs(32))  # noqa: E501,E231
         return ok
 
     def __eq__(self, other):
@@ -566,14 +569,14 @@ class _CRC_metaclass(type):
             >>> for (start, end), crc_val in results:
             ...     print(f"Substring at {start}:{end} has CRC {crc_val:#x}")
         """
-        l = len(s)  # noqa: E741
+        data_len = len(s)
         i = 0
         res = []
-        while i < l:
+        while i < data_len:
             j = i
             c = self.create_context()
             c.init()
-            while j < l:
+            while j < data_len:
                 c.update(s[j:j + 1])
                 crc = c.finish()
                 if crc in target_crc:
@@ -667,14 +670,14 @@ class _CRC_metaclass(type):
                                          [False, True], [False, True])
                 }
 
-        l = len(s)  # noqa: E741
+        data_len = len(s)
         sizes = set(c.size // 8 for c in crc_list)
         
         # Extract all potential CRC values from the data (both endiannesses)
         targets = defaultdict(set)  # type: Dict[int, Set[int]]
         for sz in sizes:
             i = 0
-            while i <= l - sz:
+            while i <= data_len - sz:
                 ss = s[i:i + sz]
                 targets[sz].add(int.from_bytes(ss, "little"))
                 targets[sz].add(int.from_bytes(ss, "big"))
@@ -692,13 +695,13 @@ class _CRC_metaclass(type):
         
         # Search for matching CRCs
         i = 0
-        while i < l:
+        while i < data_len:
             # Initialize all contexts
             for clst in ctx.values():
                 for c in clst:
                     c.init()
             j = i
-            while j < l:
+            while j < data_len:
                 # Update all contexts with next byte
                 for sz in sizes:
                     for c in ctx[sz]:
@@ -893,7 +896,7 @@ class CRC_32_AUTOSAR(CRC):
     
     Test vectors:
         - CRC(0x00000000) = 0x6fb32240
-        - CRC(0x332255aabbccddee) = 0xa65a343d
+        - CRC(0x332255aabbccddeeff) = 0xa65a343d
     """
     name = "CRC32 AUTOSAR"
     size = 32

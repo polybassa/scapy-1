@@ -717,7 +717,6 @@ While both ASN.1 and CBOR are data serialization formats, they serve different p
 
 Scapy implements both following the same architectural pattern, making it easy to work with either format. CBOR's simpler structure makes it ideal for IoT, embedded systems, and web APIs, while ASN.1 is prevalent in telecommunications and cryptographic standards.
 
-    
 Automata
 ========
 

@@ -3,6 +3,10 @@
 #
 # Try me with:
 # bash test/run_tests -t test/scapy/layers/cbor.uts -F
+#
+# NOTE: Interoperability tests require cbor2 (test-only dependency):
+# pip install cbor2
+# cbor2 is used ONLY in tests, NOT in the scapy CBOR implementation
 
 ########### CBOR Basic Types #######################################
 

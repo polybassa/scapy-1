@@ -903,4 +903,4 @@ class CRC_32_AUTOSAR(CRC):
     reflect_input = True
     reflect_output = True
     test_vectors = [(b"\0\0\0\0", 0x6fb32240),
-                    (b"\x33\x22\x55\xAA\xBB\xCC\xDD\xEE\xFF", 0xa65a343d), ]
+                    (b"\x33\x22\x55\xAA\xBB\xCC\xDD\xEE\xFF", 0xa65a343d)]

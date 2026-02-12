@@ -82,3 +82,79 @@ print("=" * 50)
 print("For more information, see the UDS_FuzzerEnumerator docstring:")
 print("  help(UDS_FuzzerEnumerator)")
 print("=" * 50)
+
+print()
+print("=" * 50)
+print("Example 4: Authentication Service Fuzzing")
+print("=" * 50)
+print()
+
+# Example 4: Authentication Service (0x29) Fuzzing
+# =================================================
+
+print()
+print("=" * 50)
+print("Example 4: Authentication Service Fuzzing")
+print("=" * 50)
+print()
+
+# Example 4: Authentication Service (0x29) Fuzzing
+print("UDS Authentication Service (0x29) is critical for security.")
+print("The UDS_AuthenticationFuzzerEnumerator provides specialized fuzzing")
+print("for all 8 authentication subfunctions.")
+print()
+
+from scapy.contrib.automotive.uds import UDS_AUTH
+from scapy.contrib.automotive.uds_scan import UDS_AuthenticationFuzzerEnumerator
+
+auth_fuzzer = UDS_AuthenticationFuzzerEnumerator()
+
+print("Authentication fuzzer initialized:")
+print(f"  Description: {auth_fuzzer._description}")
+print()
+
+# Show authentication subfunctions being tested
+print("Authentication subfunctions tested:")
+auth_subfuncs = {
+    0x00: 'deAuthenticate',
+    0x01: 'verifyCertificateUnidirectional',
+    0x02: 'verifyCertificateBidirectional',
+    0x03: 'proofOfOwnership',
+    0x04: 'transmitCertificate',
+    0x05: 'requestChallengeForAuthentication',
+    0x06: 'verifyProofOfOwnershipUnidirectional',
+    0x07: 'verifyProofOfOwnershipBidirectional',
+    0x08: 'authenticationConfiguration'
+}
+
+for code, name in auth_subfuncs.items():
+    print(f"  0x{code:02x}: {name}")
+
+print()
+print("Authentication-specific response scoring:")
+print("  - Successful authentication: 150 points (CRITICAL)")
+print("  - Certificate/key errors (0x35, 0x36, 0x50-0x5d): 70 points (HIGH)")
+print("  - Other responses: standard scoring")
+print()
+
+print("Example usage with health check:")
+print("""
+# For actual ECU fuzzing:
+def health_check(socket):
+    resp = socket.sr1(UDS()/UDS_TP(), timeout=1, verbose=False)
+    return resp is not None and resp.service != 0x7f
+
+fuzzer = UDS_AuthenticationFuzzerEnumerator()
+fuzzer.execute(
+    socket,
+    EcuState(session=1),
+    health_check_callback=health_check,
+    health_check_interval=25,
+    mutation_strategy='smart',
+    max_mutations=500
+)
+""")
+
+print("=" * 50)
+print("Authentication service fuzzing example complete!")
+print("=" * 50)

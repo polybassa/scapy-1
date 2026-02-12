@@ -1350,6 +1350,11 @@ class UDS_FuzzerEnumerator(UDS_Enumerator):
     SCORE_KNOWN_NEGATIVE_RESPONSE = 10
     SCORE_NO_RESPONSE = 1
     SCORE_COMMON_REJECTION = 5  # serviceNotSupported, generalReject, etc.
+    
+    # Fuzzing parameters
+    SEED_ADDITION_PROBABILITY = 0.1  # Probability of adding mutation to seed pool
+    MAX_SEED_POOL_SIZE = 100  # Maximum number of seeds in the pool
+    MAX_HIGH_SCORE_SEEDS = 50  # Maximum number of high-score seeds to keep
 
     def __init__(self):
         # type: () -> None
@@ -1382,9 +1387,11 @@ class UDS_FuzzerEnumerator(UDS_Enumerator):
             return self.SCORE_POSITIVE_RESPONSE
 
         # Common rejection codes are less interesting
-        if nrc in [0x11, 0x10, 0x12, 0x7f, 0x7e]:
-            # serviceNotSupported, generalReject, subFunctionNotSupported,
-            # serviceNotSupportedInActiveSession, subFunctionNotSupportedInActiveSession
+        if nrc in [0x10, 0x11, 0x12, 0x7e, 0x7f]:
+            # generalReject(0x10), serviceNotSupported(0x11),
+            # subFunctionNotSupported(0x12),
+            # subFunctionNotSupportedInActiveSession(0x7e),
+            # serviceNotSupportedInActiveSession(0x7f)
             if nrc not in self._seen_response_codes:
                 self._seen_response_codes.add(nrc)
                 return self.SCORE_NEW_NEGATIVE_RESPONSE
@@ -1524,7 +1531,8 @@ class UDS_FuzzerEnumerator(UDS_Enumerator):
             yield mutated
 
             # Occasionally add the mutated packet to seed pool for further mutation
-            if random.random() < 0.1 and len(seed_pool) < 100:
+            if (random.random() < self.SEED_ADDITION_PROBABILITY and
+                    len(seed_pool) < self.MAX_SEED_POOL_SIZE):
                 seed_pool.append(mutated)
 
     def _store_result(self, state, request, response):
@@ -1550,7 +1558,7 @@ class UDS_FuzzerEnumerator(UDS_Enumerator):
             if request not in self._high_score_seeds:
                 self._high_score_seeds.append(copy.copy(request))
                 # Limit the size of high-score seeds
-                if len(self._high_score_seeds) > 50:
+                if len(self._high_score_seeds) > self.MAX_HIGH_SCORE_SEEDS:
                     self._high_score_seeds.pop(0)
 
     def execute(self, socket, state, **kwargs):

@@ -1444,5 +1444,3 @@ assert len(unique_mutations) > 10  # Should have at least 10 different mutations
 # Check that mutations respect max_size
 assert all(len(m) <= 100 for m in mutations)
 
-print(f"Generated {len(unique_mutations)} unique mutations from 100 attempts")
-

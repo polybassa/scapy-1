@@ -20,12 +20,14 @@ from collections import defaultdict
 from typing import Optional, Any, Iterable, Set
 
 from scapy.packet import Packet, Raw
+from scapy.contrib.automotive import log_automotive
 from scapy.contrib.automotive.scanner.enumerator import (
     ServiceEnumerator,
     _AutomotiveTestCaseScanResult
 )
 from scapy.contrib.automotive.uds import (
-    UDS, UDS_AUTH, UDS_WDBI, UDS_IOCBI, UDS_RC, UDS_WMBA,
+    UDS, UDS_TP, UDS_DSC, UDS_ER, UDS_SA, UDS_RDBI, UDS_CC,
+    UDS_AUTH, UDS_WDBI, UDS_IOCBI, UDS_RC, UDS_WMBA,
     UDS_RD, UDS_RU, UDS_TD, UDS_RTE
 )
 

@@ -1986,6 +1986,218 @@ assert "Unique response codes seen:" in stats
 
 
 
+############
+############
+= Test UDS_WriteDataByIdentifierFuzzerEnumerator initialization
+
+from scapy.contrib.automotive.uds_scan import UDS_WriteDataByIdentifierFuzzerEnumerator
+
+wdbi_fuzzer = UDS_WriteDataByIdentifierFuzzerEnumerator()
+assert wdbi_fuzzer is not None
+assert wdbi_fuzzer._mutation_count == 0
+assert "WriteDataByIdentifier" in wdbi_fuzzer._description
+
+= Test UDS_WriteDataByIdentifierFuzzerEnumerator scoring
+
+wdbi_fuzzer = UDS_WriteDataByIdentifierFuzzerEnumerator()
+
+# Test positive response (0x6E) - successful write (CRITICAL)
+req = UDS() / UDS_WDBI(dataIdentifier=0xF190)
+resp = UDS(b'\x6e\xf1\x90')  # Positive WriteDataByIdentifier response
+score = wdbi_fuzzer._score_response(req, resp)
+assert score > wdbi_fuzzer.SCORE_POSITIVE_RESPONSE  # Should have bonus
+
+# Test write-specific error codes
+resp_error = UDS(b'\x7f\x2e\x31')  # NR: requestOutOfRange (0x31)
+score = wdbi_fuzzer._score_response(req, resp_error)
+assert score >= wdbi_fuzzer.SCORE_NEW_NEGATIVE_RESPONSE
+
+= Test UDS_InputOutputControlByIdentifierFuzzerEnumerator initialization
+
+from scapy.contrib.automotive.uds_scan import UDS_InputOutputControlByIdentifierFuzzerEnumerator
+
+iocbi_fuzzer = UDS_InputOutputControlByIdentifierFuzzerEnumerator()
+assert iocbi_fuzzer is not None
+assert "InputOutputControlByIdentifier" in iocbi_fuzzer._description
+
+= Test UDS_InputOutputControlByIdentifierFuzzerEnumerator scoring
+
+iocbi_fuzzer = UDS_InputOutputControlByIdentifierFuzzerEnumerator()
+
+# Test positive response (0x6F) - successful IO control (CRITICAL)
+req = UDS() / UDS_IOCBI(dataIdentifier=0x0100)
+resp = UDS(b'\x6f\x01\x00')  # Positive IOCBI response
+score = iocbi_fuzzer._score_response(req, resp)
+assert score > iocbi_fuzzer.SCORE_POSITIVE_RESPONSE
+
+= Test UDS_RoutineControlFuzzerEnumerator initialization
+
+from scapy.contrib.automotive.uds_scan import UDS_RoutineControlFuzzerEnumerator
+
+rc_fuzzer = UDS_RoutineControlFuzzerEnumerator()
+assert rc_fuzzer is not None
+assert "RoutineControl" in rc_fuzzer._description
+
+= Test UDS_RoutineControlFuzzerEnumerator scoring
+
+rc_fuzzer = UDS_RoutineControlFuzzerEnumerator()
+
+# Test positive response (0x71) - successful routine execution
+req = UDS() / UDS_RC(routineControlType=1, routineIdentifier=0xFF00)
+resp = UDS(b'\x71\x01\xff\x00')  # Positive RC response
+score = rc_fuzzer._score_response(req, resp)
+assert score > rc_fuzzer.SCORE_POSITIVE_RESPONSE
+
+= Test UDS_WriteMemoryByAddressFuzzerEnumerator initialization
+
+from scapy.contrib.automotive.uds_scan import UDS_WriteMemoryByAddressFuzzerEnumerator
+
+wmba_fuzzer = UDS_WriteMemoryByAddressFuzzerEnumerator()
+assert wmba_fuzzer is not None
+assert "WriteMemoryByAddress" in wmba_fuzzer._description
+
+= Test UDS_WriteMemoryByAddressFuzzerEnumerator scoring
+
+wmba_fuzzer = UDS_WriteMemoryByAddressFuzzerEnumerator()
+
+# Test positive response (0x7D) - successful memory write (EXTREMELY CRITICAL)
+req = UDS() / UDS_WMBA(memoryAddressLen=2, memorySizeLen=2)
+req.memoryAddress2 = 0x1000
+req.memorySize2 = 0x10
+resp = UDS(b'\x7d\x21\x10\x00\x00\x10')  # Positive WMBA response
+score = wmba_fuzzer._score_response(req, resp)
+# Should have maximum bonus (100 extra points)
+assert score >= 200  # SCORE_POSITIVE_RESPONSE (100) + 100 bonus
+
+= Test UDS_DataTransferFuzzerEnumerator initialization
+
+from scapy.contrib.automotive.uds_scan import UDS_DataTransferFuzzerEnumerator
+
+dt_fuzzer = UDS_DataTransferFuzzerEnumerator()
+assert dt_fuzzer is not None
+assert "Data Transfer" in dt_fuzzer._description
+
+= Test UDS_DataTransferFuzzerEnumerator scoring
+
+dt_fuzzer = UDS_DataTransferFuzzerEnumerator()
+
+# Test positive response for RequestDownload (0x74)
+req = UDS() / UDS_RD(dataFormatIdentifier=0, memoryAddressLen=2, memorySizeLen=2)
+req.memoryAddress2 = 0x1000
+req.memorySize2 = 0x100
+resp = UDS(b'\x74\x20\x10\x00')  # Positive RequestDownload response
+score = dt_fuzzer._score_response(req, resp)
+assert score > dt_fuzzer.SCORE_POSITIVE_RESPONSE
+
+# Test TransferData positive response (0x76)
+req_td = UDS() / UDS_TD(blockSequenceCounter=1)
+resp_td = UDS(b'\x76\x01')  # Positive TransferData response
+score_td = dt_fuzzer._score_response(req_td, resp_td)
+assert score_td > dt_fuzzer.SCORE_POSITIVE_RESPONSE
+
+= Test Tier 2 fuzzers with Executor - WriteDataByIdentifier
+
+def wdbi_handler(resp, req):
+    """Handler for WDBI requests"""
+    if req.service == 0x3e:
+        return False
+    if req.service == 0x10:
+        return False
+    if req.service == 0x2E:  # WriteDataByIdentifier
+        # Simulate various responses
+        if hasattr(req, 'dataIdentifier'):
+            if req.dataIdentifier == 0xF190:  # VIN - protected
+                resp.negativeResponseCode = "securityAccessDenied"
+                return True
+            elif req.dataIdentifier in [0x0100, 0x0200]:
+                resp.negativeResponseCode = "requestOutOfRange"
+                return True
+        resp.negativeResponseCode = "serviceNotSupported"
+        return True
+    resp.negativeResponseCode = "serviceNotSupported"
+    return True
+
+resps = [
+    EcuResponse(None, [UDS() / UDS_DSCPR(diagnosticSessionType=1)]),
+    EcuResponse(None, [UDS(b'\x7e\x00')]),
+    EcuResponse(None, [UDS() / UDS_NR()], wdbi_handler)
+]
+
+es = [UDS_WriteDataByIdentifierFuzzerEnumerator]
+
+debug_dissector_backup = conf.debug_dissector
+conf.debug_dissector = False
+
+scanner = executeScannerInVirtualEnvironment(
+    resps,
+    es,
+    UDS_WriteDataByIdentifierFuzzerEnumerator_kwargs={
+        "max_mutations": 30,
+        "mutation_rate": 0.1,
+        "mutation_strategy": "random",
+        "count": 30,
+        "timeout": 0.1
+    },
+    unstable_socket=False
+)
+
+conf.debug_dissector = debug_dissector_backup
+
+assert scanner.scan_completed
+tc = scanner.configuration.test_cases[0]
+assert tc._mutation_count > 0
+assert len(tc.results) > 0
+
+= Test Tier 2 fuzzers with Executor - RoutineControl
+
+def rc_handler(resp, req):
+    """Handler for RoutineControl requests"""
+    if req.service == 0x3e:
+        return False
+    if req.service == 0x10:
+        return False
+    if req.service == 0x31:  # RoutineControl
+        if hasattr(req, 'routineControlType'):
+            if req.routineControlType == 1:  # startRoutine
+                resp.negativeResponseCode = "requestCorrectlyReceived-ResponsePending"
+                return True
+        resp.negativeResponseCode = "subFunctionNotSupported"
+        return True
+    resp.negativeResponseCode = "serviceNotSupported"
+    return True
+
+resps = [
+    EcuResponse(None, [UDS() / UDS_DSCPR(diagnosticSessionType=1)]),
+    EcuResponse(None, [UDS(b'\x7e\x00')]),
+    EcuResponse(None, [UDS() / UDS_NR()], rc_handler)
+]
+
+es = [UDS_RoutineControlFuzzerEnumerator]
+
+debug_dissector_backup = conf.debug_dissector
+conf.debug_dissector = False
+
+scanner = executeScannerInVirtualEnvironment(
+    resps,
+    es,
+    UDS_RoutineControlFuzzerEnumerator_kwargs={
+        "max_mutations": 30,
+        "mutation_rate": 0.1,
+        "mutation_strategy": "random",
+        "count": 30,
+        "timeout": 0.1
+    },
+    unstable_socket=False
+)
+
+conf.debug_dissector = debug_dissector_backup
+
+assert scanner.scan_completed
+tc = scanner.configuration.test_cases[0]
+assert tc._mutation_count > 0
+
+
+
 + Cleanup
 
 

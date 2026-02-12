@@ -158,3 +158,139 @@ fuzzer.execute(
 print("=" * 50)
 print("Authentication service fuzzing example complete!")
 print("=" * 50)
+
+print()
+print("=" * 70)
+print("Example 5: Tier 2 Service Fuzzers (Write/Control Operations)")
+print("=" * 70)
+print()
+
+print("Tier 2 services represent write/control operations with medium-to-high")
+print("security implications. These fuzzers target services that can modify")
+print("ECU configuration, control hardware, or manipulate firmware.")
+print()
+
+# Import Tier 2 fuzzers
+from scapy.contrib.automotive.uds_scan import (
+    UDS_WriteDataByIdentifierFuzzerEnumerator,
+    UDS_InputOutputControlByIdentifierFuzzerEnumerator,
+    UDS_RoutineControlFuzzerEnumerator,
+    UDS_WriteMemoryByAddressFuzzerEnumerator,
+    UDS_DataTransferFuzzerEnumerator
+)
+
+print("Available Tier 2 Fuzzers:")
+print("-" * 70)
+
+tier2_fuzzers = [
+    ("WriteDataByIdentifier (0x2E)", UDS_WriteDataByIdentifierFuzzerEnumerator(),
+     "Modifies ECU data identifiers (VIN, calibration, config)"),
+    ("InputOutputControlByIdentifier (0x2F)", UDS_InputOutputControlByIdentifierFuzzerEnumerator(),
+     "Controls hardware actuators and sensors"),
+    ("RoutineControl (0x31)", UDS_RoutineControlFuzzerEnumerator(),
+     "Executes diagnostic procedures and calibration routines"),
+    ("WriteMemoryByAddress (0x3D)", UDS_WriteMemoryByAddressFuzzerEnumerator(),
+     "Direct memory write operations (HIGHEST RISK)"),
+    ("DataTransfer (0x34/35/36/37)", UDS_DataTransferFuzzerEnumerator(),
+     "Firmware download/upload and transfer operations")
+]
+
+for name, fuzzer, description in tier2_fuzzers:
+    print(f"\n{name}")
+    print(f"  {description}")
+    print(f"  Scoring: ", end="")
+    
+    # Show scoring emphasis
+    if "WriteMemoryByAddress" in name:
+        print("200 pts for successful write (CRITICAL)")
+    elif "DataTransfer" in name:
+        print("160 pts for successful transfer (HIGH)")
+    elif "WriteDataByIdentifier" in name or "InputOutputControl" in name:
+        print("150 pts for successful write/control (HIGH)")
+    else:
+        print("140 pts for successful execution (MEDIUM-HIGH)")
+
+print()
+print("-" * 70)
+print()
+
+print("Security Risk Hierarchy (by scoring):")
+print("  1. WriteMemoryByAddress:        200 pts (direct memory access)")
+print("  2. DataTransfer:                160 pts (firmware manipulation)")
+print("  3. WriteDataByIdentifier:       150 pts (config modification)")
+print("  4. InputOutputControlByIdentifier: 150 pts (hardware control)")
+print("  5. RoutineControl:              140 pts (procedure execution)")
+print()
+
+print("Example usage - WriteDataByIdentifier fuzzer:")
+print("-" * 70)
+print("""
+# Fuzz write operations to data identifiers
+from scapy.contrib.automotive.uds_scan import UDS_WriteDataByIdentifierFuzzerEnumerator
+
+def health_check(socket):
+    resp = socket.sr1(UDS()/UDS_TP(), timeout=1, verbose=False)
+    return resp is not None and resp.service != 0x7f
+
+fuzzer = UDS_WriteDataByIdentifierFuzzerEnumerator()
+fuzzer.execute(
+    socket,
+    EcuState(session=1),
+    health_check_callback=health_check,
+    health_check_interval=50,
+    mutation_strategy='smart',  # Prioritize high-scoring mutations
+    max_mutations=300
+)
+
+# Review results
+print(fuzzer.show_statistics())
+""")
+
+print()
+print("Example usage - WriteMemoryByAddress fuzzer (HIGHEST RISK):")
+print("-" * 70)
+print("""
+# CAUTION: This fuzzer targets direct memory writes
+# Only use in controlled testing environments!
+
+from scapy.contrib.automotive.uds_scan import UDS_WriteMemoryByAddressFuzzerEnumerator
+
+fuzzer = UDS_WriteMemoryByAddressFuzzerEnumerator()
+fuzzer.execute(
+    socket,
+    EcuState(session=1),
+    health_check_callback=health_check,
+    health_check_interval=20,  # More frequent health checks
+    mutation_strategy='guided',  # Focus on high-scoring seeds
+    max_mutations=200  # Fewer mutations due to risk
+)
+""")
+
+print()
+print("Example usage - DataTransfer fuzzer (Firmware operations):")
+print("-" * 70)
+print("""
+# Fuzz firmware download/upload/transfer sequences
+from scapy.contrib.automotive.uds_scan import UDS_DataTransferFuzzerEnumerator
+
+fuzzer = UDS_DataTransferFuzzerEnumerator()
+fuzzer.execute(
+    socket,
+    EcuState(session=1),
+    health_check_callback=health_check,
+    health_check_interval=30,
+    mutation_strategy='smart',
+    max_mutations=400  # More mutations to cover all transfer stages
+)
+
+# Check discovered transfer vulnerabilities
+stats = fuzzer.show_statistics()
+print(stats)
+if len(fuzzer._high_score_seeds) > 0:
+    print("\\nHigh-scoring transfer sequences discovered!")
+""")
+
+print()
+print("=" * 70)
+print("Tier 2 fuzzer examples complete!")
+print("=" * 70)

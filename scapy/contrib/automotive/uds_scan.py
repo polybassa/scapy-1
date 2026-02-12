@@ -1527,13 +1527,13 @@ class UDS_FuzzerEnumerator(UDS_Enumerator):
             if random.random() < 0.1 and len(seed_pool) < 100:
                 seed_pool.append(mutated)
 
-    def _store_result(self, state, request, response, req_ts, resp_ts):
-        # type: (EcuState, Packet, Optional[Packet], Union[float, EDecimal], Optional[Union[float, EDecimal]]) -> None  # noqa: E501
+    def _store_result(self, state, request, response):
+        # type: (EcuState, Packet, Optional[Packet]) -> None
         """
         Store result and update scoring for the seed.
         """
         super(UDS_FuzzerEnumerator, self)._store_result(
-            state, request, response, req_ts, resp_ts
+            state, request, response
         )
         
         # Score the response

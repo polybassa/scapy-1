@@ -1284,7 +1284,7 @@ class UDS_TDEnumerator(UDS_Enumerator):
 class UDS_FuzzerEnumerator(UDS_Enumerator):
     """
     Fuzzer enumerator for UDS protocol that intelligently mutates requests
-    based on ECU responses. This enumerator implements a reward-based fuzzing
+    based on ECU responses. This enumerator implements a score-based fuzzing
     approach where successful mutations (those that trigger interesting
     responses) are more likely to be used as seeds for further mutations.
     
@@ -1562,17 +1562,8 @@ class UDS_FuzzerEnumerator(UDS_Enumerator):
         health_check_callback = kwargs.get('health_check_callback', None)
         health_check_interval = kwargs.get('health_check_interval', 50)
         
-        # Override evaluate function to add health checks
-        original_count = kwargs.get('count', 0)
-        
         # If health check is provided, wrap the execution
         if health_check_callback is not None:
-            # Track request count for health checks
-            request_count = [0]  # Use list to allow modification in nested function
-            
-            # Store original timeout
-            original_timeout = kwargs.get('timeout', 1)
-            
             # Execute in chunks with health checks
             chunk_size = health_check_interval
             total_requests = kwargs.get('max_mutations', 1000)

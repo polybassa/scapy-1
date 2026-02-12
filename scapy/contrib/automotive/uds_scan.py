@@ -1629,7 +1629,8 @@ class UDS_FuzzerEnumerator(UDS_Enumerator):
         Show fuzzing statistics including mutation count, response
         distribution, and health check status.
         """
-        stats = super(UDS_FuzzerEnumerator, self).show_statistics()
+        # Build statistics from parent's show() method
+        base_stats = self.show(dump=True, filtered=True, verbose=False)
         
         additional_stats = "\n" + "=" * 50 + "\n"
         additional_stats += "Fuzzer-Specific Statistics:\n"
@@ -1653,7 +1654,7 @@ class UDS_FuzzerEnumerator(UDS_Enumerator):
                 except Exception:
                     additional_stats += "  Score %3d: <unparseable>\n" % score
         
-        return stats + additional_stats
+        return base_stats + additional_stats
 
 
 class UDS_Scanner(AutomotiveTestCaseExecutor):

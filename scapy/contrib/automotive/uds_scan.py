@@ -29,6 +29,7 @@ from typing import (
 from scapy.compat import orb
 from scapy.contrib.automotive import log_automotive
 from scapy.contrib.automotive.ecu import EcuState
+from scapy.utils import EDecimal
 from scapy.contrib.automotive.scanner.configuration import \
     AutomotiveTestCaseExecutorConfiguration  # noqa: E501
 from scapy.contrib.automotive.scanner.enumerator import ServiceEnumerator, \
@@ -1278,6 +1279,382 @@ class UDS_TDEnumerator(UDS_Enumerator):
         return "0x%02x: %s" % (
             tup[1].blockSequenceCounter,
             tup[1].sprintf("%UDS_TD.blockSequenceCounter%"))
+
+
+class UDS_FuzzerEnumerator(UDS_Enumerator):
+    """
+    Fuzzer enumerator for UDS protocol that intelligently mutates requests
+    based on ECU responses. This enumerator implements a reward-based fuzzing
+    approach where successful mutations (those that trigger interesting
+    responses) are more likely to be used as seeds for further mutations.
+    
+    The enumerator analyzes responses and assigns scores:
+    - High score: Unexpected positive responses, crashes, or unusual behavior
+    - Medium score: New negative response codes not seen before
+    - Low score: Common negative responses (serviceNotSupported, etc.)
+    - Zero score: No response (timeout)
+    
+    Example:
+        >>> def health_check(socket):
+        >>>     resp = socket.sr1(UDS()/UDS_TP(), timeout=1, verbose=False)
+        >>>     return resp is not None and resp.service != 0x7f
+        >>>
+        >>> enumerator = UDS_FuzzerEnumerator()
+        >>> enumerator.execute(
+        >>>     socket,
+        >>>     EcuState(session=1),
+        >>>     health_check_callback=health_check,
+        >>>     health_check_interval=50,
+        >>>     mutation_strategy='smart',
+        >>>     initial_seeds=[UDS()/UDS_DSC(diagnosticSessionType=2)],
+        >>>     max_mutations=1000
+        >>> )
+    """
+    _description = "Fuzzing with intelligent mutation"
+    _supported_kwargs = copy.copy(ServiceEnumerator._supported_kwargs)
+    _supported_kwargs.update({
+        'health_check_callback': (type(lambda: None), None),
+        'health_check_interval': (int, lambda x: x > 0),
+        'mutation_strategy': (str, lambda x: x in ['random', 'smart', 'guided']),
+        'initial_seeds': ((list, tuple), None),
+        'max_mutations': (int, lambda x: x > 0),
+        'mutation_rate': (float, lambda x: 0.0 < x <= 1.0),
+        'max_payload_size': (int, lambda x: x > 0),
+    })
+    _supported_kwargs_doc = ServiceEnumerator._supported_kwargs_doc + """
+        :param health_check_callback: Callable function to check if the ECU
+                                      is still healthy/responsive. Should return
+                                      True if healthy, False otherwise.
+                                      Signature: (socket) -> bool
+        :type health_check_callback: Callable
+        :param int health_check_interval: Number of requests between health
+                                          checks. Default is 50.
+        :param str mutation_strategy: Strategy for mutation generation.
+                                      'random': Pure random mutations
+                                      'smart': Based on response scoring
+                                      'guided': Prioritize high-scoring seeds
+                                      Default is 'smart'.
+        :param initial_seeds: List of initial UDS packets to use as mutation
+                             seeds. If not provided, uses common UDS services.
+        :type initial_seeds: list or tuple
+        :param int max_mutations: Maximum number of mutations to generate.
+                                 Default is 1000.
+        :param float mutation_rate: Probability of mutating each byte.
+                                   Default is 0.1 (10% chance per byte).
+        :param int max_payload_size: Maximum size of mutated payload.
+                                    Default is 256 bytes."""
+
+    # Response score weights
+    SCORE_POSITIVE_RESPONSE = 100
+    SCORE_NEW_NEGATIVE_RESPONSE = 50
+    SCORE_KNOWN_NEGATIVE_RESPONSE = 10
+    SCORE_NO_RESPONSE = 1
+    SCORE_COMMON_REJECTION = 5  # serviceNotSupported, generalReject, etc.
+
+    def __init__(self):
+        # type: () -> None
+        super(UDS_FuzzerEnumerator, self).__init__()
+        self._seed_scores = defaultdict(int)  # type: Dict[bytes, int]
+        self._seen_response_codes = set()  # type: Set[int]
+        self._mutation_count = 0
+        self._health_check_failures = 0
+        self._high_score_seeds = []  # type: List[Packet]
+
+    def _score_response(self, req, resp):
+        # type: (Packet, Optional[Packet]) -> int
+        """
+        Score the response to determine how interesting it is.
+        Higher scores indicate more interesting responses that should
+        be used as seeds for future mutations.
+        """
+        if resp is None:
+            return self.SCORE_NO_RESPONSE
+
+        # Positive response - very interesting!
+        if resp.service != 0x7f:
+            return self.SCORE_POSITIVE_RESPONSE
+
+        # Negative response - score based on the response code
+        try:
+            nrc = self._get_negative_response_code(resp)
+        except (AttributeError, IndexError):
+            # Malformed response - interesting!
+            return self.SCORE_POSITIVE_RESPONSE
+
+        # Common rejection codes are less interesting
+        if nrc in [0x11, 0x10, 0x12, 0x7f, 0x7e]:
+            # serviceNotSupported, generalReject, subFunctionNotSupported,
+            # serviceNotSupportedInActiveSession, subFunctionNotSupportedInActiveSession
+            if nrc not in self._seen_response_codes:
+                self._seen_response_codes.add(nrc)
+                return self.SCORE_NEW_NEGATIVE_RESPONSE
+            return self.SCORE_COMMON_REJECTION
+
+        # New negative response code - interesting!
+        if nrc not in self._seen_response_codes:
+            self._seen_response_codes.add(nrc)
+            return self.SCORE_NEW_NEGATIVE_RESPONSE
+
+        return self.SCORE_KNOWN_NEGATIVE_RESPONSE
+
+    def _mutate_packet(self, seed, mutation_rate=0.1, max_size=256):
+        # type: (Packet, float, int) -> Packet
+        """
+        Mutate a packet by randomly modifying bytes in its payload.
+        Uses various mutation strategies including bit flips, byte
+        replacements, insertions, and deletions.
+        """
+        # Get packet bytes
+        pkt_bytes = bytearray(bytes(seed))
+        
+        # Ensure we have at least the UDS service byte
+        if len(pkt_bytes) == 0:
+            pkt_bytes = bytearray([random.randint(0, 0xff)])
+
+        # Apply various mutations
+        mutation_type = random.randint(0, 5)
+        
+        if mutation_type == 0:  # Bit flip
+            if len(pkt_bytes) > 1:
+                idx = random.randint(1, len(pkt_bytes) - 1)
+                bit_pos = random.randint(0, 7)
+                pkt_bytes[idx] ^= (1 << bit_pos)
+        
+        elif mutation_type == 1:  # Byte replacement
+            if len(pkt_bytes) > 1:
+                idx = random.randint(1, len(pkt_bytes) - 1)
+                pkt_bytes[idx] = random.randint(0, 0xff)
+        
+        elif mutation_type == 2:  # Insert random byte
+            if len(pkt_bytes) < max_size:
+                idx = random.randint(1, len(pkt_bytes))
+                pkt_bytes.insert(idx, random.randint(0, 0xff))
+        
+        elif mutation_type == 3:  # Delete byte
+            if len(pkt_bytes) > 2:
+                idx = random.randint(1, len(pkt_bytes) - 1)
+                del pkt_bytes[idx]
+        
+        elif mutation_type == 4:  # Replace with interesting value
+            if len(pkt_bytes) > 1:
+                idx = random.randint(1, len(pkt_bytes) - 1)
+                interesting_values = [0x00, 0xff, 0x7f, 0x80, 0x01]
+                pkt_bytes[idx] = random.choice(interesting_values)
+        
+        else:  # Multiple random byte mutations
+            num_mutations = random.randint(1, min(3, len(pkt_bytes)))
+            for _ in range(num_mutations):
+                if len(pkt_bytes) > 1:
+                    idx = random.randint(1, len(pkt_bytes) - 1)
+                    if random.random() < mutation_rate:
+                        pkt_bytes[idx] = random.randint(0, 0xff)
+
+        # Ensure the packet doesn't exceed max size
+        if len(pkt_bytes) > max_size:
+            pkt_bytes = pkt_bytes[:max_size]
+
+        # Return mutated packet
+        return UDS(bytes(pkt_bytes))
+
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+        """
+        Generate initial requests using mutation-based fuzzing.
+        """
+        # Get parameters
+        max_mutations = kwargs.get('max_mutations', 1000)
+        mutation_rate = kwargs.get('mutation_rate', 0.1)
+        max_payload_size = kwargs.get('max_payload_size', 256)
+        mutation_strategy = kwargs.get('mutation_strategy', 'smart')
+        initial_seeds = kwargs.get('initial_seeds', None)
+
+        # Default seed packets covering common UDS services
+        if initial_seeds is None:
+            initial_seeds = [
+                UDS() / UDS_DSC(diagnosticSessionType=1),
+                UDS() / UDS_DSC(diagnosticSessionType=2),
+                UDS() / UDS_DSC(diagnosticSessionType=3),
+                UDS() / UDS_TP(),
+                UDS() / UDS_ER(resetType=1),
+                UDS() / UDS_RDBI(identifiers=[0x0100]),
+                UDS() / UDS_RDBI(identifiers=[0xf190]),
+                UDS() / UDS_WDBI(dataIdentifier=0x0100) / Raw(b'\x00'),
+                UDS() / UDS_SA(securityAccessType=1),
+                UDS() / UDS_RC(routineControlType=1, routineIdentifier=0x0100),
+                UDS() / UDS_CC(controlType=0),
+                UDS() / Raw(b'\x27\x01'),  # Raw security access
+                UDS() / Raw(b'\x31\x01'),  # Raw routine control
+            ]
+
+        # Store seeds for mutation
+        seed_pool = list(initial_seeds)
+        
+        # Generate mutations
+        for i in range(max_mutations):
+            # Select seed based on strategy
+            if mutation_strategy == 'guided' and self._high_score_seeds:
+                # Prefer high-scoring seeds
+                seed = random.choice(self._high_score_seeds)
+            elif mutation_strategy == 'smart' and self._seed_scores:
+                # Weighted random selection based on scores
+                seeds_with_scores = [
+                    (s, self._seed_scores.get(bytes(s), 1))
+                    for s in seed_pool
+                ]
+                total_score = sum(score for _, score in seeds_with_scores)
+                if total_score > 0:
+                    r = random.uniform(0, total_score)
+                    cumsum = 0
+                    for pkt, score in seeds_with_scores:
+                        cumsum += score
+                        if cumsum >= r:
+                            seed = pkt
+                            break
+                    else:
+                        seed = random.choice(seed_pool)
+                else:
+                    seed = random.choice(seed_pool)
+            else:
+                # Random selection
+                seed = random.choice(seed_pool)
+
+            # Mutate and yield
+            mutated = self._mutate_packet(seed, mutation_rate, max_payload_size)
+            self._mutation_count += 1
+            yield mutated
+
+            # Occasionally add the mutated packet to seed pool for further mutation
+            if random.random() < 0.1 and len(seed_pool) < 100:
+                seed_pool.append(mutated)
+
+    def _store_result(self, state, request, response, req_ts, resp_ts):
+        # type: (EcuState, Packet, Optional[Packet], Union[float, EDecimal], Optional[Union[float, EDecimal]]) -> None  # noqa: E501
+        """
+        Store result and update scoring for the seed.
+        """
+        super(UDS_FuzzerEnumerator, self)._store_result(
+            state, request, response, req_ts, resp_ts
+        )
+        
+        # Score the response
+        score = self._score_response(request, response)
+        
+        # Update seed scores
+        req_bytes = bytes(request)
+        self._seed_scores[req_bytes] = max(
+            self._seed_scores[req_bytes], score
+        )
+        
+        # Add high-scoring requests to the high-score seed pool
+        if score >= self.SCORE_NEW_NEGATIVE_RESPONSE:
+            if request not in self._high_score_seeds:
+                self._high_score_seeds.append(copy.copy(request))
+                # Limit the size of high-score seeds
+                if len(self._high_score_seeds) > 50:
+                    self._high_score_seeds.pop(0)
+
+    def execute(self, socket, state, **kwargs):
+        # type: (_SocketUnion, EcuState, Any) -> None
+        """
+        Execute fuzzing with health checks.
+        """
+        # Get health check parameters
+        health_check_callback = kwargs.get('health_check_callback', None)
+        health_check_interval = kwargs.get('health_check_interval', 50)
+        
+        # Override evaluate function to add health checks
+        original_count = kwargs.get('count', 0)
+        
+        # If health check is provided, wrap the execution
+        if health_check_callback is not None:
+            # Track request count for health checks
+            request_count = [0]  # Use list to allow modification in nested function
+            
+            # Store original timeout
+            original_timeout = kwargs.get('timeout', 1)
+            
+            # Execute in chunks with health checks
+            chunk_size = health_check_interval
+            total_requests = kwargs.get('max_mutations', 1000)
+            
+            for chunk_start in range(0, total_requests, chunk_size):
+                # Update count for this chunk
+                kwargs['count'] = min(chunk_size, total_requests - chunk_start)
+                
+                # Execute chunk
+                super(UDS_FuzzerEnumerator, self).execute(socket, state, **kwargs)
+                
+                # Perform health check
+                if chunk_start + chunk_size < total_requests:
+                    log_automotive.debug(
+                        "Performing health check after %d requests" % 
+                        (chunk_start + chunk_size)
+                    )
+                    try:
+                        is_healthy = health_check_callback(socket)
+                        if not is_healthy:
+                            self._health_check_failures += 1
+                            log_automotive.warning(
+                                "Health check failed after %d requests. "
+                                "Stopping fuzzing." % (chunk_start + chunk_size)
+                            )
+                            break
+                        else:
+                            log_automotive.debug("Health check passed")
+                    except Exception as e:
+                        log_automotive.error(
+                            "Health check raised exception: %s" % str(e)
+                        )
+                        self._health_check_failures += 1
+                        break
+                
+                # Check if we should continue
+                if self.completed:
+                    break
+        else:
+            # No health check, execute normally
+            super(UDS_FuzzerEnumerator, self).execute(socket, state, **kwargs)
+
+    execute.__doc__ = _supported_kwargs_doc
+
+    def _get_table_entry_y(self, tup):
+        # type: (_AutomotiveTestCaseScanResult) -> str
+        """Format table entry for display."""
+        req = tup[1]
+        score = self._seed_scores.get(bytes(req), 0)
+        return "Mutation (score: %d): %s" % (score, repr(req)[:50])
+
+    def show_statistics(self):
+        # type: () -> str
+        """
+        Show fuzzing statistics including mutation count, response
+        distribution, and health check status.
+        """
+        stats = super(UDS_FuzzerEnumerator, self).show_statistics()
+        
+        additional_stats = "\n" + "=" * 50 + "\n"
+        additional_stats += "Fuzzer-Specific Statistics:\n"
+        additional_stats += "=" * 50 + "\n"
+        additional_stats += "Total mutations generated: %d\n" % self._mutation_count
+        additional_stats += "Unique response codes seen: %d\n" % len(self._seen_response_codes)
+        additional_stats += "High-score seeds collected: %d\n" % len(self._high_score_seeds)
+        additional_stats += "Health check failures: %d\n" % self._health_check_failures
+        
+        if self._seed_scores:
+            top_seeds = sorted(
+                self._seed_scores.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:10]
+            additional_stats += "\nTop 10 seeds by score:\n"
+            for seed_bytes, score in top_seeds:
+                try:
+                    pkt = UDS(seed_bytes)
+                    additional_stats += "  Score %3d: %s\n" % (score, repr(pkt)[:60])
+                except Exception:
+                    additional_stats += "  Score %3d: <unparseable>\n" % score
+        
+        return stats + additional_stats
 
 
 class UDS_Scanner(AutomotiveTestCaseExecutor):

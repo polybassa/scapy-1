@@ -42,7 +42,8 @@ from scapy.contrib.automotive.scanner.test_case import AutomotiveTestCaseABC, \
     _SocketUnion, _TransitionTuple, StateGenerator
 from scapy.contrib.automotive.uds import UDS, UDS_NR, UDS_DSC, UDS_TP, \
     UDS_RDBI, UDS_WDBI, UDS_SA, UDS_RC, UDS_IOCBI, UDS_RMBA, UDS_ER, \
-    UDS_TesterPresentSender, UDS_CC, UDS_RDBPI, UDS_RD, UDS_TD, UDS_DSCPR
+    UDS_TesterPresentSender, UDS_CC, UDS_RDBPI, UDS_RD, UDS_TD, UDS_DSCPR, \
+    UDS_AUTH
 # TODO: Refactor this import
 from scapy.contrib.automotive.uds_ecu_states import *  # noqa: F401, F403
 from scapy.error import Scapy_Exception
@@ -1655,6 +1656,193 @@ class UDS_FuzzerEnumerator(UDS_Enumerator):
                     additional_stats += "  Score %3d: <unparseable>\n" % score
         
         return base_stats + additional_stats
+
+
+class UDS_AuthenticationFuzzerEnumerator(UDS_FuzzerEnumerator):
+    """
+    Specialized fuzzer for UDS Authentication service (0x29).
+    
+    This fuzzer targets the Authentication service which is critical for
+    security as it handles certificate verification, proof of ownership,
+    and challenge-response authentication mechanisms.
+    
+    The Authentication service has 8 subfunctions:
+    - 0x00: deAuthenticate
+    - 0x01: verifyCertificateUnidirectional
+    - 0x02: verifyCertificateBidirectional
+    - 0x03: proofOfOwnership
+    - 0x04: transmitCertificate
+    - 0x05: requestChallengeForAuthentication
+    - 0x06: verifyProofOfOwnershipUnidirectional
+    - 0x07: verifyProofOfOwnershipBidirectional
+    - 0x08: authenticationConfiguration
+    
+    Example:
+        >>> from scapy.contrib.automotive.uds import UDS, UDS_AUTH
+        >>> from scapy.contrib.automotive.uds_scan import UDS_AuthenticationFuzzerEnumerator
+        >>> from scapy.contrib.automotive.ecu import EcuState
+        >>> 
+        >>> def health_check(socket):
+        >>>     resp = socket.sr1(UDS()/UDS_TP(), timeout=1, verbose=False)
+        >>>     return resp is not None and resp.service != 0x7f
+        >>> 
+        >>> fuzzer = UDS_AuthenticationFuzzerEnumerator()
+        >>> fuzzer.execute(
+        >>>     socket,
+        >>>     EcuState(session=1),
+        >>>     health_check_callback=health_check,
+        >>>     health_check_interval=25,
+        >>>     mutation_strategy='smart',
+        >>>     max_mutations=500
+        >>> )
+    """
+    _description = "Authentication service (0x29) fuzzing with intelligent mutation"
+    
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+        """
+        Generate initial seed packets for Authentication service fuzzing.
+        
+        Creates seed packets for all 8 Authentication subfunctions with
+        various data patterns to trigger different authentication paths.
+        """
+        # Get user-provided seeds or use Authentication-specific defaults
+        initial_seeds = kwargs.get('initial_seeds', None)
+        
+        if initial_seeds is None:
+            # Create comprehensive Authentication service seeds
+            initial_seeds = []
+            
+            # 0x00: deAuthenticate - simple request, no parameters
+            initial_seeds.append(UDS() / UDS_AUTH(subFunction=0x00))
+            
+            # 0x01: verifyCertificateUnidirectional
+            initial_seeds.append(UDS() / UDS_AUTH(
+                subFunction=0x01,
+                communicationConfiguration=0x00,
+                certificateClient=b'\x00' * 32,
+                challengeClient=b'\x00' * 16
+            ))
+            
+            # 0x02: verifyCertificateBidirectional
+            initial_seeds.append(UDS() / UDS_AUTH(
+                subFunction=0x02,
+                communicationConfiguration=0x00,
+                certificateClient=b'\x00' * 32,
+                challengeClient=b'\x00' * 16
+            ))
+            
+            # 0x03: proofOfOwnership
+            initial_seeds.append(UDS() / UDS_AUTH(
+                subFunction=0x03,
+                proofOfOwnershipClient=b'\x00' * 32,
+                ephemeralPublicKeyClient=b'\x00' * 64
+            ))
+            
+            # 0x04: transmitCertificate
+            initial_seeds.append(UDS() / UDS_AUTH(
+                subFunction=0x04,
+                certificateEvaluationId=0x0001,
+                certificateData=b'\x30\x82' + b'\x00' * 100  # ASN.1 structure
+            ))
+            
+            # 0x05: requestChallengeForAuthentication
+            initial_seeds.append(UDS() / UDS_AUTH(
+                subFunction=0x05,
+                communicationConfiguration=0x00,
+                algorithmIndicator=b'\x00' * 16
+            ))
+            
+            # 0x06: verifyProofOfOwnershipUnidirectional
+            initial_seeds.append(UDS() / UDS_AUTH(
+                subFunction=0x06,
+                algorithmIndicator=b'\x00' * 16,
+                proofOfOwnershipClient=b'\x00' * 32,
+                challengeClient=b'\x00' * 16,
+                additionalParameter=b'\x00' * 8
+            ))
+            
+            # 0x07: verifyProofOfOwnershipBidirectional
+            initial_seeds.append(UDS() / UDS_AUTH(
+                subFunction=0x07,
+                algorithmIndicator=b'\x00' * 16,
+                proofOfOwnershipClient=b'\x00' * 32,
+                challengeClient=b'\x00' * 16,
+                additionalParameter=b'\x00' * 8
+            ))
+            
+            # 0x08: authenticationConfiguration
+            initial_seeds.append(UDS() / UDS_AUTH(subFunction=0x08))
+            
+            # Add some edge case seeds
+            # Invalid subfunction
+            initial_seeds.append(UDS() / UDS_AUTH(subFunction=0x09))
+            initial_seeds.append(UDS() / UDS_AUTH(subFunction=0xFF))
+            
+            # Minimal/empty data for functions that expect data
+            initial_seeds.append(UDS() / UDS_AUTH(
+                subFunction=0x01,
+                communicationConfiguration=0x00,
+                certificateClient=b'',
+                challengeClient=b''
+            ))
+            
+            # Oversized data
+            initial_seeds.append(UDS() / UDS_AUTH(
+                subFunction=0x04,
+                certificateEvaluationId=0xFFFF,
+                certificateData=b'\xFF' * 255
+            ))
+        
+        # Use parent class logic with Authentication-specific seeds
+        kwargs['initial_seeds'] = initial_seeds
+        return super(UDS_AuthenticationFuzzerEnumerator, self)._get_initial_requests(**kwargs)
+    
+    def _score_response(self, req, resp):
+        # type: (Packet, Optional[Packet]) -> int
+        """
+        Score responses with Authentication-specific logic.
+        
+        Authentication responses are particularly interesting because:
+        - Successful authentication attempts indicate security vulnerabilities
+        - Certificate validation errors reveal crypto implementation details
+        - Timing differences may indicate authentication state changes
+        """
+        # Check for Authentication-specific scoring BEFORE calling parent
+        if resp is not None and resp.service == 0x69:  # Positive response
+            # Authentication success is VERY interesting
+            return self.SCORE_POSITIVE_RESPONSE + 50
+        
+        if resp is not None and resp.service == 0x7f:
+            try:
+                nrc = self._get_negative_response_code(resp)
+                # Authentication-specific interesting error codes
+                if nrc in [0x35, 0x36, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55,
+                          0x56, 0x57, 0x58, 0x59, 0x5a, 0x5b, 0x5c, 0x5d]:
+                    # These are authentication/certificate-specific errors:
+                    # 0x35: invalidKey
+                    # 0x36: exceededNumberOfAttempts
+                    # 0x50-0x5d: Certificate/authentication verification errors
+                    if nrc not in self._seen_response_codes:
+                        self._seen_response_codes.add(nrc)
+                        return self.SCORE_NEW_NEGATIVE_RESPONSE + 20
+                    return self.SCORE_KNOWN_NEGATIVE_RESPONSE + 10
+            except (AttributeError, IndexError):
+                pass
+        
+        # Use parent scoring for everything else
+        return super(UDS_AuthenticationFuzzerEnumerator, self)._score_response(req, resp)
+    
+    def _get_table_entry_y(self, tup):
+        # type: (_AutomotiveTestCaseScanResult) -> str
+        """Format table entry for Authentication service."""
+        req = tup[1]
+        try:
+            if hasattr(req, 'subFunction'):
+                return "Auth subFunc 0x%02x" % req.subFunction
+        except Exception:
+            pass
+        return super(UDS_AuthenticationFuzzerEnumerator, self)._get_table_entry_y(tup)
 
 
 class UDS_Scanner(AutomotiveTestCaseExecutor):

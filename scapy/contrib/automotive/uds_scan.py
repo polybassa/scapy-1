@@ -43,7 +43,7 @@ from scapy.contrib.automotive.scanner.test_case import AutomotiveTestCaseABC, \
 from scapy.contrib.automotive.uds import UDS, UDS_NR, UDS_DSC, UDS_TP, \
     UDS_RDBI, UDS_WDBI, UDS_SA, UDS_RC, UDS_IOCBI, UDS_RMBA, UDS_ER, \
     UDS_TesterPresentSender, UDS_CC, UDS_RDBPI, UDS_RD, UDS_TD, UDS_DSCPR, \
-    UDS_AUTH
+    UDS_AUTH, UDS_WMBA, UDS_RU, UDS_RTE
 # TODO: Refactor this import
 from scapy.contrib.automotive.uds_ecu_states import *  # noqa: F401, F403
 from scapy.error import Scapy_Exception
@@ -1843,6 +1843,443 @@ class UDS_AuthenticationFuzzerEnumerator(UDS_FuzzerEnumerator):
         except Exception:
             pass
         return super(UDS_AuthenticationFuzzerEnumerator, self)._get_table_entry_y(tup)
+
+
+class UDS_WriteDataByIdentifierFuzzerEnumerator(UDS_FuzzerEnumerator):
+    """
+    Specialized fuzzer for UDS WriteDataByIdentifier service (0x2E).
+    
+    This fuzzer targets write operations to ECU data identifiers, which can
+    modify critical configuration parameters, calibration values, and system
+    settings. Successful unauthorized writes represent significant security risks.
+    
+    Example:
+        >>> fuzzer = UDS_WriteDataByIdentifierFuzzerEnumerator()
+        >>> fuzzer.execute(socket, EcuState(session=1),
+        >>>                mutation_strategy='smart', max_mutations=300)
+    """
+    _description = "WriteDataByIdentifier service (0x2E) fuzzing with intelligent mutation"
+    
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+        """Generate initial seed packets for WriteDataByIdentifier fuzzing."""
+        initial_seeds = kwargs.get('initial_seeds', None)
+        
+        if initial_seeds is None:
+            initial_seeds = []
+            
+            # Common data identifiers often used in automotive ECUs
+            common_dids = [
+                0xF190,  # VIN
+                0xF186,  # Active Diagnostic Session
+                0xF187,  # Vehicle Manufacturer Spare Part Number
+                0xF18A,  # ECU Software Number
+                0xF100,  # System Supplier Identifier
+                0xF150,  # Vehicle Manufacturer ECU Software Number
+                0x0100,  # Generic identifier
+                0x0200,  # Generic identifier
+                0x1000,  # Generic identifier
+                0xF000,  # High range identifier
+            ]
+            
+            # Create seeds with various data patterns
+            for did in common_dids:
+                # Empty data
+                initial_seeds.append(UDS() / UDS_WDBI(dataIdentifier=did))
+                # Small data
+                initial_seeds.append(UDS() / UDS_WDBI(dataIdentifier=did) / Raw(b'\x00'))
+                # Medium data
+                initial_seeds.append(UDS() / UDS_WDBI(dataIdentifier=did) / Raw(b'\x00' * 16))
+            
+            # Edge cases
+            initial_seeds.append(UDS() / UDS_WDBI(dataIdentifier=0x0000))  # Min
+            initial_seeds.append(UDS() / UDS_WDBI(dataIdentifier=0xFFFF))  # Max
+            initial_seeds.append(UDS() / UDS_WDBI(dataIdentifier=0x1234) / Raw(b'\xFF' * 100))  # Large
+        
+        kwargs['initial_seeds'] = initial_seeds
+        return super(UDS_WriteDataByIdentifierFuzzerEnumerator, self)._get_initial_requests(**kwargs)
+    
+    def _score_response(self, req, resp):
+        # type: (Packet, Optional[Packet]) -> int
+        """Score with emphasis on successful write operations (security concern)."""
+        if resp is not None and resp.service == 0x6E:  # Positive response
+            # Successful write is CRITICAL - major security concern
+            return self.SCORE_POSITIVE_RESPONSE + 50
+        
+        if resp is not None and resp.service == 0x7f:
+            try:
+                nrc = self._get_negative_response_code(resp)
+                # Write-specific errors
+                if nrc in [0x31, 0x33, 0x72]:  # requestOutOfRange, securityAccessDenied, generalProgrammingFailure
+                    if nrc not in self._seen_response_codes:
+                        self._seen_response_codes.add(nrc)
+                        return self.SCORE_NEW_NEGATIVE_RESPONSE + 15
+                    return self.SCORE_KNOWN_NEGATIVE_RESPONSE + 5
+            except (AttributeError, IndexError):
+                pass
+        
+        return super(UDS_WriteDataByIdentifierFuzzerEnumerator, self)._score_response(req, resp)
+
+
+class UDS_InputOutputControlByIdentifierFuzzerEnumerator(UDS_FuzzerEnumerator):
+    """
+    Specialized fuzzer for UDS InputOutputControlByIdentifier service (0x2F).
+    
+    This fuzzer targets IO control operations which can directly manipulate
+    hardware actuators, sensors, and control systems. Unauthorized control
+    represents serious safety and security risks.
+    
+    Example:
+        >>> fuzzer = UDS_InputOutputControlByIdentifierFuzzerEnumerator()
+        >>> fuzzer.execute(socket, EcuState(session=1),
+        >>>                mutation_strategy='smart', max_mutations=300)
+    """
+    _description = "InputOutputControlByIdentifier service (0x2F) fuzzing with intelligent mutation"
+    
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+        """Generate initial seed packets for IOCBI fuzzing."""
+        initial_seeds = kwargs.get('initial_seeds', None)
+        
+        if initial_seeds is None:
+            initial_seeds = []
+            
+            # Common IO control identifiers
+            common_io_ids = [
+                0x0100, 0x0101, 0x0102,  # Generic IO controls
+                0x0200, 0x0201, 0x0202,
+                0x1000, 0x1001, 0x1002,
+                0xF000, 0xF001, 0xF002,
+            ]
+            
+            # Control parameter types (typically first byte after identifier)
+            control_params = [
+                b'\x00',  # returnControlToECU
+                b'\x01',  # resetToDefault
+                b'\x02',  # freezeCurrentState
+                b'\x03',  # shortTermAdjustment
+            ]
+            
+            for io_id in common_io_ids:
+                for param in control_params:
+                    initial_seeds.append(UDS() / UDS_IOCBI(dataIdentifier=io_id) / Raw(param))
+                    # With additional control data
+                    initial_seeds.append(UDS() / UDS_IOCBI(dataIdentifier=io_id) / Raw(param + b'\x00' * 4))
+            
+            # Edge cases
+            initial_seeds.append(UDS() / UDS_IOCBI(dataIdentifier=0x0000))
+            initial_seeds.append(UDS() / UDS_IOCBI(dataIdentifier=0xFFFF))
+        
+        kwargs['initial_seeds'] = initial_seeds
+        return super(UDS_InputOutputControlByIdentifierFuzzerEnumerator, self)._get_initial_requests(**kwargs)
+    
+    def _score_response(self, req, resp):
+        # type: (Packet, Optional[Packet]) -> int
+        """Score with emphasis on successful IO control (safety/security concern)."""
+        if resp is not None and resp.service == 0x6F:  # Positive response
+            # Successful IO control is CRITICAL
+            return self.SCORE_POSITIVE_RESPONSE + 50
+        
+        if resp is not None and resp.service == 0x7f:
+            try:
+                nrc = self._get_negative_response_code(resp)
+                if nrc in [0x31, 0x33]:  # requestOutOfRange, securityAccessDenied
+                    if nrc not in self._seen_response_codes:
+                        self._seen_response_codes.add(nrc)
+                        return self.SCORE_NEW_NEGATIVE_RESPONSE + 15
+                    return self.SCORE_KNOWN_NEGATIVE_RESPONSE + 5
+            except (AttributeError, IndexError):
+                pass
+        
+        return super(UDS_InputOutputControlByIdentifierFuzzerEnumerator, self)._score_response(req, resp)
+
+
+class UDS_RoutineControlFuzzerEnumerator(UDS_FuzzerEnumerator):
+    """
+    Specialized fuzzer for UDS RoutineControl service (0x31).
+    
+    This fuzzer targets routine execution which can trigger diagnostic procedures,
+    calibration routines, and system resets. Unauthorized routine execution can
+    compromise system integrity and safety.
+    
+    Example:
+        >>> fuzzer = UDS_RoutineControlFuzzerEnumerator()
+        >>> fuzzer.execute(socket, EcuState(session=1),
+        >>>                mutation_strategy='smart', max_mutations=300)
+    """
+    _description = "RoutineControl service (0x31) fuzzing with intelligent mutation"
+    
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+        """Generate initial seed packets for RoutineControl fuzzing."""
+        initial_seeds = kwargs.get('initial_seeds', None)
+        
+        if initial_seeds is None:
+            initial_seeds = []
+            
+            # Routine control types
+            control_types = [1, 2, 3]  # start, stop, requestResults
+            
+            # Common routine identifiers
+            common_routines = [
+                0x0100, 0x0101, 0x0102,  # Generic routines
+                0x0200, 0x0201, 0x0202,
+                0xFF00, 0xFF01, 0xFF02,  # Manufacturer specific
+                0x1000, 0x2000, 0x3000,
+            ]
+            
+            for routine_id in common_routines:
+                for ctrl_type in control_types:
+                    # Basic routine control
+                    initial_seeds.append(UDS() / UDS_RC(
+                        routineControlType=ctrl_type,
+                        routineIdentifier=routine_id
+                    ))
+                    # With routine control option record
+                    initial_seeds.append(UDS() / UDS_RC(
+                        routineControlType=ctrl_type,
+                        routineIdentifier=routine_id
+                    ) / Raw(b'\x00' * 4))
+            
+            # Edge cases
+            initial_seeds.append(UDS() / UDS_RC(routineControlType=1, routineIdentifier=0x0000))
+            initial_seeds.append(UDS() / UDS_RC(routineControlType=1, routineIdentifier=0xFFFF))
+            initial_seeds.append(UDS() / UDS_RC(routineControlType=0xFF, routineIdentifier=0x1234))
+        
+        kwargs['initial_seeds'] = initial_seeds
+        return super(UDS_RoutineControlFuzzerEnumerator, self)._get_initial_requests(**kwargs)
+    
+    def _score_response(self, req, resp):
+        # type: (Packet, Optional[Packet]) -> int
+        """Score with emphasis on successful routine execution."""
+        if resp is not None and resp.service == 0x71:  # Positive response
+            # Successful routine execution is HIGH priority
+            return self.SCORE_POSITIVE_RESPONSE + 40
+        
+        if resp is not None and resp.service == 0x7f:
+            try:
+                nrc = self._get_negative_response_code(resp)
+                if nrc in [0x24, 0x31, 0x33, 0x72]:  # Various routine errors
+                    if nrc not in self._seen_response_codes:
+                        self._seen_response_codes.add(nrc)
+                        return self.SCORE_NEW_NEGATIVE_RESPONSE + 15
+                    return self.SCORE_KNOWN_NEGATIVE_RESPONSE + 5
+            except (AttributeError, IndexError):
+                pass
+        
+        return super(UDS_RoutineControlFuzzerEnumerator, self)._score_response(req, resp)
+
+
+class UDS_WriteMemoryByAddressFuzzerEnumerator(UDS_FuzzerEnumerator):
+    """
+    Specialized fuzzer for UDS WriteMemoryByAddress service (0x3D).
+    
+    This fuzzer targets direct memory write operations, which represent the
+    highest security risk as they allow arbitrary memory modification. Successful
+    writes can completely compromise ECU security and functionality.
+    
+    Example:
+        >>> fuzzer = UDS_WriteMemoryByAddressFuzzerEnumerator()
+        >>> fuzzer.execute(socket, EcuState(session=1),
+        >>>                mutation_strategy='smart', max_mutations=200)
+    """
+    _description = "WriteMemoryByAddress service (0x3D) fuzzing with intelligent mutation"
+    
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+        """Generate initial seed packets for WriteMemoryByAddress fuzzing."""
+        initial_seeds = kwargs.get('initial_seeds', None)
+        
+        if initial_seeds is None:
+            initial_seeds = []
+            
+            # Various address and size length combinations
+            for addr_len in [1, 2, 3, 4]:
+                for size_len in [1, 2, 3, 4]:
+                    # Test different address values
+                    addresses = [0x0000, 0x1000, 0x8000, 0xF000] if addr_len <= 2 else [0x00000000, 0x10000000, 0x80000000]
+                    
+                    for addr in addresses[:2]:  # Limit to 2 addresses per combination
+                        pkt = UDS() / UDS_WMBA(
+                            memoryAddressLen=addr_len,
+                            memorySizeLen=size_len
+                        )
+                        
+                        # Set appropriate address field
+                        if addr_len == 1:
+                            pkt.memoryAddress1 = addr & 0xFF
+                        elif addr_len == 2:
+                            pkt.memoryAddress2 = addr & 0xFFFF
+                        elif addr_len == 3:
+                            pkt.memoryAddress3 = addr & 0xFFFFFF
+                        else:
+                            pkt.memoryAddress4 = addr
+                        
+                        # Set size
+                        if size_len == 1:
+                            pkt.memorySize1 = 0x10
+                        elif size_len == 2:
+                            pkt.memorySize2 = 0x0100
+                        elif size_len == 3:
+                            pkt.memorySize3 = 0x001000
+                        else:
+                            pkt.memorySize4 = 0x00010000
+                        
+                        # Add with data
+                        initial_seeds.append(pkt / Raw(b'\x00' * 16))
+                        initial_seeds.append(pkt / Raw(b'\xFF' * 16))
+            
+            # Edge cases - zero address/size
+            pkt = UDS() / UDS_WMBA(memoryAddressLen=2, memorySizeLen=2)
+            pkt.memoryAddress2 = 0x0000
+            pkt.memorySize2 = 0x0000
+            initial_seeds.append(pkt)
+        
+        kwargs['initial_seeds'] = initial_seeds
+        return super(UDS_WriteMemoryByAddressFuzzerEnumerator, self)._get_initial_requests(**kwargs)
+    
+    def _score_response(self, req, resp):
+        # type: (Packet, Optional[Packet]) -> int
+        """Score with MAXIMUM emphasis on successful memory writes (CRITICAL security)."""
+        if resp is not None and resp.service == 0x7D:  # Positive response
+            # Successful memory write is EXTREMELY CRITICAL
+            return self.SCORE_POSITIVE_RESPONSE + 100
+        
+        if resp is not None and resp.service == 0x7f:
+            try:
+                nrc = self._get_negative_response_code(resp)
+                if nrc in [0x31, 0x33, 0x72, 0x73]:  # Memory write errors
+                    if nrc not in self._seen_response_codes:
+                        self._seen_response_codes.add(nrc)
+                        return self.SCORE_NEW_NEGATIVE_RESPONSE + 20
+                    return self.SCORE_KNOWN_NEGATIVE_RESPONSE + 10
+            except (AttributeError, IndexError):
+                pass
+        
+        return super(UDS_WriteMemoryByAddressFuzzerEnumerator, self)._score_response(req, resp)
+
+
+class UDS_DataTransferFuzzerEnumerator(UDS_FuzzerEnumerator):
+    """
+    Specialized fuzzer for UDS Data Transfer services (0x34/0x35/0x36/0x37).
+    
+    This fuzzer targets the download/upload/transfer sequence which is used for
+    firmware updates and memory programming. Compromising these services could
+    allow firmware modification, code injection, or extraction of sensitive data.
+    
+    Services covered:
+    - 0x34: RequestDownload
+    - 0x35: RequestUpload  
+    - 0x36: TransferData
+    - 0x37: RequestTransferExit
+    
+    Example:
+        >>> fuzzer = UDS_DataTransferFuzzerEnumerator()
+        >>> fuzzer.execute(socket, EcuState(session=1),
+        >>>                mutation_strategy='smart', max_mutations=400)
+    """
+    _description = "Data Transfer services (0x34/35/36/37) fuzzing with intelligent mutation"
+    
+    def _get_initial_requests(self, **kwargs):
+        # type: (Any) -> Iterable[Packet]
+        """Generate initial seed packets for data transfer fuzzing."""
+        initial_seeds = kwargs.get('initial_seeds', None)
+        
+        if initial_seeds is None:
+            initial_seeds = []
+            
+            # RequestDownload (0x34) seeds
+            for addr_len in [2, 3, 4]:
+                for size_len in [2, 3, 4]:
+                    pkt = UDS() / UDS_RD(
+                        dataFormatIdentifier=0x00,
+                        memoryAddressLen=addr_len,
+                        memorySizeLen=size_len
+                    )
+                    
+                    # Set address
+                    if addr_len == 2:
+                        pkt.memoryAddress2 = 0x1000
+                    elif addr_len == 3:
+                        pkt.memoryAddress3 = 0x100000
+                    else:
+                        pkt.memoryAddress4 = 0x10000000
+                    
+                    # Set size
+                    if size_len == 2:
+                        pkt.memorySize2 = 0x1000
+                    elif size_len == 3:
+                        pkt.memorySize3 = 0x100000
+                    else:
+                        pkt.memorySize4 = 0x01000000
+                    
+                    initial_seeds.append(pkt)
+            
+            # RequestUpload (0x35) seeds
+            for addr_len in [2, 3]:
+                pkt = UDS() / UDS_RU(
+                    dataFormatIdentifier=0x00,
+                    memoryAddressLen=addr_len,
+                    memorySizeLen=addr_len
+                )
+                
+                if addr_len == 2:
+                    pkt.memoryAddress2 = 0x2000
+                    pkt.memorySize2 = 0x0100
+                else:
+                    pkt.memoryAddress3 = 0x200000
+                    pkt.memorySize3 = 0x010000
+                
+                initial_seeds.append(pkt)
+            
+            # TransferData (0x36) seeds
+            for block_seq in [0x00, 0x01, 0x02, 0xFF]:
+                # Small transfer
+                initial_seeds.append(UDS() / UDS_TD(
+                    blockSequenceCounter=block_seq,
+                    transferRequestParameterRecord=b'\x00' * 16
+                ))
+                # Large transfer
+                initial_seeds.append(UDS() / UDS_TD(
+                    blockSequenceCounter=block_seq,
+                    transferRequestParameterRecord=b'\xFF' * 128
+                ))
+            
+            # RequestTransferExit (0x37) seeds
+            initial_seeds.append(UDS() / UDS_RTE())
+            initial_seeds.append(UDS() / UDS_RTE() / Raw(b'\x00' * 4))
+            
+            # Edge cases
+            pkt = UDS() / UDS_RD(dataFormatIdentifier=0xFF, memoryAddressLen=4, memorySizeLen=4)
+            pkt.memoryAddress4 = 0xFFFFFFFF
+            pkt.memorySize4 = 0xFFFFFFFF
+            initial_seeds.append(pkt)
+        
+        kwargs['initial_seeds'] = initial_seeds
+        return super(UDS_DataTransferFuzzerEnumerator, self)._get_initial_requests(**kwargs)
+    
+    def _score_response(self, req, resp):
+        # type: (Packet, Optional[Packet]) -> int
+        """Score with high emphasis on successful transfer operations."""
+        if resp is not None:
+            # Positive responses for transfer services
+            if resp.service in [0x74, 0x75, 0x76, 0x77]:
+                # Successful download/upload/transfer is HIGH priority
+                return self.SCORE_POSITIVE_RESPONSE + 60
+        
+        if resp is not None and resp.service == 0x7f:
+            try:
+                nrc = self._get_negative_response_code(resp)
+                # Transfer-specific errors
+                if nrc in [0x31, 0x33, 0x70, 0x71, 0x72, 0x73, 0x92, 0x93]:
+                    if nrc not in self._seen_response_codes:
+                        self._seen_response_codes.add(nrc)
+                        return self.SCORE_NEW_NEGATIVE_RESPONSE + 20
+                    return self.SCORE_KNOWN_NEGATIVE_RESPONSE + 10
+            except (AttributeError, IndexError):
+                pass
+        
+        return super(UDS_DataTransferFuzzerEnumerator, self)._score_response(req, resp)
 
 
 class UDS_Scanner(AutomotiveTestCaseExecutor):

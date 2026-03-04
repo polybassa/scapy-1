@@ -1,0 +1,913 @@
+% Unit tests for the RTNetlink component
+~ mock
+
+# More information at http://www.secdev.org/projects/UTscapy/
+
+
+############
+############
+
++ RTNetlink Packet Construction and Dissection
+
+= rtmsghdr auto-length calculation
+~ mock
+
+from scapy.arch.linux.rtnetlink import rtmsghdr, ifinfomsg
+
+pkt = rtmsghdr(
+    nlmsg_type="RTM_GETLINK",
+    nlmsg_flags="NLM_F_REQUEST+NLM_F_ROOT+NLM_F_MATCH",
+) / ifinfomsg(data=[])
+raw = bytes(pkt)
+parsed = rtmsghdr(raw)
+assert parsed.nlmsg_len == len(raw)
+assert parsed.nlmsg_type == 18  # RTM_GETLINK
+
+= rtmsghdr RTM_NEWLINK dissection
+~ mock
+
+from scapy.arch.linux.rtnetlink import rtmsghdr, ifinfomsg, ifinfomsg_rtattr
+
+newlink_raw = bytes.fromhex(
+    "38000000100002000100000064000000"
+    "000001000200000043100000000000000a000100deadbeefcafe000009000300"
+    "6574683000000000"
+)
+pkt = rtmsghdr(newlink_raw)
+assert pkt.nlmsg_type == 16  # RTM_NEWLINK
+assert pkt.nlmsg_flags.NLM_F_MULTI
+assert pkt.nlmsg_len == 56
+assert pkt.ifi_index == 2
+assert pkt.ifi_type == 1  # ARPHRD_ETHER
+assert pkt.ifi_flags.UP
+assert pkt.ifi_flags.BROADCAST
+assert pkt.ifi_flags.RUNNING
+assert pkt.ifi_flags.MULTICAST
+assert len(pkt.data) == 2
+assert pkt.data[0].rta_type == 1   # IFLA_ADDRESS
+assert pkt.data[0].rta_data == "de:ad:be:ef:ca:fe"
+assert pkt.data[1].rta_type == 3   # IFLA_IFNAME
+assert pkt.data[1].rta_data == b"eth0\x00"
+
+= rtmsghdr RTM_NEWADDR IPv4 dissection
+~ mock
+
+from scapy.arch.linux.rtnetlink import rtmsghdr, ifaddrmsg, ifaddrmsg_rtattr
+import socket
+
+newaddr_raw = bytes.fromhex(
+    "34000000140002000100000064000000"
+    "021880000200000008000100c0a8010208000200c0a80102090003006574683000000000"
+)
+pkt = rtmsghdr(newaddr_raw)
+assert pkt.nlmsg_type == 20  # RTM_NEWADDR
+assert pkt.ifa_family == socket.AF_INET
+assert pkt.ifa_prefixlen == 24
+assert pkt.ifa_index == 2
+assert len(pkt.data) == 3
+ifa_addr = next(a for a in pkt.data if a.rta_type == 0x01)  # IFA_ADDRESS
+ifa_local = next(a for a in pkt.data if a.rta_type == 0x02)  # IFA_LOCAL
+ifa_label = next(a for a in pkt.data if a.rta_type == 0x03)  # IFA_LABEL
+assert ifa_addr.rta_data == "192.168.1.2"
+assert ifa_local.rta_data == "192.168.1.2"
+assert ifa_label.rta_data == b"eth0\x00"
+
+= rtmsghdr RTM_NEWADDR IPv6 dissection
+~ mock
+
+from scapy.arch.linux.rtnetlink import rtmsghdr, ifaddrmsg, ifaddrmsg_rtattr
+import socket
+
+newaddr_v6_raw = bytes.fromhex(
+    "400000001400020001000000640000000a408000020000001400010020010db800000000"
+    "000000000000000114000200" "20010db8000000000000000000000001"
+)
+pkt = rtmsghdr(newaddr_v6_raw)
+assert pkt.nlmsg_type == 20  # RTM_NEWADDR
+assert pkt.ifa_family == socket.AF_INET6
+assert pkt.ifa_prefixlen == 64
+assert pkt.ifa_index == 2
+ifa_addr = next(a for a in pkt.data if a.rta_type == 0x01)  # IFA_ADDRESS
+assert ifa_addr.rta_data == "2001:db8::1"
+
+= rtmsghdr RTM_NEWROUTE IPv4 dissection
+~ mock
+
+from scapy.arch.linux.rtnetlink import rtmsghdr, rtmsg, rtmsg_rtattr
+import socket
+
+newroute_raw = bytes.fromhex(
+    "3c00000018000200010000006400000002180000fe02fd01000000000800010"
+    "0c0a80100080004000200000008000700c0a8010208000f00fe000000"
+)
+pkt = rtmsghdr(newroute_raw)
+assert pkt.nlmsg_type == 24  # RTM_NEWROUTE
+assert pkt.rtm_family == socket.AF_INET
+assert pkt.rtm_dst_len == 24
+rta_dst = next(a for a in pkt.data if a.rta_type == 0x01)   # RTA_DST
+rta_oif = next(a for a in pkt.data if a.rta_type == 0x04)   # RTS_OIF
+rta_src = next(a for a in pkt.data if a.rta_type == 0x07)   # RTA_PREFSRC
+assert rta_dst.rta_data == "192.168.1.0"
+assert rta_oif.rta_data == 2
+assert rta_src.rta_data == "192.168.1.2"
+
+= NLMSG_DONE packet construction and dissection
+~ mock
+
+from scapy.arch.linux.rtnetlink import rtmsghdr, nlmsgerr
+
+done_pkt = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+raw = bytes(done_pkt)
+parsed = rtmsghdr(raw)
+assert parsed.nlmsg_type == 3   # NLMSG_DONE
+assert not parsed.nlmsg_flags.NLM_F_MULTI
+assert parsed.status == 0
+
+= rtmsghdrs multi-message parsing
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, nlmsgerr, rtmsghdrs
+)
+
+link1 = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=2,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="de:ad:be:ef:ca:fe"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"eth0\x00"),
+    ],
+)
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+combined = bytes(link1) + bytes(done)
+parsed = rtmsghdrs(combined)
+assert len(parsed.msgs) == 2
+assert parsed.msgs[0].nlmsg_type == 16   # RTM_NEWLINK
+assert parsed.msgs[1].nlmsg_type == 3    # NLMSG_DONE
+
+
+############
+############
+
++ RTNetlink Socket Emulation Helpers
+
+= _sr1_rtrequest returns results for multi-message response
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, nlmsgerr, _sr1_rtrequest
+)
+from unittest import mock
+
+newlink = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=2,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="de:ad:be:ef:ca:fe"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"eth0\x00"),
+    ],
+)
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+response_data = bytes(newlink) + bytes(done)
+mock_sock = mock.MagicMock()
+mock_sock.recv.return_value = response_data
+req = rtmsghdr(
+    nlmsg_type="RTM_GETLINK", nlmsg_flags="NLM_F_REQUEST+NLM_F_ROOT+NLM_F_MATCH",
+    nlmsg_seq=1,
+) / ifinfomsg(data=[])
+with mock.patch("socket.socket", return_value=mock_sock):
+    results = _sr1_rtrequest(req)
+    assert len(results) == 1
+    assert results[0].nlmsg_type == 16   # RTM_NEWLINK
+    assert results[0].ifi_index == 2
+
+= _sr1_rtrequest returns empty list on NLMSG_DONE with error
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifaddrmsg, nlmsgerr, nlmsgerr_rtattr, _sr1_rtrequest
+)
+from unittest import mock
+import socket
+
+done_err = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(
+    status=1,
+    data=[nlmsgerr_rtattr(rta_type=1, rta_data=b"RTNetlink error")],
+)
+mock_sock = mock.MagicMock()
+mock_sock.recv.return_value = bytes(done_err)
+req = rtmsghdr(
+    nlmsg_type="RTM_GETADDR", nlmsg_flags="NLM_F_REQUEST", nlmsg_seq=1,
+) / ifaddrmsg(ifa_family=socket.AF_UNSPEC, data=[])
+with mock.patch("socket.socket", return_value=mock_sock):
+    results = _sr1_rtrequest(req)
+    assert results == []
+
+= _sr1_rtrequest stops at non-MULTI message
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, nlmsgerr, _sr1_rtrequest
+)
+from unittest import mock
+
+# A response without NLM_F_MULTI set terminates immediately
+single = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=2,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="de:ad:be:ef:ca:fe"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"eth0\x00"),
+    ],
+)
+mock_sock = mock.MagicMock()
+mock_sock.recv.return_value = bytes(single)
+req = rtmsghdr(
+    nlmsg_type="RTM_GETLINK", nlmsg_flags="NLM_F_REQUEST", nlmsg_seq=1,
+) / ifinfomsg(data=[])
+with mock.patch("socket.socket", return_value=mock_sock):
+    results = _sr1_rtrequest(req)
+    # The non-MULTI message terminates immediately without being appended
+    assert results == []
+
+
+############
+############
+
++ RTNetlink _get_ips
+
+= _get_ips returns IPv4 addresses indexed by interface
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifaddrmsg, ifaddrmsg_rtattr, nlmsgerr, _get_ips
+)
+from unittest import mock
+import socket
+
+lo_addr = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=8, ifa_flags=0x80, ifa_scope=254, ifa_index=1,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="127.0.0.1"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="127.0.0.1"),
+    ],
+)
+eth0_addr = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=24, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="192.168.1.2"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="192.168.1.2"),
+        ifaddrmsg_rtattr(rta_type="IFA_LABEL", rta_data=b"eth0\x00"),
+    ],
+)
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+response_data = bytes(lo_addr) + bytes(eth0_addr) + bytes(done)
+mock_sock = mock.MagicMock()
+mock_sock.recv.return_value = response_data
+with mock.patch("socket.socket", return_value=mock_sock):
+    ips = _get_ips()
+
+assert 1 in ips
+assert 2 in ips
+assert ips[1][0]["address"] == "127.0.0.1"
+assert ips[1][0]["af_family"] == socket.AF_INET
+assert ips[1][0]["index"] == 1
+assert ips[2][0]["address"] == "192.168.1.2"
+assert ips[2][0]["af_family"] == socket.AF_INET
+assert ips[2][0]["index"] == 2
+
+= _get_ips uses IFA_LOCAL over IFA_ADDRESS for point-to-point interfaces
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifaddrmsg, ifaddrmsg_rtattr, nlmsgerr, _get_ips
+)
+from unittest import mock
+import socket
+
+# For point-to-point: IFA_ADDRESS is the peer, IFA_LOCAL is the local address
+ptp = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=32, ifa_flags=0x80, ifa_scope=0, ifa_index=3,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="10.0.0.2"),   # peer address
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="10.0.0.1"),     # local address
+    ],
+)
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+mock_sock = mock.MagicMock()
+mock_sock.recv.return_value = bytes(ptp) + bytes(done)
+with mock.patch("socket.socket", return_value=mock_sock):
+    ips = _get_ips()
+
+assert 3 in ips
+# IFA_LOCAL (local address) must be used, not IFA_ADDRESS (peer)
+assert ips[3][0]["address"] == "10.0.0.1"
+
+= _get_ips returns IPv6 addresses with scope
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifaddrmsg, ifaddrmsg_rtattr, nlmsgerr, _get_ips
+)
+from unittest import mock
+import socket
+
+eth0_v6 = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET6, ifa_prefixlen=64, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="2001:db8::1"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="2001:db8::1"),
+    ],
+)
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+mock_sock = mock.MagicMock()
+mock_sock.recv.return_value = bytes(eth0_v6) + bytes(done)
+with mock.patch("socket.socket", return_value=mock_sock):
+    ips = _get_ips(af_family=socket.AF_INET6)
+
+assert 2 in ips
+assert ips[2][0]["address"] == "2001:db8::1"
+assert ips[2][0]["af_family"] == socket.AF_INET6
+assert "scope" in ips[2][0]
+
+= _get_ips returns empty dict on error
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, nlmsgerr, nlmsgerr_rtattr, _get_ips
+)
+from unittest import mock
+
+done_err = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(
+    status=1,
+    data=[nlmsgerr_rtattr(rta_type=1, rta_data=b"RTNetlink error")],
+)
+mock_sock = mock.MagicMock()
+mock_sock.recv.return_value = bytes(done_err)
+with mock.patch("socket.socket", return_value=mock_sock):
+    ips = _get_ips()
+    assert ips == {}
+
+
+############
+############
+
++ RTNetlink _get_if_list
+
+= _get_if_list returns interface info indexed by ifindex
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, ifaddrmsg, ifaddrmsg_rtattr,
+    nlmsgerr, _get_if_list
+)
+from unittest import mock
+import socket
+
+# Build the link response (sent first by _get_if_list -> _sr1_rtrequest for RTM_GETLINK)
+lo = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=772, ifi_index=1,
+    ifi_flags="UP+LOOPBACK+RUNNING",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="00:00:00:00:00:00"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"lo\x00"),
+    ],
+)
+eth0 = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=2,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="de:ad:be:ef:ca:fe"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"eth0\x00"),
+    ],
+)
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+link_data = bytes(lo) + bytes(eth0) + bytes(done)
+
+# Build the addr response (sent by _get_ips inside _get_if_list)
+lo_addr = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=8, ifa_flags=0x80, ifa_scope=254, ifa_index=1,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="127.0.0.1"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="127.0.0.1"),
+    ],
+)
+eth0_addr = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=24, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="192.168.1.2"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="192.168.1.2"),
+        ifaddrmsg_rtattr(rta_type="IFA_LABEL", rta_data=b"eth0\x00"),
+    ],
+)
+addr_data = bytes(lo_addr) + bytes(eth0_addr) + bytes(done)
+
+# _get_if_list: socket 1 -> link_data, socket 2 -> addr_data
+_socket_responses = iter([link_data, addr_data])
+def _mock_socket(*args, **kwargs):
+    data = next(_socket_responses)
+    s = mock.MagicMock()
+    s.recv.return_value = data
+    return s
+
+with mock.patch("socket.socket", side_effect=_mock_socket):
+    ifaces = _get_if_list()
+
+assert 1 in ifaces
+assert 2 in ifaces
+assert ifaces[1]["name"] == "lo"
+assert ifaces[1]["mac"] == "00:00:00:00:00:00"
+assert ifaces[1]["type"] == 772
+assert ifaces[1]["flags"].LOOPBACK
+assert ifaces[1]["ips"][0]["address"] == "127.0.0.1"
+assert ifaces[2]["name"] == "eth0"
+assert ifaces[2]["mac"] == "de:ad:be:ef:ca:fe"
+assert ifaces[2]["type"] == 1
+assert ifaces[2]["flags"].MULTICAST
+assert ifaces[2]["ips"][0]["address"] == "192.168.1.2"
+
+
+############
+############
+
++ RTNetlink read_routes (IPv4)
+
+= read_routes returns IPv4 routes with gateway and source address
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, ifaddrmsg, ifaddrmsg_rtattr,
+    rtmsg, rtmsg_rtattr, nlmsgerr, read_routes
+)
+from unittest import mock
+import socket
+
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+eth0 = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=2,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="de:ad:be:ef:ca:fe"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"eth0\x00"),
+    ],
+)
+link_data = bytes(eth0) + bytes(done)
+
+eth0_addr = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=24, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="192.168.1.2"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="192.168.1.2"),
+    ],
+)
+addr_data = bytes(eth0_addr) + bytes(done)
+
+subnet_route = rtmsghdr(
+    nlmsg_type="RTM_NEWROUTE", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / rtmsg(
+    rtm_family=socket.AF_INET, rtm_dst_len=24, rtm_table="RT_TABLE_MAIN",
+    rtm_protocol="RTPROT_KERNEL", rtm_scope="RT_SCOPE_LINK", rtm_type="RTN_UNICAST",
+    data=[
+        rtmsg_rtattr(rta_type="RTA_DST", rta_data="192.168.1.0"),
+        rtmsg_rtattr(rta_type="RTS_OIF", rta_data=2),
+        rtmsg_rtattr(rta_type="RTA_PREFSRC", rta_data="192.168.1.2"),
+        rtmsg_rtattr(rta_type="RTA_TABLE", rta_data="RT_TABLE_MAIN"),
+    ],
+)
+default_route = rtmsghdr(
+    nlmsg_type="RTM_NEWROUTE", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / rtmsg(
+    rtm_family=socket.AF_INET, rtm_dst_len=0, rtm_table="RT_TABLE_MAIN",
+    rtm_protocol="RTPROT_BOOT", rtm_scope="RT_SCOPE_UNIVERSE", rtm_type="RTN_UNICAST",
+    data=[
+        rtmsg_rtattr(rta_type="RTA_GATEWAY", rta_data="192.168.1.1"),
+        rtmsg_rtattr(rta_type="RTS_OIF", rta_data=2),
+        rtmsg_rtattr(rta_type="RTA_PREFSRC", rta_data="192.168.1.2"),
+        rtmsg_rtattr(rta_type="RTA_TABLE", rta_data="RT_TABLE_MAIN"),
+    ],
+)
+# Local table has no routes in this test
+local_route_data = bytes(done)
+main_route_data = bytes(subnet_route) + bytes(default_route) + bytes(done)
+
+# read_routes calls:
+#   _get_if_list(): socket1=link_data, socket2=addr_data
+#   _read_routes(): socket3=local_route_data (RT_TABLE_LOCAL), socket4=main_route_data (RT_TABLE_MAIN)
+_socket_responses = iter([link_data, addr_data, local_route_data, main_route_data])
+def _mock_socket(*args, **kwargs):
+    data = next(_socket_responses)
+    s = mock.MagicMock()
+    s.recv.return_value = data
+    return s
+
+with mock.patch("socket.socket", side_effect=_mock_socket):
+    routes = read_routes()
+
+from scapy.utils import atol, itom
+# Find the subnet route (192.168.1.0/24)
+subnet = next(r for r in routes if r[0] == atol("192.168.1.0"))
+assert subnet[1] == itom(24)       # mask
+assert subnet[2] == "0.0.0.0"     # no gateway for directly connected
+assert subnet[3] == "eth0"         # interface
+assert subnet[4] == "192.168.1.2"  # source address
+
+# Find the default route (0.0.0.0/0)
+default = next(r for r in routes if r[0] == 0 and r[1] == 0)
+assert default[2] == "192.168.1.1"  # gateway
+assert default[3] == "eth0"
+
+= read_routes includes multicast route for MULTICAST interfaces
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, ifaddrmsg, ifaddrmsg_rtattr,
+    rtmsg, rtmsg_rtattr, nlmsgerr, read_routes
+)
+from unittest import mock
+import socket
+
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+eth0 = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=2,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="de:ad:be:ef:ca:fe"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"eth0\x00"),
+    ],
+)
+eth0_addr = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=24, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="192.168.1.2"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="192.168.1.2"),
+    ],
+)
+
+_socket_responses = iter([
+    bytes(eth0) + bytes(done),   # link
+    bytes(eth0_addr) + bytes(done),   # addr
+    bytes(done),   # local routes (empty)
+    bytes(done),   # main routes (empty)
+])
+def _mock_socket(*args, **kwargs):
+    data = next(_socket_responses)
+    s = mock.MagicMock()
+    s.recv.return_value = data
+    return s
+
+with mock.patch("socket.socket", side_effect=_mock_socket):
+    routes = read_routes()
+
+# A multicast route should be added for eth0 (224.0.0.0/4)
+mcast = next((r for r in routes if r[0] == 0xe0000000), None)
+assert mcast is not None
+assert mcast[1] == 0xf0000000   # /4 mask
+assert mcast[2] == "0.0.0.0"
+assert mcast[3] == "eth0"
+assert mcast[4] == "192.168.1.2"
+assert mcast[5] == 250           # metric
+
+= read_routes resolves interface name from ifindex
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, ifaddrmsg, ifaddrmsg_rtattr,
+    rtmsg, rtmsg_rtattr, nlmsgerr, read_routes
+)
+from unittest import mock
+import socket
+
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+eth0 = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=5,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="aa:bb:cc:dd:ee:ff"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"enp3s0\x00"),
+    ],
+)
+eth0_addr = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=24, ifa_flags=0x80, ifa_scope=0, ifa_index=5,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="10.0.0.5"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="10.0.0.5"),
+    ],
+)
+route = rtmsghdr(
+    nlmsg_type="RTM_NEWROUTE", nlmsg_flags="NLM_F_MULTI", nlmsg_pid=100,
+) / rtmsg(
+    rtm_family=socket.AF_INET, rtm_dst_len=24, rtm_table="RT_TABLE_MAIN",
+    rtm_protocol="RTPROT_KERNEL", rtm_scope="RT_SCOPE_LINK", rtm_type="RTN_UNICAST",
+    data=[
+        rtmsg_rtattr(rta_type="RTA_DST", rta_data="10.0.0.0"),
+        rtmsg_rtattr(rta_type="RTS_OIF", rta_data=5),
+        rtmsg_rtattr(rta_type="RTA_PREFSRC", rta_data="10.0.0.5"),
+    ],
+)
+
+_socket_responses = iter([
+    bytes(eth0) + bytes(done),
+    bytes(eth0_addr) + bytes(done),
+    bytes(done),
+    bytes(route) + bytes(done),
+])
+def _mock_socket(*args, **kwargs):
+    data = next(_socket_responses)
+    s = mock.MagicMock()
+    s.recv.return_value = data
+    return s
+
+with mock.patch("socket.socket", side_effect=_mock_socket):
+    routes = read_routes()
+
+from scapy.utils import atol, itom
+r = next(rt for rt in routes if rt[0] == atol("10.0.0.0"))
+assert r[3] == "enp3s0"
+
+
+############
+############
+
++ RTNetlink read_routes6 (IPv6)
+
+= read_routes6 returns IPv6 routes with source candidates
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, ifaddrmsg, ifaddrmsg_rtattr,
+    rtmsg, rtmsg_rtattr, nlmsgerr, read_routes6
+)
+from unittest import mock
+import socket
+
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+eth0 = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=2,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="de:ad:be:ef:ca:fe"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"eth0\x00"),
+    ],
+)
+addr_v4 = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=24, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="192.168.1.2"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="192.168.1.2"),
+    ],
+)
+addr_v6 = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET6, ifa_prefixlen=64, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="2001:db8::1"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="2001:db8::1"),
+    ],
+)
+route_v6 = rtmsghdr(
+    nlmsg_type="RTM_NEWROUTE", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / rtmsg(
+    rtm_family=socket.AF_INET6, rtm_dst_len=64, rtm_table="RT_TABLE_MAIN",
+    rtm_protocol="RTPROT_KERNEL", rtm_scope="RT_SCOPE_LINK", rtm_type="RTN_UNICAST",
+    data=[
+        rtmsg_rtattr(rta_type="RTA_DST", rta_data="2001:db8::"),
+        rtmsg_rtattr(rta_type="RTS_OIF", rta_data=2),
+        rtmsg_rtattr(rta_type="RTA_TABLE", rta_data="RT_TABLE_MAIN"),
+    ],
+)
+
+link_data = bytes(eth0) + bytes(done)
+# addr response (all families) used by _get_if_list -> _get_ips
+addr_all_data = bytes(addr_v4) + bytes(addr_v6) + bytes(done)
+# addr response (IPv6 only) used by read_routes6 -> _get_ips(AF_INET6)
+addr_v6_only_data = bytes(addr_v6) + bytes(done)
+
+# read_routes6 calls:
+#   _get_if_list(): socket1=link_data, socket2=addr_all_data
+#   _read_routes(AF_INET6): socket3=empty (LOCAL), socket4=route_v6 (MAIN)
+#   _get_ips(AF_INET6): socket5=addr_v6_only_data
+_socket_responses = iter([
+    link_data, addr_all_data,
+    bytes(done), bytes(route_v6) + bytes(done),
+    addr_v6_only_data,
+])
+def _mock_socket(*args, **kwargs):
+    data = next(_socket_responses)
+    s = mock.MagicMock()
+    s.recv.return_value = data
+    return s
+
+with mock.patch("socket.socket", side_effect=_mock_socket):
+    routes = read_routes6()
+
+# Should have the 2001:db8::/64 route
+subnet = next(r for r in routes if r[0] == "2001:db8::" and r[1] == 64)
+assert subnet[2] == "::"        # no gateway (link-local)
+assert subnet[3] == "eth0"
+assert "2001:db8::1" in subnet[4]  # source candidates
+assert subnet[5] == 0           # metric
+
+= read_routes6 includes multicast route for MULTICAST interfaces with IPv6 addresses
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, ifaddrmsg, ifaddrmsg_rtattr,
+    nlmsgerr, read_routes6
+)
+from unittest import mock
+import socket
+
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+eth0 = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=2,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="de:ad:be:ef:ca:fe"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"eth0\x00"),
+    ],
+)
+addr_v6 = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET6, ifa_prefixlen=64, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="2001:db8::1"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="2001:db8::1"),
+    ],
+)
+
+_socket_responses = iter([
+    bytes(eth0) + bytes(done),
+    bytes(addr_v6) + bytes(done),   # addr_all for _get_if_list -> _get_ips
+    bytes(done),                    # local routes
+    bytes(done),                    # main routes
+    bytes(addr_v6) + bytes(done),   # IPv6 addr for read_routes6
+])
+def _mock_socket(*args, **kwargs):
+    data = next(_socket_responses)
+    s = mock.MagicMock()
+    s.recv.return_value = data
+    return s
+
+with mock.patch("socket.socket", side_effect=_mock_socket):
+    routes = read_routes6()
+
+# Multicast route ff00::/8 should be added for MULTICAST eth0
+mcast = next((r for r in routes if r[0] == "ff00::"), None)
+assert mcast is not None
+assert mcast[1] == 8
+assert mcast[2] == "::"
+assert mcast[3] == "eth0"
+assert "2001:db8::1" in mcast[4]
+assert mcast[5] == 250
+
+
+############
+############
+
++ RTNetlink in6_getifaddr
+
+= in6_getifaddr returns list of (addr, scope, iface) tuples
+~ mock
+
+from scapy.arch.linux.rtnetlink import (
+    rtmsghdr, ifinfomsg, ifinfomsg_rtattr, ifaddrmsg, ifaddrmsg_rtattr,
+    nlmsgerr, in6_getifaddr
+)
+from unittest import mock
+import socket
+
+done = rtmsghdr(
+    nlmsg_type="NLMSG_DONE", nlmsg_flags=0, nlmsg_seq=1, nlmsg_pid=100,
+) / nlmsgerr(status=0, data=[])
+
+eth0 = rtmsghdr(
+    nlmsg_type="RTM_NEWLINK", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifinfomsg(
+    ifi_family=0, ifi_type=1, ifi_index=2,
+    ifi_flags="UP+BROADCAST+RUNNING+MULTICAST",
+    data=[
+        ifinfomsg_rtattr(rta_type="IFLA_ADDRESS", rta_data="de:ad:be:ef:ca:fe"),
+        ifinfomsg_rtattr(rta_type="IFLA_IFNAME", rta_data=b"eth0\x00"),
+    ],
+)
+addr_v6 = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET6, ifa_prefixlen=64, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="2001:db8::1"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="2001:db8::1"),
+    ],
+)
+addr_all = rtmsghdr(
+    nlmsg_type="RTM_NEWADDR", nlmsg_flags="NLM_F_MULTI", nlmsg_seq=1, nlmsg_pid=100,
+) / ifaddrmsg(
+    ifa_family=socket.AF_INET, ifa_prefixlen=24, ifa_flags=0x80, ifa_scope=0, ifa_index=2,
+    data=[
+        ifaddrmsg_rtattr(rta_type="IFA_ADDRESS", rta_data="192.168.1.2"),
+        ifaddrmsg_rtattr(rta_type="IFA_LOCAL", rta_data="192.168.1.2"),
+    ],
+)
+
+# in6_getifaddr calls:
+#   _get_ips(AF_INET6): socket1 -> addr_v6
+#   _get_if_list():     socket2 -> link_data, socket3 -> addr_all_data
+_socket_responses = iter([
+    bytes(addr_v6) + bytes(done),
+    bytes(eth0) + bytes(done),
+    bytes(addr_all) + bytes(addr_v6) + bytes(done),
+])
+def _mock_socket(*args, **kwargs):
+    data = next(_socket_responses)
+    s = mock.MagicMock()
+    s.recv.return_value = data
+    return s
+
+with mock.patch("socket.socket", side_effect=_mock_socket):
+    result = in6_getifaddr()
+
+assert len(result) == 1
+addr, scope, iface = result[0]
+assert addr == "2001:db8::1"
+assert iface == "eth0"
+assert isinstance(scope, int)

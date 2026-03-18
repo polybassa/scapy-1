@@ -190,12 +190,19 @@ expect "# "
 send "chmod 600 /root/.ssh/authorized_keys\r"
 expect "# "
 
-# Append to the existing sshd_config installed by the openssh package.
-send "echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config\r"
+# Create /etc/ssh/ explicitly: on a live Alpine boot the package post-install
+# scripts do not always run, so the directory may be absent even after install.
+send "mkdir -p /etc/ssh\r"
+expect "# "
+send "echo 'PermitRootLogin yes' > /etc/ssh/sshd_config\r"
 expect "# "
 
-# Use Alpine's OpenRC service: it generates host keys and starts sshd.
-send "rc-service sshd start\r"
+# Generate host keys and start sshd directly.
+# rc-service is not reliable on a live/diskless Alpine boot; the binary path
+# was already verified present by the SSHD_OK check above.
+send "ssh-keygen -A -q 2>/dev/null\r"
+expect "# "
+send "/usr/sbin/sshd\r"
 expect "# "
 puts "SSH daemon started"
 

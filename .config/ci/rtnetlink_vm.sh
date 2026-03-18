@@ -147,6 +147,15 @@ expect {
 }
 expect "# "
 
+# ---- Configure DNS ----
+# QEMU user-mode networking (SLIRP) always provides a built-in DNS forwarder
+# at 10.0.2.3, but the Alpine live-boot may leave /etc/resolv.conf empty or
+# absent, causing all hostname lookups to fail even though IP connectivity
+# (the default route checked above) is working fine.
+puts "Configuring DNS..."
+send "echo 'nameserver 10.0.2.3' > /etc/resolv.conf\r"
+expect "# "
+
 # ---- Install required packages (errors visible; exit on failure) ----
 puts "Installing packages..."
 set timeout 120

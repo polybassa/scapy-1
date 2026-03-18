@@ -1,0 +1,265 @@
+% RTNetlink live tests against a real Linux kernel
+~ vm linux needs_root
+
+# These tests run inside a minimal Alpine Linux VM (via QEMU) where root access
+# is available and a real Linux kernel provides RTNetlink responses.
+# They are NOT part of the standard test suite (linux.utsc) and are executed
+# only by the dedicated rtnetlink_vm CI workflow.
+#
+# Run with:
+#   python3 -m scapy.tools.UTscapy -t test/vm/rtnetlink_live.uts -k vm
+
+
+############
+############
+
++ RTNetlink live: loopback interface
+
+= loopback interface present in _get_if_list
+~ vm linux needs_root
+
+from scapy.arch.linux.rtnetlink import _get_if_list
+
+ifaces = _get_if_list()
+assert ifaces, "No interfaces returned by _get_if_list()"
+
+lo_matches = [i for i in ifaces.values() if i["name"] == "lo"]
+assert lo_matches, "Loopback interface 'lo' not found in _get_if_list()"
+
+lo = lo_matches[0]
+assert lo["index"] > 0, "lo ifindex must be positive"
+assert lo["mac"] == "00:00:00:00:00:00", f"Unexpected lo MAC: {lo['mac']}"
+assert lo["flags"].LOOPBACK, "lo must have LOOPBACK flag"
+assert lo["flags"].UP, "lo must be UP"
+
+= loopback has 127.0.0.1 in _get_ips
+~ vm linux needs_root
+
+import socket
+from scapy.arch.linux.rtnetlink import _get_if_list, _get_ips
+
+ifaces = _get_if_list()
+lo_index = next(
+    (i["index"] for i in ifaces.values() if i["name"] == "lo"), None
+)
+assert lo_index is not None, "Could not determine loopback ifindex"
+
+ips = _get_ips(af_family=socket.AF_INET)
+assert lo_index in ips, f"loopback index {lo_index} not in _get_ips() result"
+
+lo_addrs = [ip["address"] for ip in ips[lo_index]]
+assert "127.0.0.1" in lo_addrs, f"127.0.0.1 not found in loopback IPs: {lo_addrs}"
+
+= loopback IP entry has correct fields
+~ vm linux needs_root
+
+import socket
+from scapy.arch.linux.rtnetlink import _get_if_list, _get_ips
+
+ifaces = _get_if_list()
+lo_index = next(i["index"] for i in ifaces.values() if i["name"] == "lo")
+
+ips = _get_ips(af_family=socket.AF_INET)
+lo_ip = next(ip for ip in ips[lo_index] if ip["address"] == "127.0.0.1")
+assert lo_ip["af_family"] == socket.AF_INET
+assert lo_ip["index"] == lo_index
+
+
+############
+############
+
++ RTNetlink live: read_routes IPv4
+
+= read_routes returns a non-empty list
+~ vm linux needs_root
+
+from scapy.arch.linux.rtnetlink import read_routes
+
+routes = read_routes()
+assert isinstance(routes, list), "read_routes() must return a list"
+assert routes, "read_routes() returned an empty list"
+
+= read_routes entries have the correct tuple structure
+~ vm linux needs_root
+
+from scapy.arch.linux.rtnetlink import read_routes
+
+routes = read_routes()
+for route in routes:
+    assert len(route) == 6, f"Route tuple must have 6 elements, got: {route}"
+    net, mask, gw, iface, addr, metric = route
+    assert isinstance(net, int), f"net must be int: {net!r}"
+    assert isinstance(mask, int), f"mask must be int: {mask!r}"
+    assert isinstance(gw, str), f"gw must be str: {gw!r}"
+    assert isinstance(iface, str), f"iface must be str: {iface!r}"
+    assert isinstance(addr, str), f"addr must be str: {addr!r}"
+    assert isinstance(metric, int), f"metric must be int: {metric!r}"
+    assert iface, "iface must not be empty"
+
+= read_routes includes a loopback/local route for 127.0.0.1
+~ vm linux needs_root
+
+from scapy.arch.linux.rtnetlink import read_routes
+from scapy.utils import atol
+
+routes = read_routes()
+lo_routes = [r for r in routes if r[3] == "lo"]
+assert lo_routes, "No routes for interface 'lo' found in read_routes()"
+
+
+############
+############
+
++ RTNetlink live: read_routes6 IPv6
+
+= read_routes6 returns a list
+~ vm linux needs_root
+
+from scapy.arch.linux.rtnetlink import read_routes6
+
+routes6 = read_routes6()
+assert isinstance(routes6, list), "read_routes6() must return a list"
+
+= read_routes6 entries have the correct tuple structure
+~ vm linux needs_root
+
+from scapy.arch.linux.rtnetlink import read_routes6
+
+routes6 = read_routes6()
+for route in routes6:
+    assert len(route) == 6, f"IPv6 route tuple must have 6 elements, got: {route}"
+    prefix, plen, nh, iface, cset, metric = route
+    assert isinstance(prefix, str), f"prefix must be str: {prefix!r}"
+    assert isinstance(plen, int), f"plen must be int: {plen!r}"
+    assert 0 <= plen <= 128, f"plen out of range: {plen}"
+    assert isinstance(nh, str), f"nh must be str: {nh!r}"
+    assert isinstance(iface, str), f"iface must be str: {iface!r}"
+    assert isinstance(cset, list), f"cset must be list: {cset!r}"
+    assert isinstance(metric, int), f"metric must be int: {metric!r}"
+
+
+############
+############
+
++ RTNetlink live: in6_getifaddr
+
+= in6_getifaddr returns a list
+~ vm linux needs_root
+
+from scapy.arch.linux.rtnetlink import in6_getifaddr
+
+result = in6_getifaddr()
+assert isinstance(result, list), "in6_getifaddr() must return a list"
+
+= in6_getifaddr entries have valid structure
+~ vm linux needs_root
+
+from scapy.arch.linux.rtnetlink import in6_getifaddr
+
+result = in6_getifaddr()
+for entry in result:
+    assert len(entry) == 3, f"in6_getifaddr entry must be (addr, scope, iface): {entry}"
+    addr, scope, iface = entry
+    assert isinstance(addr, str), f"addr must be str: {addr!r}"
+    assert isinstance(scope, int), f"scope must be int: {scope!r}"
+    assert isinstance(iface, str), f"iface must be str: {iface!r}"
+    assert iface, "iface must not be empty"
+    assert ":" in addr, f"IPv6 address should contain ':': {addr!r}"
+
+
+############
+############
+
++ RTNetlink live: dummy interface lifecycle
+
+= _get_if_list detects a newly-created dummy interface
+~ vm linux needs_root
+
+import os
+from scapy.arch.linux.rtnetlink import _get_if_list
+
+os.system("ip link add name scapy_test0 type dummy")
+try:
+    ifaces = _get_if_list()
+    names = [i["name"] for i in ifaces.values()]
+    assert "scapy_test0" in names, f"scapy_test0 not found; available: {names}"
+    test_iface = next(i for i in ifaces.values() if i["name"] == "scapy_test0")
+    # dummy interfaces present as ARPHRD_ETHER (type 1)
+    assert test_iface["type"] == 1, f"Unexpected type: {test_iface['type']}"
+finally:
+    os.system("ip link del scapy_test0 2>/dev/null")
+
+= _get_if_list no longer sees a deleted interface
+~ vm linux needs_root
+
+import os
+from scapy.arch.linux.rtnetlink import _get_if_list
+
+os.system("ip link add name scapy_test0 type dummy")
+os.system("ip link del scapy_test0")
+
+ifaces = _get_if_list()
+names = [i["name"] for i in ifaces.values()]
+assert "scapy_test0" not in names, f"Deleted interface scapy_test0 still present"
+
+= _get_ips sees address assigned to dummy interface
+~ vm linux needs_root
+
+import os, socket
+from scapy.arch.linux.rtnetlink import _get_if_list, _get_ips
+
+os.system("ip link add name scapy_test0 type dummy")
+os.system("ip addr add 198.51.100.1/24 dev scapy_test0")
+os.system("ip link set scapy_test0 up")
+try:
+    ifaces = _get_if_list()
+    idx = next(i["index"] for i in ifaces.values() if i["name"] == "scapy_test0")
+    ips = _get_ips(af_family=socket.AF_INET)
+    assert idx in ips, f"Interface index {idx} not in _get_ips()"
+    addrs = [ip["address"] for ip in ips[idx]]
+    assert "198.51.100.1" in addrs, f"198.51.100.1 not in {addrs}"
+finally:
+    os.system("ip link del scapy_test0 2>/dev/null")
+
+= read_routes includes route for address on dummy interface
+~ vm linux needs_root
+
+import os
+from scapy.arch.linux.rtnetlink import read_routes
+from scapy.utils import atol, itom
+
+os.system("ip link add name scapy_test0 type dummy")
+os.system("ip addr add 203.0.113.1/24 dev scapy_test0")
+os.system("ip link set scapy_test0 up")
+try:
+    routes = read_routes()
+    expected_net = atol("203.0.113.0")
+    match = next((r for r in routes if r[0] == expected_net), None)
+    assert match is not None, \
+        "Route for 203.0.113.0/24 not found. Routes: " + str(routes)
+    assert match[1] == itom(24), f"Wrong mask: {match[1]:#010x}"
+    assert match[3] == "scapy_test0", f"Wrong iface: {match[3]}"
+    assert match[4] == "203.0.113.1", f"Wrong source addr: {match[4]}"
+finally:
+    os.system("ip link del scapy_test0 2>/dev/null")
+
+= read_routes includes multicast route for MULTICAST dummy interface
+~ vm linux needs_root
+
+import os
+from scapy.arch.linux.rtnetlink import read_routes
+
+os.system("ip link add name scapy_test0 type dummy")
+os.system("ip link set scapy_test0 multicast on")
+os.system("ip addr add 192.0.2.1/24 dev scapy_test0")
+os.system("ip link set scapy_test0 up")
+try:
+    routes = read_routes()
+    mcast = next((r for r in routes if r[0] == 0xe0000000 and r[3] == "scapy_test0"), None)
+    assert mcast is not None, \
+        "Multicast route for scapy_test0 not found. Routes: " + str(routes)
+    assert mcast[1] == 0xf0000000, f"Wrong multicast mask: {mcast[1]:#010x}"
+    assert mcast[2] == "0.0.0.0"
+    assert mcast[5] == 250
+finally:
+    os.system("ip link del scapy_test0 2>/dev/null")

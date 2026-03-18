@@ -1,0 +1,50 @@
+name: RTNetlink VM Tests
+
+# Run RTNetlink live tests inside a minimal Alpine Linux VM (via QEMU).
+# This job exercises the real Linux kernel's netlink socket interface
+# rather than the mocked version tested in the regular unit-test suite.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "scapy/arch/linux/rtnetlink.py"
+      - "test/vm/**"
+      - ".config/ci/rtnetlink_vm.sh"
+      - ".github/workflows/rtnetlink_vm.yml"
+  pull_request:
+    branches: [master]
+    paths:
+      - "scapy/arch/linux/rtnetlink.py"
+      - "test/vm/**"
+      - ".config/ci/rtnetlink_vm.sh"
+      - ".github/workflows/rtnetlink_vm.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rtnetlink-vm:
+    name: RTNetlink live tests (Alpine Linux / QEMU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Scapy
+        uses: actions/checkout@v4
+
+      # Allow the runner's non-root user to use /dev/kvm so QEMU can run fast.
+      - name: Enable KVM group permissions
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install QEMU and expect
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -qy qemu-system-x86 expect
+
+      - name: Run RTNetlink VM tests
+        run: bash .config/ci/rtnetlink_vm.sh

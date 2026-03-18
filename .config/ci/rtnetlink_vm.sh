@@ -71,7 +71,7 @@ tar czf "${SCAPY_TAR}" \
 # ---------------------------------------------------------------------------
 # Phase 5: Export variables consumed by the embedded expect script
 # ---------------------------------------------------------------------------
-export ALPINE_ISO VM_DISK SSH_PORT SSH_KEY SSH_PUBKEY SCAPY_TAR
+export ALPINE_ISO VM_DISK SSH_PORT SSH_KEY SSH_PUBKEY SCAPY_TAR ALPINE_MINOR
 
 if [ -e /dev/kvm ]; then
     echo "KVM acceleration: enabled"
@@ -100,6 +100,7 @@ set ssh_key     $env(SSH_KEY)
 set ssh_pubkey  $env(SSH_PUBKEY)
 set scapy_tar   $env(SCAPY_TAR)
 set kvm_flag    $env(QEMU_KVM_FLAG)
+set alpine_minor $env(ALPINE_MINOR)
 
 # ---- Build the QEMU command as a proper list so quoting is correct ----
 set qemu_cmd [list qemu-system-x86_64 \
@@ -149,24 +150,45 @@ expect "# "
 # ---- Install required packages (errors visible; exit on failure) ----
 puts "Installing packages..."
 set timeout 120
-send "apk update\r"
+
+# Configure Alpine package repositories explicitly.
+# On a live-boot Alpine virt ISO the default /etc/apk/repositories may only
+# reference the cdrom image; python3 (community) and iproute2 (main) require
+# the CDN network repos to be present.
+send "printf '%s\\n%s\\n' 'https://dl-cdn.alpinelinux.org/alpine/v$alpine_minor/main' 'https://dl-cdn.alpinelinux.org/alpine/v$alpine_minor/community' > /etc/apk/repositories\r"
+expect "# "
+
+send "apk update; echo apk_update_rc_$?\r"
 expect {
-    "# "    { }
+    "apk_update_rc_0" { puts "apk update succeeded" }
+    -re "apk_update_rc_\[1-9\]" {
+        puts stderr "ERROR: apk update failed - check network connectivity"
+        exit 1
+    }
     timeout { puts stderr "ERROR: apk update timed out"; exit 1 }
 }
+expect "# "
 
-send "apk add openssh python3 iproute2\r"
+send "apk add openssh python3 iproute2; echo apk_add_rc_$?\r"
 expect {
-    "# "    { }
+    "apk_add_rc_0" { }
+    -re "apk_add_rc_\[1-9\]" {
+        puts stderr "ERROR: apk add failed - package names or repository unavailable"
+        exit 1
+    }
     timeout { puts stderr "ERROR: Package installation timed out"; exit 1 }
 }
+expect "# "
 set timeout 300
 
 # Abort early if the sshd binary is missing (openssh install failed).
-send "ls /usr/sbin/sshd && echo SSHD_OK || echo SSHD_MISSING\r"
+# Use RC=$?; echo SSHD_CHECK_${RC} so the literal patterns SSHD_CHECK_0 /
+# SSHD_CHECK_1 never appear in the echoed command text (which contains the
+# unexpanded $RC), preventing a false-positive match on the command echo.
+send "ls /usr/sbin/sshd; echo SSHD_CHECK_$?\r"
 expect {
-    "SSHD_OK"      { puts "sshd binary confirmed" }
-    "SSHD_MISSING" {
+    "SSHD_CHECK_0" { puts "sshd binary confirmed" }
+    "SSHD_CHECK_1" {
         puts stderr "ERROR: /usr/sbin/sshd not found - openssh install failed"
         exit 1
     }

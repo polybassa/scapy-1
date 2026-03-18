@@ -1,0 +1,269 @@
+#!/bin/bash
+
+# SPDX-License-Identifier: GPL-2.0-only
+# This file is part of Scapy
+# See https://scapy.net/ for more information
+
+# rtnetlink_vm.sh
+# Boot a minimal Alpine Linux VM in QEMU and run the RTNetlink live tests.
+#
+# Usage: bash .config/ci/rtnetlink_vm.sh
+#
+# Required tools (installed by the CI workflow before calling this script):
+#   qemu-system-x86_64, qemu-img, qemu-nbd  (all in qemu-system-x86 / qemu-utils)
+#   ssh, scp, wget
+#
+# Strategy: build a bootable Alpine disk image on the CI host (which has internet
+# access), installing all required packages — including openssh — at image creation
+# time.  The resulting QCOW2 is then booted directly with QEMU's direct-kernel
+# option; no package installation inside the running VM is required.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+ALPINE_VERSION="3.23.3"
+ALPINE_MINOR="${ALPINE_VERSION%.*}"     # e.g. 3.23
+
+ALPINE_MINIROOTFS_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MINOR}/releases/x86_64/alpine-minirootfs-${ALPINE_VERSION}-x86_64.tar.gz"
+ALPINE_MINIROOTFS="/tmp/alpine-minirootfs-${ALPINE_VERSION}.tar.gz"
+
+VM_DISK="/tmp/alpine-vm.qcow2"
+VM_MNT="/tmp/alpine-mnt"
+SSH_PORT="2222"
+SSH_KEY="/tmp/vm_ed25519_key"
+SCAPY_TAR="/tmp/scapy-src.tar.gz"
+
+# Absolute path to the repo root (two directories up from this script)
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# ---------------------------------------------------------------------------
+# Phase 1: Download Alpine Linux minirootfs (only ~4 MB)
+# ---------------------------------------------------------------------------
+# The CI host has full internet access, so the download always succeeds here.
+echo "=== Downloading Alpine Linux ${ALPINE_VERSION} minirootfs ==="
+if [ ! -f "${ALPINE_MINIROOTFS}" ]; then
+    wget --quiet --show-progress --tries=3 \
+        -O "${ALPINE_MINIROOTFS}" "${ALPINE_MINIROOTFS_URL}" || {
+        echo "ERROR: Failed to download Alpine minirootfs"
+        exit 1
+    }
+fi
+echo "Minirootfs ready: $(du -sh "${ALPINE_MINIROOTFS}" | cut -f1)"
+
+# ---------------------------------------------------------------------------
+# Phase 2: Generate SSH key pair (done early so we can inject the key below)
+# ---------------------------------------------------------------------------
+echo "=== Generating SSH key pair ==="
+rm -f "${SSH_KEY}" "${SSH_KEY}.pub"
+ssh-keygen -t ed25519 -f "${SSH_KEY}" -N "" -q
+
+# ---------------------------------------------------------------------------
+# Phase 3: Create QCOW2 disk image and format it
+# ---------------------------------------------------------------------------
+echo "=== Creating and formatting VM disk image ==="
+qemu-img create -f qcow2 "${VM_DISK}" 2G -q
+
+# Connect the QCOW2 as a network block device so we can partition/format it.
+sudo modprobe nbd max_part=8
+sudo qemu-nbd --connect=/dev/nbd0 "${VM_DISK}"
+
+# Format the entire block device as ext4 (no partition table needed — QEMU
+# direct-kernel boot does not require a bootloader or partition table).
+sudo mkfs.ext4 -q -L alpine-root /dev/nbd0
+
+# Mount the new filesystem.
+sudo mkdir -p "${VM_MNT}"
+sudo mount /dev/nbd0 "${VM_MNT}"
+
+# ---------------------------------------------------------------------------
+# Phase 4: Extract Alpine minirootfs into the disk
+# ---------------------------------------------------------------------------
+echo "=== Extracting Alpine minirootfs ==="
+sudo tar xzf "${ALPINE_MINIROOTFS}" -C "${VM_MNT}"
+
+# ---------------------------------------------------------------------------
+# Phase 5: Bind-mount host pseudo-filesystems for chroot package installation
+# ---------------------------------------------------------------------------
+sudo mount --bind /proc "${VM_MNT}/proc"
+sudo mount --bind /sys  "${VM_MNT}/sys"
+sudo mount --bind /dev  "${VM_MNT}/dev"
+
+# Provide DNS resolution inside the chroot.
+echo "nameserver 8.8.8.8" | sudo tee "${VM_MNT}/etc/resolv.conf" > /dev/null
+
+# ---------------------------------------------------------------------------
+# Phase 6: Install all required packages inside a chroot on the CI host
+# ---------------------------------------------------------------------------
+# openssh is installed HERE on the CI host (which has internet), not later
+# inside the running VM.  The VM image is fully self-contained after this step.
+echo "=== Installing packages in chroot (CI host has internet) ==="
+sudo chroot "${VM_MNT}" /bin/sh -eu << CHROOT_EOF
+# Configure APK repositories.
+printf '%s\n%s\n' \
+    'https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MINOR}/main' \
+    'https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MINOR}/community' \
+    > /etc/apk/repositories
+apk update --quiet
+
+# Install everything needed:
+#   linux-virt   — kernel + initramfs generated by mkinitfs (boots ext4 root)
+#   openrc       — init system / service manager
+#   openssh      — SSH server (the key package we must have at creation time)
+#   dhcpcd       — DHCP client for the QEMU SLIRP network
+#   python3      — runs Scapy tests
+#   iproute2     — provides ip(8) used by RTNetlink tests
+apk add --quiet --no-cache \
+    linux-virt openrc openssh dhcpcd python3 iproute2
+
+# Enable services at default runlevel.
+rc-update add sshd    default > /dev/null
+rc-update add dhcpcd  default > /dev/null
+rc-update add networking default > /dev/null
+
+# Allow root login via SSH (key-based; no password set).
+sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    || echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+
+# Pre-generate SSH host keys so sshd starts without delay on first boot.
+ssh-keygen -A -q
+
+# Declare the root partition in fstab so OpenRC mounts it read-write.
+echo 'LABEL=alpine-root  /  ext4  defaults  0 1' > /etc/fstab
+
+# Load the dummy kernel module on boot for the RTNetlink test network interfaces.
+echo 'dummy' > /etc/modules-load.d/dummy.conf
+CHROOT_EOF
+
+# ---------------------------------------------------------------------------
+# Phase 7: Inject SSH public key into the image
+# ---------------------------------------------------------------------------
+echo "=== Injecting SSH public key ==="
+sudo mkdir -p "${VM_MNT}/root/.ssh"
+sudo cp "${SSH_KEY}.pub" "${VM_MNT}/root/.ssh/authorized_keys"
+sudo chmod 700 "${VM_MNT}/root/.ssh"
+sudo chmod 600 "${VM_MNT}/root/.ssh/authorized_keys"
+
+# ---------------------------------------------------------------------------
+# Phase 8: Copy the installed kernel and initramfs out of the image
+# ---------------------------------------------------------------------------
+# linux-virt installs a proper "installed" initramfs (not the live-ISO one).
+# This initramfs knows how to find and mount an ext4 root disk, making a
+# bootloader unnecessary — QEMU's -kernel/-initrd flags handle everything.
+VMLINUZ="$(sudo find "${VM_MNT}/boot" -name 'vmlinuz-virt' | head -1)"
+INITRAMFS="$(sudo find "${VM_MNT}/boot" -name 'initramfs-virt' | head -1)"
+sudo cp "${VMLINUZ}"  /tmp/vmlinuz-virt
+sudo cp "${INITRAMFS}" /tmp/initramfs-virt
+sudo chmod 644 /tmp/vmlinuz-virt /tmp/initramfs-virt
+
+# ---------------------------------------------------------------------------
+# Phase 9: Clean up the disk mounts
+# ---------------------------------------------------------------------------
+echo "=== Unmounting disk ==="
+sudo umount "${VM_MNT}/dev"
+sudo umount "${VM_MNT}/sys"
+sudo umount "${VM_MNT}/proc"
+sudo umount "${VM_MNT}"
+sudo qemu-nbd --disconnect /dev/nbd0
+echo "Disk image ready: $(du -sh "${VM_DISK}" | cut -f1)"
+
+# ---------------------------------------------------------------------------
+# Phase 10: Package the scapy source for transfer into the VM
+# ---------------------------------------------------------------------------
+echo "=== Packaging Scapy source ==="
+tar czf "${SCAPY_TAR}" \
+    -C "${REPO_ROOT}" \
+    --exclude='*.pyc' \
+    --exclude='__pycache__' \
+    --exclude='.git' \
+    scapy/ test/
+
+# ---------------------------------------------------------------------------
+# Phase 11: Boot the VM
+# ---------------------------------------------------------------------------
+# We use QEMU's direct-kernel boot: the kernel and initramfs extracted from
+# the installed linux-virt package are passed via -kernel/-initrd, bypassing
+# the need for a bootloader inside the disk image entirely.
+echo "=== Starting Alpine VM ==="
+KVM_FLAGS=()
+if [ -e /dev/kvm ]; then
+    echo "KVM acceleration: enabled"
+    KVM_FLAGS=(-enable-kvm)
+else
+    echo "KVM acceleration: not available (using TCG - slower)"
+fi
+
+qemu-system-x86_64 \
+    -m 512M \
+    -smp 2 \
+    -kernel /tmp/vmlinuz-virt \
+    -initrd /tmp/initramfs-virt \
+    -append "root=LABEL=alpine-root rw rootfstype=ext4 modules=ext4 console=ttyS0 quiet" \
+    -drive "file=${VM_DISK},format=qcow2,if=virtio" \
+    -netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22" \
+    -device virtio-net-pci,netdev=net0 \
+    -nographic \
+    "${KVM_FLAGS[@]}" \
+    > /tmp/qemu-console.log 2>&1 &
+QEMU_PID=$!
+echo "QEMU PID: ${QEMU_PID}"
+
+# ---------------------------------------------------------------------------
+# Phase 12: Wait for SSH to become reachable
+# ---------------------------------------------------------------------------
+# openssh is already installed and its host keys are pre-generated, so sshd
+# starts as part of the normal OpenRC boot — no console interaction needed.
+echo "=== Waiting for SSH to become reachable ==="
+SSH_OPTS=(-p "${SSH_PORT}" -i "${SSH_KEY}"
+          -o StrictHostKeyChecking=no
+          -o ConnectTimeout=2
+          -o LogLevel=ERROR)
+SSH_READY=0
+for i in $(seq 1 90); do
+    if ssh "${SSH_OPTS[@]}" root@127.0.0.1 "echo SSH_OK" 2>/dev/null \
+            | grep -q SSH_OK; then
+        SSH_READY=1
+        echo "SSH is reachable (attempt ${i})"
+        break
+    fi
+    sleep 2
+done
+
+if [ "${SSH_READY}" -eq 0 ]; then
+    echo "ERROR: SSH did not become reachable within 180 s"
+    echo "=== QEMU console log ==="
+    cat /tmp/qemu-console.log
+    kill "${QEMU_PID}" 2>/dev/null || true
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Phase 13: Copy Scapy source and run tests
+# ---------------------------------------------------------------------------
+echo "=== Copying Scapy source to VM ==="
+scp -P "${SSH_PORT}" -i "${SSH_KEY}" \
+    -o StrictHostKeyChecking=no \
+    -o LogLevel=ERROR \
+    "${SCAPY_TAR}" \
+    root@127.0.0.1:/tmp/
+
+echo "=== Running RTNetlink live tests inside VM ==="
+ssh "${SSH_OPTS[@]}" root@127.0.0.1 \
+    "cd /tmp && tar xzf scapy-src.tar.gz && \
+     PYTHONPATH=/tmp python3 scapy/tools/UTscapy.py \
+         -t test/vm/rtnetlink_live.uts -k vm"
+TEST_RC=$?
+
+# ---------------------------------------------------------------------------
+# Phase 14: Shut the VM down gracefully
+# ---------------------------------------------------------------------------
+echo "=== Shutting down VM ==="
+ssh "${SSH_OPTS[@]}" root@127.0.0.1 "poweroff" 2>/dev/null || true
+wait "${QEMU_PID}" 2>/dev/null || true
+
+if [ "${TEST_RC}" -ne 0 ]; then
+    echo "ERROR: RTNetlink VM tests FAILED"
+    exit 1
+fi
+echo "=== RTNetlink VM tests PASSED ==="

@@ -41,10 +41,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Install QEMU and expect
+      - name: Install QEMU and dependencies
         run: |
           sudo apt-get update -q
-          sudo apt-get install -qy qemu-system-x86 expect
+          sudo apt-get install -qy qemu-system-x86 genisoimage
 
       - name: Run RTNetlink VM tests
         run: bash .config/ci/rtnetlink_vm.sh

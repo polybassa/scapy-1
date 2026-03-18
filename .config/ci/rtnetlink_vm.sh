@@ -10,7 +10,11 @@
 # Usage: bash .config/ci/rtnetlink_vm.sh
 #
 # Required tools (installed by the CI workflow before calling this script):
-#   qemu-system-x86_64, qemu-img, expect, ssh, scp, wget
+#   qemu-system-x86_64, qemu-img, genisoimage, ssh, scp, wget
+#
+# openssh is pre-installed in the Alpine cloud image, so no in-VM package
+# download is needed for SSH.  python3 and iproute2 are still fetched via
+# apk inside the VM (internet access is required for those two packages).
 
 set -euo pipefail
 
@@ -19,10 +23,14 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 ALPINE_VERSION="3.23.3"
 ALPINE_MINOR="${ALPINE_VERSION%.*}"           # e.g.  3.23
-ALPINE_ISO_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MINOR}/releases/x86_64/alpine-virt-${ALPINE_VERSION}-x86_64.iso"
 
-ALPINE_ISO="/tmp/alpine-virt-${ALPINE_VERSION}.iso"
+# Alpine publishes pre-installed cloud/nocloud QCOW2 images that include
+# openssh out of the box, so SSH is available without any in-VM apk install.
+ALPINE_CLOUD_URL="https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MINOR}/releases/cloud/nocloud/alpine-virt-${ALPINE_VERSION}-x86_64.qcow2"
+
+ALPINE_CLOUD_IMG="/tmp/alpine-virt-${ALPINE_VERSION}-cloud.qcow2"
 VM_DISK="/tmp/alpine-vm.qcow2"
+SEED_ISO="/tmp/cloud-seed.iso"
 SSH_PORT="2222"
 SSH_KEY="/tmp/vm_ed25519_key"
 SCAPY_TAR="/tmp/scapy-src.tar.gz"
@@ -31,23 +39,25 @@ SCAPY_TAR="/tmp/scapy-src.tar.gz"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 # ---------------------------------------------------------------------------
-# Phase 1: Download Alpine Linux virt ISO
+# Phase 1: Download Alpine Linux cloud QCOW2 image
 # ---------------------------------------------------------------------------
-echo "=== Downloading Alpine Linux ${ALPINE_VERSION} virt ISO ==="
-if [ ! -f "${ALPINE_ISO}" ]; then
+# The cloud image ships with openssh pre-installed, so SSH is ready without
+# any in-VM package download — even when the VM has no internet access.
+echo "=== Downloading Alpine Linux ${ALPINE_VERSION} cloud image ==="
+if [ ! -f "${ALPINE_CLOUD_IMG}" ]; then
     wget --quiet --show-progress --tries=3 \
-        -O "${ALPINE_ISO}" "${ALPINE_ISO_URL}" || {
-        echo "ERROR: Failed to download Alpine Linux ISO from ${ALPINE_ISO_URL}"
+        -O "${ALPINE_CLOUD_IMG}" "${ALPINE_CLOUD_URL}" || {
+        echo "ERROR: Failed to download Alpine Linux cloud image from ${ALPINE_CLOUD_URL}"
         exit 1
     }
 fi
-echo "ISO ready: $(du -sh "${ALPINE_ISO}" | cut -f1)"
+echo "Cloud image ready: $(du -sh "${ALPINE_CLOUD_IMG}" | cut -f1)"
 
 # ---------------------------------------------------------------------------
-# Phase 2: Create VM disk image
+# Phase 2: Create VM disk as a QCOW2 overlay on the cloud base image
 # ---------------------------------------------------------------------------
-echo "=== Creating VM disk image ==="
-qemu-img create -f qcow2 "${VM_DISK}" 2G -q
+echo "=== Creating VM disk overlay ==="
+qemu-img create -f qcow2 -b "${ALPINE_CLOUD_IMG}" -F qcow2 "${VM_DISK}" -q
 
 # ---------------------------------------------------------------------------
 # Phase 3: Generate SSH key for VM access
@@ -58,7 +68,37 @@ ssh-keygen -t ed25519 -f "${SSH_KEY}" -N "" -q
 SSH_PUBKEY="$(cat "${SSH_KEY}.pub")"
 
 # ---------------------------------------------------------------------------
-# Phase 4: Package the scapy source for transfer into the VM
+# Phase 4: Create cloud-init nocloud seed ISO for SSH key injection
+# ---------------------------------------------------------------------------
+# tiny-cloud (Alpine's cloud-init) reads a volume labelled "cidata" and
+# injects the listed SSH public keys into /root/.ssh/authorized_keys on the
+# first boot — no internet access required for this step.
+echo "=== Creating cloud-init seed ISO ==="
+SEED_DIR="/tmp/cloud-seed-files"
+rm -rf "${SEED_DIR}"
+mkdir -p "${SEED_DIR}"
+
+cat > "${SEED_DIR}/meta-data" <<EOF
+instance-id: scapy-vm-01
+local-hostname: alpine-vm
+EOF
+
+{
+    echo "#cloud-config"
+    echo "ssh_authorized_keys:"
+    printf "  - %s\n" "${SSH_PUBKEY}"
+} > "${SEED_DIR}/user-data"
+
+genisoimage -quiet \
+    -output "${SEED_ISO}" \
+    -volid cidata \
+    -joliet \
+    -rock \
+    "${SEED_DIR}/user-data" \
+    "${SEED_DIR}/meta-data"
+
+# ---------------------------------------------------------------------------
+# Phase 5: Package the scapy source for transfer into the VM
 # ---------------------------------------------------------------------------
 echo "=== Packaging Scapy source ==="
 tar czf "${SCAPY_TAR}" \
@@ -69,244 +109,104 @@ tar czf "${SCAPY_TAR}" \
     scapy/ test/
 
 # ---------------------------------------------------------------------------
-# Phase 5: Export variables consumed by the embedded expect script
+# Phase 6: Boot Alpine VM in the background
 # ---------------------------------------------------------------------------
-export ALPINE_ISO VM_DISK SSH_PORT SSH_KEY SSH_PUBKEY SCAPY_TAR ALPINE_MINOR
-
+echo "=== Starting Alpine VM ==="
+KVM_FLAGS=()
 if [ -e /dev/kvm ]; then
     echo "KVM acceleration: enabled"
-    export QEMU_KVM_FLAG="1"
+    KVM_FLAGS=(-enable-kvm)
 else
     echo "KVM acceleration: not available (using TCG - slower)"
-    export QEMU_KVM_FLAG="0"
+fi
+
+qemu-system-x86_64 \
+    -m 512M \
+    -smp 2 \
+    -drive "file=${VM_DISK},format=qcow2,if=virtio" \
+    -cdrom "${SEED_ISO}" \
+    -boot order=c \
+    -netdev "user,id=net0,hostfwd=tcp::${SSH_PORT}-:22" \
+    -device virtio-net-pci,netdev=net0 \
+    -nographic \
+    "${KVM_FLAGS[@]}" \
+    > /tmp/qemu-console.log 2>&1 &
+QEMU_PID=$!
+echo "QEMU PID: ${QEMU_PID}"
+
+# ---------------------------------------------------------------------------
+# Phase 7: Wait for SSH to become reachable
+# ---------------------------------------------------------------------------
+# openssh is already installed in the cloud image and tiny-cloud starts sshd
+# after injecting the authorized key, so no console interaction is needed.
+echo "=== Waiting for SSH to become reachable ==="
+SSH_OPTS=(-p "${SSH_PORT}" -i "${SSH_KEY}"
+          -o StrictHostKeyChecking=no
+          -o ConnectTimeout=2
+          -o LogLevel=ERROR)
+SSH_READY=0
+for i in $(seq 1 60); do
+    if ssh "${SSH_OPTS[@]}" root@127.0.0.1 "echo SSH_OK" 2>/dev/null \
+            | grep -q SSH_OK; then
+        SSH_READY=1
+        echo "SSH is reachable (attempt ${i})"
+        break
+    fi
+    sleep 2
+done
+
+if [ "${SSH_READY}" -eq 0 ]; then
+    echo "ERROR: SSH did not become reachable within 120 s"
+    echo "=== QEMU console log ==="
+    cat /tmp/qemu-console.log
+    kill "${QEMU_PID}" 2>/dev/null || true
+    exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# Phase 6: Boot Alpine, configure SSH, run tests (all via expect)
+# Phase 8: Install remaining packages and prepare the VM
 # ---------------------------------------------------------------------------
-echo "=== Starting Alpine VM and running RTNetlink live tests ==="
+# openssh is already present; only python3 and iproute2 need to be fetched.
+echo "=== Installing packages ==="
+ssh "${SSH_OPTS[@]}" root@127.0.0.1 bash <<REMOTE
+set -euo pipefail
+printf '%s\n%s\n' \
+    'https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MINOR}/main' \
+    'https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_MINOR}/community' \
+    > /etc/apk/repositories
+apk update
+apk add python3 iproute2
+REMOTE
 
-expect << 'EXPECT_EOF'
-# ------------------------------------------------------------------
-# Expect script: boot Alpine, configure SSH, copy scapy, run tests
-# ------------------------------------------------------------------
-set timeout 300
-log_user 1
+# Load dummy kernel module (for test interfaces)
+ssh "${SSH_OPTS[@]}" root@127.0.0.1 "modprobe dummy 2>/dev/null || true"
 
-set alpine_iso  $env(ALPINE_ISO)
-set vm_disk     $env(VM_DISK)
-set ssh_port    $env(SSH_PORT)
-set ssh_key     $env(SSH_KEY)
-set ssh_pubkey  $env(SSH_PUBKEY)
-set scapy_tar   $env(SCAPY_TAR)
-set kvm_flag    $env(QEMU_KVM_FLAG)
-set alpine_minor $env(ALPINE_MINOR)
-
-# ---- Build the QEMU command as a proper list so quoting is correct ----
-set qemu_cmd [list qemu-system-x86_64 \
-    -m 512M \
-    -smp 2 \
-    -drive  "file=$vm_disk,format=qcow2,if=virtio" \
-    -cdrom  $alpine_iso \
-    -boot   order=d \
-    -netdev "user,id=net0,hostfwd=tcp::${ssh_port}-:22" \
-    -device virtio-net-pci,netdev=net0 \
-    -nographic]
-
-if {$kvm_flag eq "1"} {
-    lappend qemu_cmd -enable-kvm
-}
-
-# ---- Boot the VM ----
-puts "Booting Alpine Linux VM..."
-eval spawn $qemu_cmd
-
-# ---- Wait for the login prompt (Alpine virt boots in ~15s with KVM) ----
-expect {
-    -re "login:" { puts "VM boot: login prompt received" }
-    timeout {
-        puts stderr "ERROR: Alpine VM did not reach login prompt within 300 s"
-        exit 1
-    }
-}
-
-# ---- Log in as root (no password on Alpine virt) ----
-send "root\r"
-expect "# "
-
-# ---- Wait for network (DHCP may not be complete right after login) ----
-# Poll for a default route for up to 30 s; fall back to explicit udhcpc if absent.
-puts "Waiting for network..."
-send "for i in \$(seq 1 30); do ip route show default | grep -q default && echo NET_READY && break; sleep 1; done\r"
-expect {
-    "NET_READY" { puts "Network is up (default route present)" }
-    timeout {
-        puts stderr "ERROR: No default route after 30 s - network unavailable"
-        exit 1
-    }
-}
-expect "# "
-
-# ---- Configure DNS ----
-# QEMU SLIRP user-mode networking provides a DNS forwarder at 10.0.2.3, but
-# that forwarder resolves the HOST's /etc/resolv.conf at runtime.  On GitHub
-# Actions (Ubuntu), systemd-resolved exposes its stub at 127.0.0.53, and
-# some QEMU versions cannot forward to that loopback address, causing every
-# DNS lookup inside the VM to return "transient error".
-#
-# Instead, point the VM directly at a well-known public resolver (8.8.8.8).
-# QEMU's SLIRP NAT passes the UDP/53 packets through to the real internet,
-# completely bypassing the SLIRP DNS proxy and the host loopback issue.
-puts "Configuring DNS..."
-send "printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf\r"
-expect "# "
-
-# ---- Install required packages (errors visible; exit on failure) ----
-puts "Installing packages..."
-set timeout 120
-
-# Configure Alpine package repositories explicitly.
-# On a live-boot Alpine virt ISO the default /etc/apk/repositories may only
-# reference the cdrom image; python3 (community) and iproute2 (main) require
-# the CDN network repos to be present.
-send "printf '%s\\n%s\\n' 'https://dl-cdn.alpinelinux.org/alpine/v$alpine_minor/main' 'https://dl-cdn.alpinelinux.org/alpine/v$alpine_minor/community' > /etc/apk/repositories\r"
-expect "# "
-
-send "apk update; echo apk_update_rc_$?\r"
-expect {
-    "apk_update_rc_0" { puts "apk update succeeded" }
-    -re "apk_update_rc_\[1-9\]" {
-        puts stderr "ERROR: apk update failed - check network connectivity"
-        exit 1
-    }
-    timeout { puts stderr "ERROR: apk update timed out"; exit 1 }
-}
-expect "# "
-
-send "apk add openssh python3 iproute2; echo apk_add_rc_$?\r"
-expect {
-    "apk_add_rc_0" { }
-    -re "apk_add_rc_\[1-9\]" {
-        puts stderr "ERROR: apk add failed - package names or repository unavailable"
-        exit 1
-    }
-    timeout { puts stderr "ERROR: Package installation timed out"; exit 1 }
-}
-expect "# "
-set timeout 300
-
-# Abort early if the sshd binary is missing (openssh install failed).
-# Use RC=$?; echo SSHD_CHECK_${RC} so the literal patterns SSHD_CHECK_0 /
-# SSHD_CHECK_1 never appear in the echoed command text (which contains the
-# unexpanded $RC), preventing a false-positive match on the command echo.
-send "ls /usr/sbin/sshd; echo SSHD_CHECK_$?\r"
-expect {
-    "SSHD_CHECK_0" { puts "sshd binary confirmed" }
-    "SSHD_CHECK_1" {
-        puts stderr "ERROR: /usr/sbin/sshd not found - openssh install failed"
-        exit 1
-    }
-    timeout { puts stderr "ERROR: timeout checking sshd binary"; exit 1 }
-}
-expect "# "
-puts "Packages installed"
-
-# ---- Load dummy kernel module (for test interfaces) ----
-send "modprobe dummy 2>/dev/null || true\r"
-expect "# "
-
-# ---- Configure SSH daemon ----
-puts "Configuring SSH..."
-send "mkdir -p /root/.ssh && chmod 700 /root/.ssh\r"
-expect "# "
-
-# Write the public key using printf to avoid special-character issues
-send "printf '%s\\n' '$ssh_pubkey' > /root/.ssh/authorized_keys\r"
-expect "# "
-send "chmod 600 /root/.ssh/authorized_keys\r"
-expect "# "
-
-# Create /etc/ssh/ explicitly: on a live Alpine boot the package post-install
-# scripts do not always run, so the directory may be absent even after install.
-send "mkdir -p /etc/ssh\r"
-expect "# "
-send "echo 'PermitRootLogin yes' > /etc/ssh/sshd_config\r"
-expect "# "
-
-# Generate host keys and start sshd directly.
-# rc-service is not reliable on a live/diskless Alpine boot; the binary path
-# was already verified present by the SSHD_OK check above.
-send "ssh-keygen -A -q 2>/dev/null\r"
-expect "# "
-send "/usr/sbin/sshd\r"
-expect "# "
-puts "SSH daemon started"
-
-# ---- Wait for SSH to be reachable ----
-puts "Waiting for SSH to become reachable..."
-set ssh_ready 0
-for {set i 0} {$i < 30} {incr i} {
-    if {![catch {
-        exec ssh \
-            -p $ssh_port \
-            -i $ssh_key \
-            -o StrictHostKeyChecking=no \
-            -o ConnectTimeout=2 \
-            -o LogLevel=ERROR \
-            root@127.0.0.1 \
-            "echo SSH_OK"
-    }]} {
-        set ssh_ready 1
-        break
-    }
-    after 1000
-}
-if {!$ssh_ready} {
-    puts stderr "ERROR: SSH did not become reachable within 30 s"
-    exit 1
-}
-puts "SSH is reachable"
-
-# ---- Copy Scapy source into the VM ----
-puts "Copying Scapy source to VM..."
-exec scp \
-    -P $ssh_port \
-    -i $ssh_key \
+# ---------------------------------------------------------------------------
+# Phase 9: Copy Scapy source and run tests
+# ---------------------------------------------------------------------------
+echo "=== Copying Scapy source to VM ==="
+scp -P "${SSH_PORT}" -i "${SSH_KEY}" \
     -o StrictHostKeyChecking=no \
     -o LogLevel=ERROR \
-    $scapy_tar \
+    "${SCAPY_TAR}" \
     root@127.0.0.1:/tmp/
-puts "Source copied"
 
-# ---- Run the RTNetlink live tests inside the VM ----
-puts "Running RTNetlink live tests inside VM..."
-set test_status [catch {
-    exec ssh \
-        -p $ssh_port \
-        -i $ssh_key \
-        -o StrictHostKeyChecking=no \
-        -o LogLevel=ERROR \
-        root@127.0.0.1 \
-        "cd /tmp && tar xzf scapy-src.tar.gz && PYTHONPATH=/tmp python3 scapy/tools/UTscapy.py -t test/vm/rtnetlink_live.uts -k vm"
-} test_output]
+echo "=== Running RTNetlink live tests inside VM ==="
+ssh "${SSH_OPTS[@]}" root@127.0.0.1 \
+    "cd /tmp && tar xzf scapy-src.tar.gz && \
+     PYTHONPATH=/tmp python3 scapy/tools/UTscapy.py \
+         -t test/vm/rtnetlink_live.uts -k vm"
+TEST_RC=$?
 
-# Print test output (captured from SSH stdout)
-puts $test_output
+# ---------------------------------------------------------------------------
+# Phase 10: Shut the VM down gracefully
+# ---------------------------------------------------------------------------
+echo "=== Shutting down VM ==="
+ssh "${SSH_OPTS[@]}" root@127.0.0.1 "poweroff" 2>/dev/null || true
+wait "${QEMU_PID}" 2>/dev/null || true
 
-# ---- Shut the VM down gracefully ----
-send "poweroff\r"
-expect {
-    "Power down" { }
-    eof          { }
-    timeout      { }
-}
-wait
-
-# ---- Report result ----
-if {$test_status != 0} {
-    puts stderr "ERROR: RTNetlink VM tests FAILED"
+if [ "${TEST_RC}" -ne 0 ]; then
+    echo "ERROR: RTNetlink VM tests FAILED"
     exit 1
-}
-puts "=== RTNetlink VM tests PASSED ==="
-exit 0
-EXPECT_EOF
+fi
+echo "=== RTNetlink VM tests PASSED ==="

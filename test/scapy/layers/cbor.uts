@@ -3035,3 +3035,704 @@ class OffsetPkt(CBOR_Packet):
 
 pkt = OffsetPkt(cbor2.dumps({'name': 'delta', 'offset': -1024, 'count': 512}))
 pkt.name.val == 'delta' and pkt.offset.val == -1024 and pkt.count.val == 512
+
++ CBOR_Packet - nested CBORF_PACKET structures
+
+= CBORF_PACKET three levels deep: Outer(ARRAY) -> Middle(ARRAY) -> Inner(ARRAY)
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class NestInner(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('x', 0),
+        CBORF_INTEGER('y', 0),
+    )
+
+class NestMiddle(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_TEXT_STRING('zone', ''),
+        CBORF_PACKET('point', None, NestInner),
+    )
+
+class NestOuter(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('version', 0),
+        CBORF_PACKET('region', None, NestMiddle),
+    )
+
+inner = NestInner(cbor2.dumps([30, 40]))
+mid = NestMiddle()
+mid.zone.val = 'north'
+mid.point = inner
+outer = NestOuter()
+outer.version.val = 2
+outer.region = mid
+raw = bytes(outer)
+outer2 = NestOuter(raw)
+outer2.version.val == 2 and outer2.region.zone.val == 'north' and outer2.region.point.x.val == 30 and outer2.region.point.y.val == 40
+
+= CBORF_PACKET three-level nesting cbor2 interop
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class NestInner2(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('x', 0),
+        CBORF_INTEGER('y', 0),
+    )
+
+class NestMiddle2(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_TEXT_STRING('zone', ''),
+        CBORF_PACKET('point', None, NestInner2),
+    )
+
+class NestOuter2(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('version', 0),
+        CBORF_PACKET('region', None, NestMiddle2),
+    )
+
+inner = NestInner2(cbor2.dumps([10, 20]))
+mid = NestMiddle2()
+mid.zone.val = 'south'
+mid.point = inner
+outer = NestOuter2()
+outer.version.val = 1
+outer.region = mid
+dec = cbor2.loads(bytes(outer))
+dec == [1, ['south', [10, 20]]]
+
+= CBORF_PACKET inside CBORF_MAP: cbor2 decode matches field values
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_MAP, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class MapInner(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('px', 0),
+        CBORF_INTEGER('py', 0),
+    )
+
+class MapWithNestedPkt(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING('label', ''),
+        CBORF_PACKET('coords', None, MapInner),
+    )
+
+inner = MapInner(cbor2.dumps([5, 7]))
+pkt = MapWithNestedPkt()
+pkt.label.val = 'origin'
+pkt.coords = inner
+dec = cbor2.loads(bytes(pkt))
+dec.get('label') == 'origin' and dec.get('coords') == [5, 7]
+
+= CBORF_PACKET inside CBORF_MAP: Scapy decode roundtrip
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_MAP, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class CoordsInner(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('px', 0),
+        CBORF_INTEGER('py', 0),
+    )
+
+class CoordsOuter(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING('label', ''),
+        CBORF_PACKET('coords', None, CoordsInner),
+    )
+
+inner = CoordsInner(cbor2.dumps([5, 7]))
+pkt = CoordsOuter()
+pkt.label.val = 'origin'
+pkt.coords = inner
+pkt2 = CoordsOuter(bytes(pkt))
+pkt2.label.val == 'origin' and pkt2.coords.px.val == 5 and pkt2.coords.py.val == 7
+
+= CBORF_PACKET: nested MAP-in-MAP via CBORF_PACKET (Document/Metadata)
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_TEXT_STRING, CBORF_BYTE_STRING, CBORF_INTEGER, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class DocMeta(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING('creator', ''),
+        CBORF_INTEGER('version', 0),
+    )
+
+class DocPacket(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING('title', ''),
+        CBORF_BYTE_STRING('body', b''),
+        CBORF_PACKET('metadata', None, DocMeta),
+    )
+
+meta = DocMeta()
+meta.creator.val = 'alice'
+meta.version.val = 3
+doc = DocPacket()
+doc.title.val = 'My Document'
+doc.body.val = b'hello world'
+doc.metadata = meta
+raw = bytes(doc)
+dec = cbor2.loads(raw)
+dec.get('title') == 'My Document' and dec.get('body') == b'hello world' and dec.get('metadata') == {'creator': 'alice', 'version': 3}
+
+= CBORF_PACKET: nested MAP-in-MAP Scapy roundtrip
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_TEXT_STRING, CBORF_BYTE_STRING, CBORF_INTEGER, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class DocMeta2(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING('creator', ''),
+        CBORF_INTEGER('version', 0),
+    )
+
+class DocPacket2(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING('title', ''),
+        CBORF_BYTE_STRING('body', b''),
+        CBORF_PACKET('metadata', None, DocMeta2),
+    )
+
+meta = DocMeta2()
+meta.creator.val = 'bob'
+meta.version.val = 7
+doc = DocPacket2()
+doc.title.val = 'Report'
+doc.body.val = b'\x01\x02\x03'
+doc.metadata = meta
+raw = bytes(doc)
+doc2 = DocPacket2(raw)
+doc2.title.val == 'Report' and doc2.body.val == b'\x01\x02\x03' and doc2.metadata.creator.val == 'bob' and doc2.metadata.version.val == 7
+
++ CBOR_Packet - CBORF_ARRAY_OF with CBOR_Packet elements
+
+= CBORF_ARRAY_OF with CBOR_Packet class: cbor2 list of lists → Scapy decode
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_ARRAY_OF
+from scapy.cborpacket import CBOR_Packet
+
+class StatusItem(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('code', 0),
+        CBORF_TEXT_STRING('msg', ''),
+    )
+
+class StatusList(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF('statuses', [], StatusItem)
+
+raw = cbor2.dumps([[200, 'OK'], [201, 'Created'], [204, 'No Content']])
+pkt = StatusList(raw)
+len(pkt.statuses) == 3 and pkt.statuses[0].code.val == 200 and pkt.statuses[1].msg.val == 'Created' and pkt.statuses[2].code.val == 204
+
+= CBORF_ARRAY_OF with CBOR_Packet class: Scapy encode → cbor2 decode
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_ARRAY_OF
+from scapy.cborpacket import CBOR_Packet
+
+class ErrItem(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('code', 0),
+        CBORF_TEXT_STRING('msg', ''),
+    )
+
+class ErrList(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF('errors', [], ErrItem)
+
+pkt = ErrList()
+pkt.errors = [ErrItem(cbor2.dumps([404, 'Not Found'])), ErrItem(cbor2.dumps([500, 'Server Error']))]
+dec = cbor2.loads(bytes(pkt))
+dec == [[404, 'Not Found'], [500, 'Server Error']]
+
+= CBORF_ARRAY_OF with CBOR_Packet class: roundtrip
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_ARRAY_OF
+from scapy.cborpacket import CBOR_Packet
+
+class MsgItem(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('id', 0),
+        CBORF_TEXT_STRING('txt', ''),
+    )
+
+class MsgList(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF('messages', [], MsgItem)
+
+raw = cbor2.dumps([[1, 'hello'], [2, 'world'], [3, 'foo']])
+pkt = MsgList(raw)
+raw2 = bytes(pkt)
+pkt2 = MsgList(raw2)
+len(pkt2.messages) == 3 and pkt2.messages[2].id.val == 3 and pkt2.messages[2].txt.val == 'foo'
+
+= CBORF_ARRAY_OF with CBOR_Packet class: empty list
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_ARRAY_OF
+from scapy.cborpacket import CBOR_Packet
+
+class EmptyItem(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('val', 0),
+    )
+
+class EmptyItemList(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF('items', [], EmptyItem)
+
+pkt = EmptyItemList()
+raw = bytes(pkt)
+dec = cbor2.loads(raw)
+dec == [] and len(EmptyItemList(raw).items) == 0
+
+= CBORF_ARRAY_OF with CBOR_Packet class inside CBORF_MAP
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_ARRAY_OF, CBORF_MAP, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class EventItem(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_TEXT_STRING('evt', ''),
+        CBORF_INTEGER('ts', 0),
+    )
+
+class EventLog(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF('events', [], EventItem)
+
+class Report(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING('source', ''),
+        CBORF_INTEGER('count', 0),
+        CBORF_PACKET('log', None, EventLog),
+    )
+
+log = EventLog()
+log.events = [EventItem(cbor2.dumps(['boot', 1000])), EventItem(cbor2.dumps(['login', 2000]))]
+rpt = Report()
+rpt.source.val = 'sensor-1'
+rpt.count.val = 2
+rpt.log = log
+raw = bytes(rpt)
+dec = cbor2.loads(raw)
+dec.get('source') == 'sensor-1' and dec.get('count') == 2 and dec.get('log') == [['boot', 1000], ['login', 2000]]
+
++ CBOR_Packet - CBORF_optional extended tests
+
+= CBORF_optional: type mismatch in CBORF_ARRAY sets field to None
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_optional
+from scapy.cborpacket import CBOR_Packet
+
+class TwoFieldPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('version', 0),
+        CBORF_optional(CBORF_TEXT_STRING('description', 'none')),
+    )
+
+raw = cbor2.dumps([7, 99])
+pkt = TwoFieldPkt(raw)
+pkt.version.val == 7 and pkt.description is None
+
+= CBORF_optional: correct type present is decoded normally
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_optional
+from scapy.cborpacket import CBOR_Packet
+
+class OptPresentPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('version', 0),
+        CBORF_optional(CBORF_TEXT_STRING('description', '')),
+    )
+
+raw = cbor2.dumps([3, 'hello world'])
+pkt = OptPresentPkt(raw)
+pkt.version.val == 3 and pkt.description.val == 'hello world'
+
+= CBORF_optional: encode and decode roundtrip with present field
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_optional
+from scapy.cborpacket import CBOR_Packet
+
+class OptRTPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('version', 1),
+        CBORF_optional(CBORF_TEXT_STRING('title', '')),
+    )
+
+pkt = OptRTPkt()
+pkt.title.val = 'test title'
+raw = bytes(pkt)
+pkt2 = OptRTPkt(raw)
+pkt2.version.val == 1 and pkt2.title.val == 'test title'
+
+= CBORF_optional: cbor2 interop - optional present
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_optional
+from scapy.cborpacket import CBOR_Packet
+
+class OptInteropPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('seq', 0),
+        CBORF_optional(CBORF_TEXT_STRING('note', '')),
+    )
+
+pkt = OptInteropPkt()
+pkt.note.val = 'cbor2 interop'
+dec = cbor2.loads(bytes(pkt))
+dec == [0, 'cbor2 interop']
+
+= CBORF_optional inside CBORF_MAP: key present in cbor2 dict is decoded
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_optional
+from scapy.cborpacket import CBOR_Packet
+
+class ConfigWithOpt(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('timeout', 30),
+        CBORF_optional(CBORF_TEXT_STRING('endpoint', '')),
+        CBORF_INTEGER('retries', 3),
+    )
+
+pkt = ConfigWithOpt(cbor2.dumps({'timeout': 60, 'endpoint': 'https://example.com', 'retries': 5}))
+pkt.timeout.val == 60 and pkt.endpoint.val == 'https://example.com' and pkt.retries.val == 5
+
+= CBORF_optional inside CBORF_MAP: missing key stays at default
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_optional
+from scapy.cborpacket import CBOR_Packet
+
+class ConfigNoOpt(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('timeout', 30),
+        CBORF_optional(CBORF_TEXT_STRING('endpoint', '')),
+        CBORF_INTEGER('retries', 3),
+    )
+
+pkt = ConfigNoOpt(cbor2.dumps({'timeout': 15, 'retries': 2}))
+pkt.timeout.val == 15 and pkt.retries.val == 2
+
++ CBOR_Packet - CBORF_SEMANTIC_TAG extended tests
+
+= CBORF_SEMANTIC_TAG with TEXT_STRING inner: Scapy encode, cbor2 decode as datetime
+import cbor2, datetime
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_TEXT_STRING, CBORF_SEMANTIC_TAG
+from scapy.cborpacket import CBOR_Packet
+
+class DatetimePkt(CBOR_Packet):
+    CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 0, CBORF_TEXT_STRING('dt', ''))
+
+pkt = DatetimePkt()
+pkt.dt.val = '2023-01-15T12:00:00Z'
+dec = cbor2.loads(bytes(pkt))
+isinstance(dec, datetime.datetime)
+
+= CBORF_SEMANTIC_TAG with INTEGER inner: Scapy encode, cbor2 decode as datetime
+import cbor2, datetime
+from scapy.cbor.cborfields import CBORF_INTEGER, CBORF_SEMANTIC_TAG
+from scapy.cborpacket import CBOR_Packet
+
+class UnixTimePkt(CBOR_Packet):
+    CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 1, CBORF_INTEGER('ts', 0))
+
+pkt = UnixTimePkt()
+pkt.ts.val = 1700000000
+dec = cbor2.loads(bytes(pkt))
+isinstance(dec, datetime.datetime)
+
+= CBORF_SEMANTIC_TAG roundtrip: Scapy encode → Scapy decode preserves inner value
+import cbor2
+from scapy.cbor.cborfields import CBORF_INTEGER, CBORF_SEMANTIC_TAG
+from scapy.cborpacket import CBOR_Packet
+
+class TagRTPkt(CBOR_Packet):
+    CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 1, CBORF_INTEGER('ts', 0))
+
+pkt = TagRTPkt()
+pkt.ts.val = 1700000000
+raw = bytes(pkt)
+pkt2 = TagRTPkt(raw)
+pkt2.ts.val == 1700000000
+
+= CBORF_SEMANTIC_TAG: tag byte matches CBOR major type 6 encoding
+import cbor2
+from scapy.cbor.cborfields import CBORF_BYTE_STRING, CBORF_SEMANTIC_TAG
+from scapy.cborpacket import CBOR_Packet
+
+class TagBigNum(CBOR_Packet):
+    CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 2, CBORF_BYTE_STRING('n', b''))
+
+pkt = TagBigNum()
+pkt.n.val = b'\x01\x00\x00\x00\x00\x00\x00\x00\x00'
+raw = bytes(pkt)
+raw[0:1] == b'\xc2'
+
+= CBORF_SEMANTIC_TAG: byte-exact comparison with cbor2 CBORTag
+import cbor2
+from scapy.cbor.cborfields import CBORF_INTEGER, CBORF_SEMANTIC_TAG
+from scapy.cborpacket import CBOR_Packet
+
+class TagCmpPkt(CBOR_Packet):
+    CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 1, CBORF_INTEGER('ts', 0))
+
+pkt = TagCmpPkt()
+pkt.ts.val = 9999999
+bytes(pkt) == cbor2.dumps(cbor2.CBORTag(1, 9999999))
+
+= CBORF_SEMANTIC_TAG inside CBORF_MAP: Scapy encode, cbor2 decode
+import cbor2, datetime
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_TEXT_STRING, CBORF_INTEGER, CBORF_SEMANTIC_TAG
+from scapy.cborpacket import CBOR_Packet
+
+class EventPkt(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING('event_type', ''),
+        CBORF_SEMANTIC_TAG('tag', None, 1, CBORF_INTEGER('ts', 0)),
+    )
+
+pkt = EventPkt()
+pkt.event_type.val = 'login'
+pkt.ts.val = 9999999
+dec = cbor2.loads(bytes(pkt))
+isinstance(dec, dict) and dec.get('event_type') == 'login' and isinstance(dec.get('tag'), datetime.datetime)
+
+= CBORF_SEMANTIC_TAG inside CBORF_MAP: Scapy roundtrip preserves inner value
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_TEXT_STRING, CBORF_INTEGER, CBORF_SEMANTIC_TAG
+from scapy.cborpacket import CBOR_Packet
+
+class EventRTPkt(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING('event_type', ''),
+        CBORF_SEMANTIC_TAG('tag', None, 1, CBORF_INTEGER('ts', 0)),
+    )
+
+pkt = EventRTPkt()
+pkt.event_type.val = 'logout'
+pkt.ts.val = 1234567890
+raw = bytes(pkt)
+pkt2 = EventRTPkt(raw)
+pkt2.event_type.val == 'logout' and pkt2.ts.val == 1234567890
+
+= CBORF_SEMANTIC_TAG inside CBORF_ARRAY: Scapy encode, cbor2 decode
+import cbor2, datetime
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_TEXT_STRING, CBORF_INTEGER, CBORF_SEMANTIC_TAG
+from scapy.cborpacket import CBOR_Packet
+
+class TimedEventArr(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_TEXT_STRING('evt', ''),
+        CBORF_SEMANTIC_TAG('tag', None, 1, CBORF_INTEGER('ts', 0)),
+    )
+
+pkt = TimedEventArr()
+pkt.evt.val = 'start'
+pkt.ts.val = 1700000000
+dec = cbor2.loads(bytes(pkt))
+dec[0] == 'start' and isinstance(dec[1], datetime.datetime)
+
++ CBOR_Packet - realistic models
+
+= Realistic model: EAT-like attestation token
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_BYTE_STRING
+from scapy.cborpacket import CBOR_Packet
+
+class EATToken(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('nonce', 0),
+        CBORF_TEXT_STRING('ueid', ''),
+        CBORF_BYTE_STRING('boot_seed', b''),
+        CBORF_INTEGER('hwver', 0),
+    )
+
+raw = cbor2.dumps({'nonce': 12345, 'ueid': 'device-abc', 'boot_seed': b'\x00' * 16, 'hwver': 3})
+pkt = EATToken(raw)
+pkt.nonce.val == 12345 and pkt.ueid.val == 'device-abc' and pkt.boot_seed.val == b'\x00' * 16 and pkt.hwver.val == 3
+
+= Realistic model: EAT-like token Scapy encode, cbor2 decode
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_BYTE_STRING
+from scapy.cborpacket import CBOR_Packet
+
+class EATToken2(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('nonce', 0),
+        CBORF_TEXT_STRING('ueid', ''),
+        CBORF_BYTE_STRING('boot_seed', b''),
+        CBORF_INTEGER('hwver', 0),
+    )
+
+pkt = EATToken2()
+pkt.nonce.val = 99999
+pkt.ueid.val = 'iot-sensor-01'
+pkt.boot_seed.val = b'\xde\xad\xbe\xef' * 4
+pkt.hwver.val = 5
+dec = cbor2.loads(bytes(pkt))
+dec.get('nonce') == 99999 and dec.get('ueid') == 'iot-sensor-01' and dec.get('boot_seed') == b'\xde\xad\xbe\xef' * 4 and dec.get('hwver') == 5
+
+= Realistic model: SensorReport with CBORF_PACKET inner reading
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_MAP, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_FLOAT, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class SensorData(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('sensor_id', 0),
+        CBORF_FLOAT('temperature', 0.0),
+    )
+
+class SensorReport(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('station', 0),
+        CBORF_TEXT_STRING('unit', ''),
+        CBORF_PACKET('reading', None, SensorData),
+    )
+
+reading = SensorData()
+reading.sensor_id.val = 3
+reading.temperature.val = 98.6
+rpt = SensorReport()
+rpt.station.val = 5
+rpt.unit.val = 'fahrenheit'
+rpt.reading = reading
+dec = cbor2.loads(bytes(rpt))
+dec.get('station') == 5 and dec.get('unit') == 'fahrenheit' and dec.get('reading') == [3, 98.6]
+
+= Realistic model: SensorReport Scapy roundtrip
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_MAP, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_FLOAT, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class SensorData2(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('sensor_id', 0),
+        CBORF_FLOAT('temperature', 0.0),
+    )
+
+class SensorReport2(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('station', 0),
+        CBORF_TEXT_STRING('unit', ''),
+        CBORF_PACKET('reading', None, SensorData2),
+    )
+
+raw = cbor2.dumps({'station': 9, 'unit': 'celsius', 'reading': [7, 36.5]})
+pkt = SensorReport2(raw)
+pkt2 = SensorReport2(bytes(pkt))
+pkt2.station.val == 9 and pkt2.unit.val == 'celsius' and pkt2.reading.sensor_id.val == 7
+
+= Realistic model: StatusList (CBORF_ARRAY_OF of CBOR_Packets) encode and decode
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_ARRAY_OF
+from scapy.cborpacket import CBOR_Packet
+
+class HttpStatus(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('code', 0),
+        CBORF_TEXT_STRING('phrase', ''),
+    )
+
+class HttpStatusList(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF('statuses', [], HttpStatus)
+
+raw = cbor2.dumps([[200, 'OK'], [201, 'Created'], [404, 'Not Found']])
+pkt = HttpStatusList(raw)
+raw2 = bytes(pkt)
+dec = cbor2.loads(raw2)
+dec == [[200, 'OK'], [201, 'Created'], [404, 'Not Found']]
+
+= Realistic model: HTTP response header map
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_BYTE_STRING
+from scapy.cborpacket import CBOR_Packet
+
+class HttpResponse(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('status', 0),
+        CBORF_TEXT_STRING('content_type', ''),
+        CBORF_INTEGER('content_length', 0),
+        CBORF_BYTE_STRING('body', b''),
+    )
+
+pkt = HttpResponse()
+pkt.status.val = 200
+pkt.content_type.val = 'application/cbor'
+pkt.content_length.val = 4
+pkt.body.val = b'\x01\x02\x03\x04'
+dec = cbor2.loads(bytes(pkt))
+dec.get('status') == 200 and dec.get('content_type') == 'application/cbor' and dec.get('body') == b'\x01\x02\x03\x04'
+
+= Realistic model: HTTP response header cbor2 → Scapy roundtrip
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_BYTE_STRING
+from scapy.cborpacket import CBOR_Packet
+
+class HttpResponse2(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('status', 0),
+        CBORF_TEXT_STRING('content_type', ''),
+        CBORF_INTEGER('content_length', 0),
+        CBORF_BYTE_STRING('body', b''),
+    )
+
+raw = cbor2.dumps({'status': 404, 'content_type': 'text/plain', 'content_length': 9, 'body': b'Not Found'})
+pkt = HttpResponse2(raw)
+pkt2 = HttpResponse2(bytes(pkt))
+pkt2.status.val == 404 and pkt2.content_type.val == 'text/plain' and pkt2.body.val == b'Not Found'
+
+= Realistic model: COSE-like header map with integer algorithm
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_INTEGER, CBORF_BYTE_STRING, CBORF_TEXT_STRING
+from scapy.cborpacket import CBOR_Packet
+
+class CoseHeader(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('alg', 0),
+        CBORF_TEXT_STRING('kid', ''),
+        CBORF_BYTE_STRING('x5t', b''),
+    )
+
+pkt = CoseHeader(cbor2.dumps({'alg': -7, 'kid': 'key-42', 'x5t': b'\xaa\xbb\xcc\xdd'}))
+dec = cbor2.loads(bytes(pkt))
+dec.get('alg') == -7 and dec.get('kid') == 'key-42' and dec.get('x5t') == b'\xaa\xbb\xcc\xdd'
+
+= Realistic model: CBOR_Packet fields_desc populated for complex structures
+import cbor2
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_BYTE_STRING, CBORF_FLOAT
+from scapy.cborpacket import CBOR_Packet
+
+class FullRecord(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER('seq', 0),
+        CBORF_TEXT_STRING('source', ''),
+        CBORF_FLOAT('score', 0.0),
+        CBORF_BYTE_STRING('checksum', b''),
+    )
+
+field_names = [f.name for f in FullRecord.fields_desc]
+'seq' in field_names and 'source' in field_names and 'score' in field_names and 'checksum' in field_names
+
+= Realistic model: multi-field packet encoding is byte-for-byte reproducible
+import cbor2
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_BYTE_STRING, CBORF_FLOAT
+from scapy.cborpacket import CBOR_Packet
+
+class MeasurementPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER('seq', 0),
+        CBORF_TEXT_STRING('sensor', ''),
+        CBORF_FLOAT('value', 0.0),
+        CBORF_BYTE_STRING('raw', b''),
+    )
+
+pkt = MeasurementPkt()
+pkt.seq.val = 42
+pkt.sensor.val = 'temp-01'
+pkt.value.val = 23.5
+pkt.raw.val = b'\x01\x02'
+raw1 = bytes(pkt)
+raw2 = bytes(MeasurementPkt(raw1))
+raw1 == raw2

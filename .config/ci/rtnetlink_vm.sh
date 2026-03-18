@@ -133,19 +133,46 @@ expect {
 send "root\r"
 expect "# "
 
-# ---- Install required packages ----
-puts "Installing packages (may take ~60 s on first boot)..."
-send "apk update -q 2>/dev/null\r"
+# ---- Wait for network (DHCP may not be complete right after login) ----
+# Poll for a default route for up to 30 s; fall back to explicit udhcpc if absent.
+puts "Waiting for network..."
+send "for i in \$(seq 1 30); do ip route show default | grep -q default && echo NET_READY && break; sleep 1; done\r"
+expect {
+    "NET_READY" { puts "Network is up (default route present)" }
+    timeout {
+        puts stderr "ERROR: No default route after 30 s - network unavailable"
+        exit 1
+    }
+}
+expect "# "
+
+# ---- Install required packages (errors visible; exit on failure) ----
+puts "Installing packages..."
+set timeout 120
+send "apk update\r"
 expect {
     "# "    { }
     timeout { puts stderr "ERROR: apk update timed out"; exit 1 }
 }
 
-send "apk add -q openssh-server python3 iproute2 2>/dev/null\r"
+send "apk add openssh python3 iproute2\r"
 expect {
     "# "    { }
     timeout { puts stderr "ERROR: Package installation timed out"; exit 1 }
 }
+set timeout 300
+
+# Abort early if the sshd binary is missing (openssh install failed).
+send "ls /usr/sbin/sshd && echo SSHD_OK || echo SSHD_MISSING\r"
+expect {
+    "SSHD_OK"      { puts "sshd binary confirmed" }
+    "SSHD_MISSING" {
+        puts stderr "ERROR: /usr/sbin/sshd not found - openssh install failed"
+        exit 1
+    }
+    timeout { puts stderr "ERROR: timeout checking sshd binary"; exit 1 }
+}
+expect "# "
 puts "Packages installed"
 
 # ---- Load dummy kernel module (for test interfaces) ----
@@ -163,11 +190,12 @@ expect "# "
 send "chmod 600 /root/.ssh/authorized_keys\r"
 expect "# "
 
+# Append to the existing sshd_config installed by the openssh package.
 send "echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config\r"
 expect "# "
-send "ssh-keygen -A -q 2>/dev/null\r"
-expect "# "
-send "/usr/sbin/sshd\r"
+
+# Use Alpine's OpenRC service: it generates host keys and starts sshd.
+send "rc-service sshd start\r"
 expect "# "
 puts "SSH daemon started"
 

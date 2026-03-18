@@ -45,10 +45,21 @@ class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
 
     def self_build(self):
         # type: () -> bytes
+        """Build this CBOR packet to wire bytes using CBOR_root.
+
+        Returns the raw packet cache when already built, otherwise delegates
+        to CBOR_root.build() which encodes all fields according to the CBOR
+        schema defined for this packet.
+        """
         if self.raw_packet_cache is not None:
             return self.raw_packet_cache
         return self.CBOR_root.build(self)
 
     def do_dissect(self, x):
         # type: (bytes) -> bytes
+        """Dissect CBOR-encoded bytes into packet fields.
+
+        Delegates to CBOR_root.dissect() which reads CBOR items from *x*,
+        populates each field on the packet, and returns any unconsumed bytes.
+        """
         return self.CBOR_root.dissect(self, x)

@@ -105,7 +105,12 @@ class CBORF_field(CBORF_element, Generic[_I, _A]):
 
     def _wrap(self, val):
         # type: (Any) -> _A
-        """Wrap a Python value in the appropriate CBOR object."""
+        """Return a CBOR object wrapping *val*.
+
+        The base implementation is a pass-through cast; subclasses override
+        this to convert a raw Python value to the appropriate CBOR object
+        type (e.g. :class:`~scapy.cbor.cbor.CBOR_UNSIGNED_INTEGER`).
+        """
         return cast(_A, val)
 
     def register_owner(self, cls):
@@ -504,7 +509,10 @@ class CBORF_ARRAY(CBORF_field[List[Any], List[Any]]):
 
     def __init__(self, *seq, **kwargs):
         # type: (*Any, **Any) -> None
-        name = "dummy_array_name"
+        # The array itself is a structural field without its own named slot on
+        # the packet; a placeholder name is used so the base class __init__
+        # stays happy.  Individual element fields are the ones that carry names.
+        name = "_cbor_array"
         default = [field.default for field in seq]
         super(CBORF_ARRAY, self).__init__(name, None)
         self.default = default
@@ -670,7 +678,11 @@ class CBORF_MAP(CBORF_field[Dict[str, Any], Dict[str, Any]]):
 
     def __init__(self, *seq, **kwargs):
         # type: (*Any, **Any) -> None
-        name = "dummy_map_name"
+        # The map itself is a structural field without its own named slot on
+        # the packet; a placeholder name is used so the base class __init__
+        # stays happy.  Individual value fields are the ones that carry names
+        # (which also serve as the CBOR text-string keys in the wire encoding).
+        name = "_cbor_map"
         default = {field.name: field.default for field in seq}
         super(CBORF_MAP, self).__init__(name, None)
         self.default = default

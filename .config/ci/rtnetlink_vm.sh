@@ -148,12 +148,17 @@ expect {
 expect "# "
 
 # ---- Configure DNS ----
-# QEMU user-mode networking (SLIRP) always provides a built-in DNS forwarder
-# at 10.0.2.3, but the Alpine live-boot may leave /etc/resolv.conf empty or
-# absent, causing all hostname lookups to fail even though IP connectivity
-# (the default route checked above) is working fine.
+# QEMU SLIRP user-mode networking provides a DNS forwarder at 10.0.2.3, but
+# that forwarder resolves the HOST's /etc/resolv.conf at runtime.  On GitHub
+# Actions (Ubuntu), systemd-resolved exposes its stub at 127.0.0.53, and
+# some QEMU versions cannot forward to that loopback address, causing every
+# DNS lookup inside the VM to return "transient error".
+#
+# Instead, point the VM directly at a well-known public resolver (8.8.8.8).
+# QEMU's SLIRP NAT passes the UDP/53 packets through to the real internet,
+# completely bypassing the SLIRP DNS proxy and the host loopback issue.
 puts "Configuring DNS..."
-send "echo 'nameserver 10.0.2.3' > /etc/resolv.conf\r"
+send "printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' > /etc/resolv.conf\r"
 expect "# "
 
 # ---- Install required packages (errors visible; exit on failure) ----

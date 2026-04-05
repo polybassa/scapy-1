@@ -1,0 +1,416 @@
+% Regression tests for SAE J1939 protocol
+~ not_pypy linux
+
+# More information at http://www.secdev.org/projects/UTscapy/
+
+############
+############
++ Setup
+~ conf
+
+= Load J1939 module
+
+load_contrib("j1939", globals_dict=globals())
+from scapy.contrib.j1939 import (
+    J1939, J1939_CAN,
+    J1939_TP_CM, J1939_TP_CM_RTS, J1939_TP_CM_CTS, J1939_TP_CM_ACK,
+    J1939_TP_CM_BAM, J1939_TP_CM_ABORT, J1939_TP_DT,
+    J1939_NO_ADDR, J1939_NO_PGN, J1939_NO_NAME,
+    J1939_IDLE_ADDR, J1939_BROADCAST_ADDR,
+    J1939_PGN_TP_CM, J1939_PGN_TP_DT,
+    J1939_TP_CTRL_RTS, J1939_TP_CTRL_CTS, J1939_TP_CTRL_ACK,
+    J1939_TP_CTRL_BAM, J1939_TP_CTRL_ABORT,
+    can_id_to_j1939, j1939_to_can_id, pgn_from_fields, dst_from_fields,
+    pgn_is_pdu1,
+)
+
+= hexadecimal helper
+
+dhex = bytes.fromhex
+
+
+############
+############
++ Helper function tests
+
+= pgn_is_pdu1 with PDU1 PGN (PF < 240)
+assert pgn_is_pdu1(0xEC00) == True
+assert pgn_is_pdu1(0xEA00) == True
+assert pgn_is_pdu1(0x0100) == True
+
+= pgn_is_pdu1 with PDU2 PGN (PF >= 240)
+assert pgn_is_pdu1(0xFECA) == False
+assert pgn_is_pdu1(0xFF00) == False
+assert pgn_is_pdu1(0xF004) == False
+
+= can_id_to_j1939 – typical broadcast frame (CAN ID 0x18FECA00)
+fields = can_id_to_j1939(0x18FECA00 & 0x1FFFFFFF)
+# 0x18FECA00 as 29-bit id: 0x0CFECA00 >> ... let's compute properly
+# CAN ID bits [28:0] = 0x18FECA00 & 0x1FFFFFFF = 0x18FECA00 & 0x1FFFFFFF
+# priority = bits 28-26 of 0x18FECA00 = (0x18FECA00 >> 26) & 7 = 6
+# reserved = bit 25 = 0
+# dp       = bit 24 = 1? let's recalculate
+# 0x18FECA00 = 0b0001_1000_1111_1110_1100_1010_0000_0000
+# bits 28-26 = 0b110 = 6
+# bit  25    = 0
+# bit  24    = 0  (actually let's check: 0x18 = 0001_1000, bits 28-24 = 0b1_1000 = 24 = priority=6 r=0 dp=0)
+# So for 0x18FECA00: priority=6, r=0, dp=0, pf=0xFE, ps=0xCA, sa=0x00
+can_id_29bit = 0x18FECA00 & 0x1FFFFFFF
+f = can_id_to_j1939(can_id_29bit)
+assert f['priority'] == 6
+assert f['reserved'] == 0
+assert f['data_page'] == 0
+assert f['pdu_format'] == 0xFE
+assert f['pdu_specific'] == 0xCA
+assert f['src'] == 0x00
+
+= j1939_to_can_id round-trip
+can_id = j1939_to_can_id(6, 0, 0, 0xFE, 0xCA, 0x00)
+assert can_id == (0x18FECA00 & 0x1FFFFFFF)
+
+= can_id_to_j1939 / j1939_to_can_id round-trip
+for priority in [0, 3, 6, 7]:
+    for dp in [0, 1]:
+        for pf in [0x00, 0xEA, 0xF0, 0xFE, 0xFF]:
+            for ps in [0x00, 0xFF]:
+                for sa in [0x00, 0x0B, 0xFE]:
+                    cid = j1939_to_can_id(priority, 0, dp, pf, ps, sa)
+                    f = can_id_to_j1939(cid)
+                    assert f['priority'] == priority
+                    assert f['data_page'] == dp
+                    assert f['pdu_format'] == pf
+                    assert f['pdu_specific'] == ps
+                    assert f['src'] == sa
+
+= pgn_from_fields – PDU2 frame (PF >= 240)
+# PF=0xFE (254), PS=0xCA → PGN includes PS
+pgn = pgn_from_fields(0, 0xFE, 0xCA)
+assert pgn == 0xFECA
+
+= pgn_from_fields – PDU2 frame with data_page=1
+pgn = pgn_from_fields(1, 0xFE, 0xCA)
+assert pgn == 0x1FECA
+
+= pgn_from_fields – PDU1 frame (PF < 240)
+# PF=0xEC (236), PS=0x00 (destination, not part of PGN)
+pgn = pgn_from_fields(0, 0xEC, 0x00)
+assert pgn == 0xEC00
+
+= pgn_from_fields – PDU1 PGN does not include PS
+pgn1 = pgn_from_fields(0, 0xEB, 0x00)
+pgn2 = pgn_from_fields(0, 0xEB, 0xFF)
+assert pgn1 == pgn2, "PDU1 PGN must not depend on pdu_specific"
+
+= dst_from_fields – PDU1 yields destination address
+dst = dst_from_fields(0xEC, 0x42)
+assert dst == 0x42
+
+= dst_from_fields – PDU2 yields broadcast
+dst = dst_from_fields(0xFE, 0xCA)
+assert dst == J1939_NO_ADDR  # 0xFF
+
+
+############
+############
++ J1939 application-layer packet tests
+
+= J1939 default creation
+p = J1939()
+assert p.data == b''
+assert p.priority == 6
+assert p.pgn == 0
+assert p.src == J1939_NO_ADDR
+assert p.dst == J1939_NO_ADDR
+assert bytes(p) == b''
+
+= J1939 creation with data bytes
+p = J1939(b'\x01\x02\x03')
+assert p.data == b'\x01\x02\x03'
+assert bytes(p) == b'\x01\x02\x03'
+
+= J1939 creation with all metadata
+p = J1939(b'\xAA\xBB', priority=3, pgn=0xFECA, src=0x00, dst=0xFF)
+assert p.priority == 3
+assert p.pgn == 0xFECA
+assert p.src == 0x00
+assert p.dst == 0xFF
+assert p.data == b'\xAA\xBB'
+
+= J1939 addresses are not in wire bytes
+p = J1939(b'\x01', priority=3, pgn=0xFECA, src=0x00, dst=0xFF)
+assert bytes(p) == b'\x01'
+
+= J1939 answers
+p = J1939(b'\x01\x02', pgn=0xFECA)
+r = J1939(b'\x01\x02', pgn=0xFECA)
+assert p.answers(r)
+
+= J1939 does not answer different data
+p = J1939(b'\x01')
+r = J1939(b'\x02')
+assert not p.answers(r)
+
+= J1939 does not answer non-J1939
+p = J1939(b'\x01')
+from scapy.packet import Raw
+assert not p.answers(Raw(b'\x01'))
+
+
+############
+############
++ J1939_CAN packet tests
+
+= J1939_CAN default packet creation
+p = J1939_CAN()
+assert p.priority == 6
+assert p.reserved == 0
+assert p.data_page == 0
+assert p.pdu_format == 0xFE
+assert p.pdu_specific == 0xFF
+assert p.src == 0xFE
+
+= J1939_CAN byte layout is identical to CAN
+# Build manually to verify first-4-byte identity
+p = J1939_CAN(
+    priority=6, reserved=0, data_page=0,
+    pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+    data=b'\x01\x02\x03\x04\x05\x06\x07\x08'
+)
+b = bytes(p)
+# First 4 bytes encode flags(3)+J1939 fields(29)
+# flags=extended=0b100, then priority=6(0b110), r=0, dp=0, pf=0xFE, ps=0xCA, sa=0x00
+# The 32-bit word (big-endian) = 0b100_110_0_0 | 0xFE | 0xCA | 0x00
+# = 0b10011000 | 0xFE | 0xCA | 0x00 = 0x98FECA00
+import struct
+word = struct.unpack('>I', b[:4])[0]
+assert word == 0x98FECA00, "word=0x%08X" % word
+
+= J1939_CAN wire layout matches CAN
+from scapy.layers.can import CAN
+can_id_val = j1939_to_can_id(6, 0, 0, 0xFE, 0xCA, 0x00)
+p_can = CAN(flags=0b100, identifier=can_id_val,
+            data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+p_j = J1939_CAN(
+    priority=6, reserved=0, data_page=0,
+    pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+    data=b'\x01\x02\x03\x04\x05\x06\x07\x08'
+)
+assert bytes(p_can) == bytes(p_j), \
+    "CAN bytes: %r\nJ1939_CAN bytes: %r" % (bytes(p_can), bytes(p_j))
+
+= J1939_CAN from_can conversion
+can_id_val = j1939_to_can_id(6, 0, 0, 0xFE, 0xCA, 0x00)
+p_can = CAN(flags=0b100, identifier=can_id_val, data=b'\x01\x02')
+p_j = J1939_CAN.from_can(p_can)
+assert p_j.priority == 6
+assert p_j.pdu_format == 0xFE
+assert p_j.pdu_specific == 0xCA
+assert p_j.src == 0x00
+assert p_j.data == b'\x01\x02'
+
+= J1939_CAN to_can conversion
+p_j = J1939_CAN(
+    priority=6, reserved=0, data_page=0,
+    pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+    data=b'\x01\x02'
+)
+p_can = p_j.to_can()
+assert p_can.identifier == j1939_to_can_id(6, 0, 0, 0xFE, 0xCA, 0x00)
+assert p_can.data == b'\x01\x02'
+
+= J1939_CAN pgn property – PDU2
+p = J1939_CAN(pdu_format=0xFE, pdu_specific=0xCA)
+assert p.pgn == 0xFECA
+
+= J1939_CAN pgn property – PDU1
+p = J1939_CAN(pdu_format=0xEC, pdu_specific=0x00)
+assert p.pgn == 0xEC00
+
+= J1939_CAN pgn property – PDU1 (PS is DA, not in PGN)
+p1 = J1939_CAN(pdu_format=0xEB, pdu_specific=0x00)
+p2 = J1939_CAN(pdu_format=0xEB, pdu_specific=0xFF)
+assert p1.pgn == p2.pgn == 0xEB00
+
+= J1939_CAN dst property – PDU1
+p = J1939_CAN(pdu_format=0xEC, pdu_specific=0x42)
+assert p.dst == 0x42
+
+= J1939_CAN dst property – PDU2 (broadcast)
+p = J1939_CAN(pdu_format=0xFE, pdu_specific=0xCA)
+assert p.dst == J1939_NO_ADDR
+
+= J1939_CAN round-trip build and dissect
+p = J1939_CAN(
+    priority=6, reserved=0, data_page=0,
+    pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+    data=b'\x01\x02\x03\x04\x05\x06\x07\x08'
+)
+p2 = J1939_CAN(bytes(p))
+assert p2.priority == p.priority
+assert p2.pdu_format == p.pdu_format
+assert p2.pdu_specific == p.pdu_specific
+assert p2.src == p.src
+assert p2.data == p.data
+
+= J1939_CAN dissect known CAN ID 0x18FECA00 (Engine Speed, broadcast)
+# 0x18FECA00 & 0x1FFFFFFF as 29-bit = 0x18FECA00 & 0x1FFFFFFF
+# flags=extended=4 → 0b100
+# Let's build from raw bytes
+raw_frame = dhex('98FECA00' + '08' + '000000' + 'FF FF FF FF FF FF FF FF')
+p = J1939_CAN(raw_frame)
+assert p.priority == 6
+assert p.pdu_format == 0xFE
+assert p.pdu_specific == 0xCA
+assert p.src == 0x00
+assert p.data == b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
+assert p.pgn == 0xFECA
+
+= J1939_CAN dissect PDU1 frame (Torque/Speed, peer-to-peer)
+# PGN 0xF004 (ETC2), but let's use a PDU1 example
+# PGN 0xEC00 (TP.CM), src=0x00, dst=0xFF
+raw_frame = dhex('9800FF00' + '08' + '000000' + '20 14 00 03 FF CA FE 00')
+p = J1939_CAN(raw_frame)
+assert p.priority == 6, "priority=%d" % p.priority
+assert p.pdu_format == 0x00
+assert p.pdu_specific == 0xFF  # destination
+assert p.src == 0x00
+assert p.pgn == 0x0000
+assert p.dst == 0xFF
+
+
+############
+############
++ J1939 TP Connection Management tests
+
+= J1939_TP_CM_BAM build
+bam = J1939_TP_CM_BAM(total_size=20, num_packets=3, pgn=0xFECA)
+b = bytes(bam)
+assert b[0] == J1939_TP_CTRL_BAM    # ctrl = 32
+assert b[1] == 20                    # total_size low byte (LE)
+assert b[2] == 0                     # total_size high byte (LE)
+assert b[3] == 3                     # num_packets
+assert b[4] == 0xFF                  # reserved
+# PGN 0x00FECA stored little-endian: 0xCA, 0xFE, 0x00
+assert b[5] == 0xCA
+assert b[6] == 0xFE
+assert b[7] == 0x00
+
+= J1939_TP_CM_BAM dissect
+raw_bam = bytes([32, 20, 0, 3, 0xFF, 0xCA, 0xFE, 0x00])
+p = J1939_TP_CM.dispatch_hook(raw_bam)
+p = p(raw_bam)
+assert isinstance(p, J1939_TP_CM_BAM)
+assert p.ctrl == J1939_TP_CTRL_BAM
+assert p.total_size == 20
+assert p.num_packets == 3
+assert p.pgn == 0xFECA
+
+= J1939_TP_CM_RTS build and dissect
+rts = J1939_TP_CM_RTS(total_size=100, num_packets=15, max_packets=0xFF, pgn=0xEF00)
+b = bytes(rts)
+assert b[0] == J1939_TP_CTRL_RTS
+p = J1939_TP_CM_RTS(b)
+assert p.total_size == 100
+assert p.num_packets == 15
+assert p.max_packets == 0xFF
+assert p.pgn == 0xEF00
+
+= J1939_TP_CM_CTS build and dissect
+cts = J1939_TP_CM_CTS(num_packets=5, next_packet=1, pgn=0xEF00)
+b = bytes(cts)
+assert b[0] == J1939_TP_CTRL_CTS
+p = J1939_TP_CM_CTS(b)
+assert p.num_packets == 5
+assert p.next_packet == 1
+assert p.pgn == 0xEF00
+
+= J1939_TP_CM_ACK build and dissect
+ack = J1939_TP_CM_ACK(total_size=100, num_packets=15, pgn=0xEF00)
+b = bytes(ack)
+assert b[0] == J1939_TP_CTRL_ACK
+p = J1939_TP_CM_ACK(b)
+assert p.total_size == 100
+assert p.num_packets == 15
+assert p.pgn == 0xEF00
+
+= J1939_TP_CM_ABORT build and dissect
+abort = J1939_TP_CM_ABORT(reason=3, pgn=0xEF00)
+b = bytes(abort)
+assert b[0] == J1939_TP_CTRL_ABORT
+p = J1939_TP_CM_ABORT(b)
+assert p.reason == 3
+assert p.pgn == 0xEF00
+
+= J1939_TP_CM dispatch_hook selects correct subclass
+assert J1939_TP_CM.dispatch_hook(bytes([J1939_TP_CTRL_RTS])) == J1939_TP_CM_RTS
+assert J1939_TP_CM.dispatch_hook(bytes([J1939_TP_CTRL_CTS])) == J1939_TP_CM_CTS
+assert J1939_TP_CM.dispatch_hook(bytes([J1939_TP_CTRL_ACK])) == J1939_TP_CM_ACK
+assert J1939_TP_CM.dispatch_hook(bytes([J1939_TP_CTRL_BAM])) == J1939_TP_CM_BAM
+assert J1939_TP_CM.dispatch_hook(bytes([J1939_TP_CTRL_ABORT])) == J1939_TP_CM_ABORT
+
+= J1939_TP_DT build and dissect
+dt = J1939_TP_DT(seq_num=1, data=b'\x01\x02\x03\x04\x05\x06\x07')
+b = bytes(dt)
+assert len(b) == 8
+assert b[0] == 1
+assert b[1:8] == b'\x01\x02\x03\x04\x05\x06\x07'
+
+= J1939_TP_DT round-trip
+dt = J1939_TP_DT(seq_num=7, data=b'\xAA\xBB\xCC\xDD\xEE\xFF\x11')
+p = J1939_TP_DT(bytes(dt))
+assert p.seq_num == 7
+assert p.data == b'\xAA\xBB\xCC\xDD\xEE\xFF\x11'
+
+
+############
+############
++ J1939 NativeJ1939Socket tests
+~ vcan_socket needs_root
+
+= Setup
+import os
+import threading
+from time import sleep
+from subprocess import call
+
+bashCommand = "/bin/bash -c 'sudo modprobe vcan; sudo ip link add name vcan0 type vcan; sudo ip link set dev vcan0 up'"
+assert 0 == os.system(bashCommand)
+
+= NativeJ1939Socket import
+from scapy.contrib.j1939 import NativeJ1939Socket
+
+= NativeJ1939Socket creation
+sock = NativeJ1939Socket("vcan0", promisc=True)
+sock.close()
+
+= NativeJ1939Socket send and recv
+import socket as _socket
+
+sender = NativeJ1939Socket("vcan0", src_addr=0x00, pgn=_socket.J1939_NO_PGN)
+receiver = NativeJ1939Socket("vcan0", promisc=True)
+
+tx_data = b'\x01\x02\x03\x04'
+tx_pgn = 0xFECA
+
+def _send():
+    sleep(0.1)
+    msg = J1939(tx_data, pgn=tx_pgn, src=0x00, dst=0xFF)
+    sender.send(msg)
+
+t = threading.Thread(target=_send)
+t.start()
+
+receiver.ins.settimeout(3.0)
+rx = receiver.recv()
+t.join()
+
+sender.close()
+receiver.close()
+
+assert rx is not None, "No packet received"
+assert rx.data == tx_data, "Data mismatch: %r != %r" % (rx.data, tx_data)
+assert rx.pgn == tx_pgn, "PGN mismatch: 0x%X != 0x%X" % (rx.pgn, tx_pgn)
+assert rx.src == 0x00, "SA mismatch: %d" % rx.src
+
+= Teardown
+os.system("sudo ip link del vcan0")

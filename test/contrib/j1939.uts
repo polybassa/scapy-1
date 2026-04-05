@@ -56,13 +56,13 @@ fields = can_id_to_j1939(0x18FECA00 & 0x1FFFFFFF)
 # bit  24    = 0  (actually let's check: 0x18 = 0001_1000, bits 28-24 = 0b1_1000 = 24 = priority=6 r=0 dp=0)
 # So for 0x18FECA00: priority=6, r=0, dp=0, pf=0xFE, ps=0xCA, sa=0x00
 can_id_29bit = 0x18FECA00 & 0x1FFFFFFF
-f = can_id_to_j1939(can_id_29bit)
-assert f['priority'] == 6
-assert f['reserved'] == 0
-assert f['data_page'] == 0
-assert f['pdu_format'] == 0xFE
-assert f['pdu_specific'] == 0xCA
-assert f['src'] == 0x00
+fields = can_id_to_j1939(can_id_29bit)
+assert fields['priority'] == 6
+assert fields['reserved'] == 0
+assert fields['data_page'] == 0
+assert fields['pdu_format'] == 0xFE
+assert fields['pdu_specific'] == 0xCA
+assert fields['src'] == 0x00
 
 = j1939_to_can_id round-trip
 can_id = j1939_to_can_id(6, 0, 0, 0xFE, 0xCA, 0x00)
@@ -75,12 +75,12 @@ for priority in [0, 3, 6, 7]:
             for ps in [0x00, 0xFF]:
                 for sa in [0x00, 0x0B, 0xFE]:
                     cid = j1939_to_can_id(priority, 0, dp, pf, ps, sa)
-                    f = can_id_to_j1939(cid)
-                    assert f['priority'] == priority
-                    assert f['data_page'] == dp
-                    assert f['pdu_format'] == pf
-                    assert f['pdu_specific'] == ps
-                    assert f['src'] == sa
+                    fields = can_id_to_j1939(cid)
+                    assert fields['priority'] == priority
+                    assert fields['data_page'] == dp
+                    assert fields['pdu_format'] == pf
+                    assert fields['pdu_specific'] == ps
+                    assert fields['src'] == sa
 
 = pgn_from_fields – PDU2 frame (PF >= 240)
 # PF=0xFE (254), PS=0xCA → PGN includes PS

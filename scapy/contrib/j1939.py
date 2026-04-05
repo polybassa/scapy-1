@@ -294,9 +294,9 @@ class J1939(Packet):
 
     def mysummary(self):
         # type: () -> str
-        return self.sprintf(
-            "J1939 PGN=0x%%J1939.pgn%% SA=%%J1939.src%% DA=%%J1939.dst%% "
-            "prio=%%J1939.priority%%"
+        # Addressing is in __slots__, not wire fields, so build the summary directly.
+        return "J1939 PGN=0x%05X SA=0x%02X DA=0x%02X prio=%d" % (
+            self.pgn, self.src, self.dst, self.priority
         )
 
 
@@ -392,9 +392,7 @@ class J1939_CAN(Packet):
 
     def mysummary(self):
         # type: () -> str
-        return self.sprintf(
-            "J1939_CAN PGN=0x%04x SA=%02x" % (self.pgn, self.src)
-        )
+        return "J1939_CAN PGN=0x%05X SA=0x%02X" % (self.pgn, self.src)
 
 
 # ---------------------------------------------------------------------------

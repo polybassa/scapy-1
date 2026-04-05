@@ -49,12 +49,8 @@ from scapy.config import conf
 from scapy.data import SO_TIMESTAMPNS
 from scapy.error import Scapy_Exception, log_runtime, warning
 from scapy.fields import (
-    BitEnumField,
     BitField,
-    BitFieldLenField,
-    ByteEnumField,
     ByteField,
-    ConditionalField,
     Field,
     FieldLenField,
     FlagsField,
@@ -64,11 +60,8 @@ from scapy.fields import (
     StrFixedLenField,
     StrLenField,
     ThreeBytesField,
-    X3BytesField,
-    XByteField,
-    XShortField,
 )
-from scapy.layers.can import CAN, CAN_MTU
+from scapy.layers.can import CAN
 from scapy.packet import Packet
 from scapy.supersocket import SuperSocket
 from scapy.compat import raw
@@ -304,12 +297,21 @@ class J1939(Packet):
 # J1939 CAN-frame-level packet
 # ---------------------------------------------------------------------------
 
-class J1939_CAN(Packet):
+class J1939_CAN(CAN):
     """J1939 CAN frame – the 29-bit extended CAN identifier decoded as J1939.
 
-    The wire layout is *byte-for-byte identical* to :class:`~scapy.layers.can.CAN`
-    (both start with ``flags[3] + identifier[29]``) so a raw CAN frame can be
-    reinterpreted as :class:`J1939_CAN` without copying.
+    Inherits from :class:`~scapy.layers.can.CAN` so that all CAN lifecycle
+    methods are reused automatically:
+
+    * ``pre_dissect`` / ``post_build`` – byte-order swap controlled by
+      ``conf.contribs['CAN']['swap-bytes']`` (Wireshark vs PF_CAN format).
+    * ``extract_padding`` – padding removal controlled by
+      ``conf.contribs['CAN']['remove-padding']``.
+
+    The only structural difference from :class:`~scapy.layers.can.CAN` is
+    that the 29-bit ``identifier`` field is decomposed into the six J1939
+    sub-fields (``priority``, ``reserved``, ``data_page``, ``pdu_format``,
+    ``pdu_specific``, ``src``), while the wire layout remains **identical**.
 
     CAN identifier sub-fields::
 
@@ -350,6 +352,12 @@ class J1939_CAN(Packet):
         StrLenField('data', b'', length_from=lambda p: int(p.length)),
     ]
 
+    @classmethod
+    def dispatch_hook(cls, _pkt=None, *args, **kargs):
+        # type: (Optional[bytes], *Any, **Any) -> Type[Packet]
+        # Always decode as J1939_CAN; do not redirect to plain CAN or CANFD.
+        return cls
+
     @property
     def pgn(self):
         # type: () -> int
@@ -365,30 +373,23 @@ class J1939_CAN(Packet):
 
     def to_can(self):
         # type: () -> CAN
-        """Convert this packet to a standard :class:`~scapy.layers.can.CAN` packet."""
-        can_id = j1939_to_can_id(
-            self.priority, self.reserved, self.data_page,
-            self.pdu_format, self.pdu_specific, self.src,
-        )
-        return CAN(flags=self.flags, identifier=can_id,
-                   length=self.length, data=self.data)
+        """Convert to a standard :class:`~scapy.layers.can.CAN` packet.
+
+        The wire bytes are identical so this is simply a class change.
+        """
+        return CAN(bytes(self))
 
     @classmethod
     def from_can(cls, pkt):
         # type: (CAN) -> J1939_CAN
-        """Create a :class:`J1939_CAN` from a standard :class:`~scapy.layers.can.CAN` packet."""
-        fields = can_id_to_j1939(pkt.identifier)
-        return cls(
-            flags=pkt.flags,
-            priority=fields['priority'],
-            reserved=fields['reserved'],
-            data_page=fields['data_page'],
-            pdu_format=fields['pdu_format'],
-            pdu_specific=fields['pdu_specific'],
-            src=fields['src'],
-            length=pkt.length,
-            data=pkt.data,
-        )
+        """Create a :class:`J1939_CAN` from a :class:`~scapy.layers.can.CAN` packet.
+
+        The wire bytes are identical so this is simply a class change.
+        The packet timestamp is preserved from *pkt*.
+        """
+        result = cls(bytes(pkt))
+        result.time = pkt.time
+        return result
 
     def mysummary(self):
         # type: () -> str
@@ -558,6 +559,18 @@ class NativeJ1939Socket(SuperSocket):
     The kernel J1939 stack handles transport-protocol framing automatically:
     messages larger than 8 bytes are fragmented / reassembled transparently,
     and the application deals only with complete J1939 messages.
+
+    .. note:: Design – why not inherit from ``NativeCANSocket``?
+
+        :class:`~scapy.contrib.cansocket_native.NativeCANSocket` uses
+        ``SOCK_RAW / CAN_RAW``, while this class uses
+        ``SOCK_DGRAM / CAN_J1939``.  The socket type, protocol, ``send()``
+        logic (``sendto`` with 4-tuple destination vs plain ``send``),
+        ``recv()`` logic (``recvmsg`` for J1939 ancillary data vs raw bytes
+        + byte-order swap), and address binding API are all fundamentally
+        different.  Inheriting from ``NativeCANSocket`` would override or
+        bypass every method, making the hierarchy misleading rather than
+        helpful.
 
     :param channel:   CAN interface name (default: ``can0``)
     :param src_name:  64-bit J1939 NAME of this node (0 = no name)

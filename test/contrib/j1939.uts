@@ -265,8 +265,7 @@ assert p.src == 0x00
 assert p.data == b'\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF'
 assert p.pgn == 0xFECA
 
-= J1939_CAN dissect PDU1 frame (Torque/Speed, peer-to-peer)
-# PGN 0xF004 (ETC2), but let's use a PDU1 example
+= J1939_CAN dissect PDU1 frame (peer-to-peer, PGN 0xEC00 TP.CM)
 # PGN 0xEC00 (TP.CM), src=0x00, dst=0xFF
 raw_frame = dhex('9800FF00' + '08' + '000000' + '20 14 00 03 FF CA FE 00')
 p = J1939_CAN(raw_frame)
@@ -360,6 +359,211 @@ dt = J1939_TP_DT(seq_num=7, data=b'\xAA\xBB\xCC\xDD\xEE\xFF\x11')
 p = J1939_TP_DT(bytes(dt))
 assert p.seq_num == 7
 assert p.data == b'\xAA\xBB\xCC\xDD\xEE\xFF\x11'
+
+
+############
+############
++ J1939_CAN inherits from CAN
+
+= J1939_CAN is a subclass of CAN
+from scapy.layers.can import CAN
+assert issubclass(J1939_CAN, CAN)
+
+= J1939_CAN dispatch_hook always returns J1939_CAN
+raw_j1939_frame = bytes.fromhex('98feca0008000000ffffffffffffffff')
+assert J1939_CAN.dispatch_hook(raw_j1939_frame) is J1939_CAN
+
+= J1939_CAN instantiation does not redirect to CAN
+pkt = J1939_CAN(raw_j1939_frame)
+assert isinstance(pkt, J1939_CAN), "Expected J1939_CAN, got %s" % type(pkt).__name__
+assert pkt.pgn == 0xFECA
+assert pkt.src == 0x00
+
+= J1939_CAN inherits pre_dissect / post_build (swap-bytes)
+import struct as _struct
+from scapy.config import conf as _conf
+
+# Round-trip: build with swap-bytes=True (post_build swaps), parse with swap-bytes=True (pre_dissect unswaps)
+_conf.contribs['CAN']['swap-bytes'] = False
+raw_unswapped = bytes(J1939_CAN(priority=6, data_page=0, pdu_format=0xFE, pdu_specific=0xCA, src=0x00))
+
+_conf.contribs['CAN']['swap-bytes'] = True
+p_sw = J1939_CAN(priority=6, data_page=0, pdu_format=0xFE, pdu_specific=0xCA,
+                  src=0x00, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+raw_sw = bytes(p_sw)
+# post_build (swap-bytes=True) must produce bytes different from the unswapped encoding
+assert raw_sw[:4] != raw_unswapped[:4], "post_build should have swapped first 4 bytes"
+# pre_dissect (swap-bytes=True) unswaps → same field values as if built with swap-bytes=False
+p_rt = J1939_CAN(raw_sw)
+assert p_rt.pdu_format == 0xFE, "pdu_format=%d" % p_rt.pdu_format
+assert p_rt.src == 0x00
+_conf.contribs['CAN']['swap-bytes'] = False
+
+= J1939_CAN inherits extract_padding (remove-padding)
+_conf.contribs['CAN']['remove-padding'] = True
+p_padded = J1939_CAN(raw_j1939_frame + b'\x00\x00\x00\x00')
+assert p_padded.data == b'\xff' * 8, "Padding should have been stripped"
+
+= J1939_CAN to_can produces a plain CAN packet with identical bytes
+pj = J1939_CAN(priority=6, data_page=0, pdu_format=0xFE, pdu_specific=0xCA,
+               src=0x00, data=b'\xDE\xAD')
+pc = pj.to_can()
+assert isinstance(pc, CAN)
+assert bytes(pc) == bytes(pj)
+
+= J1939_CAN from_can produces a J1939_CAN packet with identical bytes
+can_id_val = j1939_to_can_id(6, 0, 0, 0xFE, 0xCA, 0x00)
+pc2 = CAN(flags=0b100, identifier=can_id_val, data=b'\xDE\xAD')
+pj2 = J1939_CAN.from_can(pc2)
+assert isinstance(pj2, J1939_CAN)
+assert bytes(pj2) == bytes(pc2)
+assert pj2.pgn == 0xFECA
+assert pj2.src == 0x00
+
+= J1939_CAN to_can / from_can are inverse of each other
+pj_orig = J1939_CAN(priority=6, data_page=0, pdu_format=0xEC, pdu_specific=0x42,
+                    src=0x11, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+pj_rt = J1939_CAN.from_can(pj_orig.to_can())
+assert pj_rt.pdu_format == pj_orig.pdu_format
+assert pj_rt.pdu_specific == pj_orig.pdu_specific
+assert pj_rt.src == pj_orig.src
+assert pj_rt.data == pj_orig.data
+assert pj_rt.pgn == pj_orig.pgn
+assert pj_rt.dst == pj_orig.dst
+
+
+############
+############
++ rdpcap with J1939_CAN frames
+
+= rdpcap reads J1939 CAN frames as CAN packets
+from io import BytesIO
+from scapy.utils import rdpcap
+from scapy.config import conf as _conf
+_conf.contribs['CAN']['swap-bytes'] = False
+_conf.contribs['CAN']['remove-padding'] = True
+
+# Deterministic PCAP (DLT_CAN_SOCKETCAN = 0xe3) containing two J1939 CAN frames:
+#   Frame 1: PGN 0xFECA  (broadcast, SA=0x00)  data=FF*8
+#   Frame 2: PGN 0xEC00  (TP.CM BAM to 0xFF, SA=0x00)
+j1939_pcap_bytes = (
+    b'\xd4\xc3\xb2\xa1\x02\x00\x04\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+    b'\xff\xff\x00\x00\xe3\x00\x00\x00'
+    b'\xe8\x03\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x10\x00\x00\x00'
+    b'\x98\xfe\xca\x00\x08\x00\x00\x00\xff\xff\xff\xff\xff\xff\xff\xff'
+    b'\xe9\x03\x00\x00\x00\x00\x00\x00\x10\x00\x00\x00\x10\x00\x00\x00'
+    b'\x98\xec\xff\x00\x08\x00\x00\x00\x20\x14\x00\x03\xff\xca\xfe\x00'
+)
+pkts = rdpcap(BytesIO(j1939_pcap_bytes))
+assert len(pkts) == 2
+assert all(CAN in p for p in pkts), "All packets should have a CAN layer"
+
+= rdpcap J1939 frame 1: PGN 0xFECA broadcast
+j1 = J1939_CAN.from_can(pkts[0])
+assert isinstance(j1, J1939_CAN)
+assert j1.pgn == 0xFECA, "Expected PGN 0xFECA, got 0x%05X" % j1.pgn
+assert j1.src == 0x00
+assert j1.dst == J1939_NO_ADDR, "PDU2 frame must have broadcast destination"
+assert j1.data == b'\xff' * 8
+
+= rdpcap J1939 frame 2: TP.CM BAM (PGN 0xEC00, DA=0xFF)
+j2 = J1939_CAN.from_can(pkts[1])
+assert isinstance(j2, J1939_CAN)
+assert j2.pgn == 0xEC00, "Expected PGN 0xEC00, got 0x%05X" % j2.pgn
+assert j2.dst == 0xFF, "PDU1 destination should be 0xFF"
+assert j2.src == 0x00
+assert j2.data == bytes([32, 20, 0, 3, 0xFF, 0xCA, 0xFE, 0x00])
+
+= wrpcap / rdpcap round-trip with J1939_CAN
+import tempfile as _tempfile, os as _os
+from scapy.utils import wrpcap
+
+# Build two J1939_CAN frames and write them as CAN (to_can) via wrpcap
+p1 = J1939_CAN(priority=6, data_page=0, pdu_format=0xFE, pdu_specific=0xCA,
+               src=0x00, data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+p2 = J1939_CAN(priority=6, data_page=0, pdu_format=0xF0, pdu_specific=0x04,
+               src=0x0B, data=b'\x10\x20\x30\x40\x50\x60\x70\x80')
+
+_tf = _tempfile.NamedTemporaryFile(delete=False, suffix='.pcap')
+_tf.close()
+try:
+    wrpcap(_tf.name, [p1.to_can(), p2.to_can()])
+    read_pkts = rdpcap(_tf.name)
+finally:
+    _os.unlink(_tf.name)
+
+assert len(read_pkts) == 2
+
+r1 = J1939_CAN.from_can(read_pkts[0])
+r2 = J1939_CAN.from_can(read_pkts[1])
+
+assert r1.pgn == 0xFECA
+assert r1.src == 0x00
+assert r1.data == b'\x01\x02\x03\x04\x05\x06\x07\x08'
+
+assert r2.pgn == 0xF004
+assert r2.src == 0x0B
+assert r2.data == b'\x10\x20\x30\x40\x50\x60\x70\x80'
+
+
+############
+############
++ rdcandump with J1939_CAN frames
+
+= rdcandump reads J1939 CAN frames as CAN packets
+from io import BytesIO
+from scapy.layers.can import rdcandump, CandumpReader
+
+# candump log-file format: (timestamp) interface canid#hexdata
+# J1939 extended CAN IDs are 8 hex digits (>0x7FF)
+#   18FECA00 → priority=6 dp=0 pf=0xFE ps=0xCA sa=0x00  (PGN 0xFECA)
+#   18ECFF00 → priority=6 dp=0 pf=0xEC ps=0xFF sa=0x00  (PGN TP.CM, DA=0xFF)
+j1939_candump = BytesIO(b'''(1539191392.761779) vcan0 18FECA00#FFFFFFFFFFFFFFFF
+(1539191392.861779) vcan0 18ECFF00#20140003FFCAFE00
+''')
+
+pkts = rdcandump(j1939_candump)
+assert len(pkts) == 2, "Expected 2 packets, got %d" % len(pkts)
+# rdcandump treats 8-byte hex payload (16 hex chars) as CANFD in log format;
+# CANFD inherits from CAN so isinstance check works
+assert all(isinstance(p, CAN) for p in pkts)
+
+= rdcandump J1939 frame 1: PGN 0xFECA (PDU2 broadcast)
+j1 = J1939_CAN.from_can(pkts[0])
+assert isinstance(j1, J1939_CAN)
+assert j1.pgn == 0xFECA, "Expected 0xFECA, got 0x%05X" % j1.pgn
+assert j1.src == 0x00
+assert j1.dst == J1939_NO_ADDR
+assert j1.data == b'\xff' * 8
+# from_can preserves the CAN packet's timestamp
+assert abs(j1.time - 1539191392.761779) < 1e-3
+
+= rdcandump J1939 frame 2: TP.CM BAM (PDU1, DA=0xFF, PGN 0xEC00)
+j2 = J1939_CAN.from_can(pkts[1])
+assert isinstance(j2, J1939_CAN)
+assert j2.pgn == 0xEC00, "Expected 0xEC00, got 0x%05X" % j2.pgn
+assert j2.dst == 0xFF
+assert j2.src == 0x00
+assert j2.data == bytes([32, 20, 0, 3, 0xFF, 0xCA, 0xFE, 0x00])
+assert abs(j2.time - 1539191392.861779) < 1e-3
+
+= rdcandump non-log-file (column) format with J1939 extended frame
+j1939_candump_col = BytesIO(b'  vcan0  18FECA00   [8]  FF FF FF FF FF FF FF FF\n')
+pkts_col = rdcandump(j1939_candump_col)
+assert len(pkts_col) == 1
+jc = J1939_CAN.from_can(pkts_col[0])
+assert jc.pgn == 0xFECA
+assert jc.src == 0x00
+assert jc.data == b'\xff' * 8
+
+= CandumpReader iterable yields J1939 frames
+j1939_log = BytesIO(b'''(1539191392.761779) vcan0 18FECA00#FFFFFFFFFFFFFFFF
+(1539191392.861779) vcan0 18ECFF00#20140003FFCAFE00
+''')
+j1939_frames = [J1939_CAN.from_can(pkt) for pkt in CandumpReader(j1939_log)]
+assert len(j1939_frames) == 2
+assert j1939_frames[0].pgn == 0xFECA
+assert j1939_frames[1].pgn == 0xEC00
 
 
 ############

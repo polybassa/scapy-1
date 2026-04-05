@@ -1081,6 +1081,61 @@ to the Scapy interpreter::
 
 .. image:: ../graphics/animations/animation-scapy-uds3.svg
 
+
+Single Layer UDS Mode
+---------------------
+
+By default, UDS packets consist of two layers: ``UDS`` (outer) and a service-specific
+subpacket (e.g. ``UDS_RDBI``). This is the standard multi-layer mode:
+
+.. code-block:: python
+
+    >>> pkt = UDS() / UDS_DSC(diagnosticSessionType=0x01)
+    >>> pkt.show()
+    ###[ UDS ]###
+      service= DiagnosticSessionControl
+    ###[ DiagnosticSessionControl ]###
+         diagnosticSessionType= defaultSession
+
+    >>> UDS(b'\x10\x01')
+    <UDS  service=DiagnosticSessionControl |<UDS_DSC  diagnosticSessionType=defaultSession |>>
+
+Single layer mode makes each UDS service packet a standalone ``Packet`` with its own
+``service`` field. This can be more ergonomic in some use cases.
+
+To enable single layer mode **before** loading the module::
+
+    >>> conf.contribs['UDS'] = {'treat-response-pending-as-answer': False,
+    ...                          'single_layer_UDS': True}
+    >>> load_contrib('automotive.uds')
+
+To switch modes at runtime after loading::
+
+    >>> load_contrib('automotive.uds')
+    >>> from scapy.contrib.automotive.uds import uds_single_layer_mode
+    >>> uds_single_layer_mode(True)   # enable single layer mode
+    >>> UDS(b'\x10\x01')
+    <UDS_DSC  service=DiagnosticSessionControl diagnosticSessionType=defaultSession |>
+
+    >>> UDS_DSC(diagnosticSessionType=0x01)
+    <UDS_DSC  service=DiagnosticSessionControl diagnosticSessionType=defaultSession |>
+
+    >>> bytes(UDS_DSC(diagnosticSessionType=0x01))
+    b'\x10\x01'
+
+    >>> uds_single_layer_mode(False)  # revert to multi-layer mode
+
+In single layer mode:
+
+- The ``UDS()`` class acts as a dispatcher: it reads the first byte (service ID)
+  and directly returns the corresponding service packet (e.g. ``UDS_DSC``).
+- Each service packet has a conditional ``service`` field that is only present
+  (for building and dissection) when single layer mode is active.
+- ``bind_layers`` between ``UDS`` and service classes are disabled; dissection
+  is handled via ``UDS.dispatch_hook``.
+- Service packets' ``answers()`` and ``hashret()`` methods work correctly in
+  both modes.
+
 GMLAN
 =====
 

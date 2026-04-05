@@ -135,7 +135,7 @@ class UDS(ISOTP):
     def dispatch_hook(cls, _pkt=b"", *args, **kwargs):
         # type: (bytes, Any, Any) -> type
         """Dispatch to the correct UDS service class in single layer mode."""
-        if conf.contribs['UDS'].get('single_layer_UDS', False) and _pkt:
+        if conf.contribs['UDS'].get('single_layer_UDS', False) and len(_pkt) >= 1:
             service = orb(_pkt[0])
             return cls._uds_service_cls.get(service, cls)
         return cls
@@ -162,7 +162,7 @@ def _uds_service(service_id):
         # In multi-layer mode, bind to UDS (for backward compatibility)
         if not conf.contribs['UDS'].get('single_layer_UDS', False):
             bind_layers(UDS, cls, service=service_id)
-        # Inject hashret for single layer mode
+        # _sid captures service_id by value to avoid late-binding closure issues
         _sid = service_id
 
         def _hashret(self):

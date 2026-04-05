@@ -1536,7 +1536,7 @@ assert dscpr5.__class__ == UDS
 assert dscpr5.service == 0x50
 assert dscpr5[UDS_DSCPR].diagnosticSessionType == 0x01
 
-= Single layer mode: enable via conf before loading
+= Single layer mode: enable via conf directly (without uds_single_layer_mode)
 
 conf.contribs['UDS']['single_layer_UDS'] = True
 
@@ -1545,7 +1545,7 @@ assert isinstance(er6, UDS_ER), "Expected UDS_ER, got %s" % type(er6)
 assert er6.service == 0x11
 assert er6.resetType == 0x01
 
-= Single layer mode: cleanup - restore default multi-layer mode
+= Single layer mode: final cleanup - restore default multi-layer mode
 
 uds_single_layer_mode(False)
 assert not conf.contribs['UDS']['single_layer_UDS']

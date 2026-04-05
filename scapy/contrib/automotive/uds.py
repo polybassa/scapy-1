@@ -204,9 +204,9 @@ def uds_single_layer_mode(enable=True):
     """
     conf.contribs['UDS']['single_layer_UDS'] = enable
     for service_id, cls in UDS._uds_service_cls.items():
-        if enable:
-            split_layers(UDS, cls, service=service_id)
-        else:
+        # Always split first to ensure idempotency (no duplicate bindings)
+        split_layers(UDS, cls, service=service_id)
+        if not enable:
             bind_layers(UDS, cls, service=service_id)
 
 

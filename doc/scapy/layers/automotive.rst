@@ -1082,59 +1082,70 @@ to the Scapy interpreter::
 .. image:: ../graphics/animations/animation-scapy-uds3.svg
 
 
-Single Layer UDS Mode
----------------------
+Single Layer Mode
+-----------------
 
-By default, UDS packets consist of two layers: ``UDS`` (outer) and a service-specific
-subpacket (e.g. ``UDS_RDBI``). This is the standard multi-layer mode:
+UDS, KWP, OBD, and GMLAN all support a *single layer mode* that makes each
+service packet a standalone ``Packet`` rather than a nested sublayer.  The
+feature is backed by the generic helpers in
+:mod:`scapy.contrib.automotive.utils` and works identically for every protocol.
+
+**Default (multi-layer) mode**
 
 .. code-block:: python
 
     >>> pkt = UDS() / UDS_DSC(diagnosticSessionType=0x01)
-    >>> pkt.show()
-    ###[ UDS ]###
-      service= DiagnosticSessionControl
-    ###[ DiagnosticSessionControl ]###
-         diagnosticSessionType= defaultSession
-
     >>> UDS(b'\x10\x01')
     <UDS  service=DiagnosticSessionControl |<UDS_DSC  diagnosticSessionType=defaultSession |>>
 
-Single layer mode makes each UDS service packet a standalone ``Packet`` with its own
-``service`` field. This can be more ergonomic in some use cases.
+**Single layer mode**
 
-To enable single layer mode **before** loading the module::
+To enable before loading a module::
 
     >>> conf.contribs['UDS'] = {'treat-response-pending-as-answer': False,
     ...                          'single_layer_UDS': True}
     >>> load_contrib('automotive.uds')
 
-To switch modes at runtime after loading::
+To toggle at runtime after loading::
 
-    >>> load_contrib('automotive.uds')
     >>> from scapy.contrib.automotive.uds import uds_single_layer_mode
-    >>> uds_single_layer_mode(True)   # enable single layer mode
+    >>> uds_single_layer_mode(True)
     >>> UDS(b'\x10\x01')
     <UDS_DSC  service=DiagnosticSessionControl diagnosticSessionType=defaultSession |>
-
-    >>> UDS_DSC(diagnosticSessionType=0x01)
-    <UDS_DSC  service=DiagnosticSessionControl diagnosticSessionType=defaultSession |>
-
     >>> bytes(UDS_DSC(diagnosticSessionType=0x01))
     b'\x10\x01'
+    >>> uds_single_layer_mode(False)   # revert to multi-layer mode
 
-    >>> uds_single_layer_mode(False)  # revert to multi-layer mode
+The same API is available for the other protocols:
+
++----------+-----------------------+----------------------------+------------------------------------+
+| Protocol | Config flag           | Toggle function            | Module                             |
++==========+=======================+============================+====================================+
+| UDS      | ``single_layer_UDS``  | ``uds_single_layer_mode``  | ``scapy.contrib.automotive.uds``   |
++----------+-----------------------+----------------------------+------------------------------------+
+| KWP      | ``single_layer_KWP``  | ``kwp_single_layer_mode``  | ``scapy.contrib.automotive.kwp``   |
++----------+-----------------------+----------------------------+------------------------------------+
+| OBD      | ``single_layer_OBD``  | ``obd_single_layer_mode``  | ``scapy.contrib.automotive.obd``   |
++----------+-----------------------+----------------------------+------------------------------------+
+| GMLAN    | ``single_layer_GMLAN``| ``gmlan_single_layer_mode``| ``scapy.contrib.automotive.gm.gmlan`` |
++----------+-----------------------+----------------------------+------------------------------------+
 
 In single layer mode:
 
-- The ``UDS()`` class acts as a dispatcher: it reads the first byte (service ID)
-  and directly returns the corresponding service packet (e.g. ``UDS_DSC``).
-- Each service packet has a conditional ``service`` field that is only present
-  (for building and dissection) when single layer mode is active.
-- ``bind_layers`` between ``UDS`` and service classes are disabled; dissection
-  is handled via ``UDS.dispatch_hook``.
+- The base class (e.g. ``KWP``) acts as a dispatcher via ``dispatch_hook``:
+  it reads the first byte and returns the correct service class directly.
+- Each service packet has a conditional ``service`` field that is present
+  (for building and dissection) only when single layer mode is active.
+- ``bind_layers`` between the base class and service classes are disabled;
+  dissection is handled via ``dispatch_hook``.
 - Service packets' ``answers()`` and ``hashret()`` methods work correctly in
   both modes.
+
+The underlying helpers that power this feature are
+:func:`~scapy.contrib.automotive.utils._make_service_decorator` and
+:func:`~scapy.contrib.automotive.utils._make_single_layer_mode` in
+:mod:`scapy.contrib.automotive.utils`.  OEM-specific protocol extensions can
+use the same helpers to add single layer support to custom protocol classes.
 
 GMLAN
 =====

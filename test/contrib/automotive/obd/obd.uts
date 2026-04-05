@@ -1031,3 +1031,68 @@ assert b[22:] == b'ABCDEFGHIJKLMNOP'
 r = OBD(b'\x09\x02\x04')
 assert p.answers(r)
 
+
++ Single layer OBD mode
+
+= Single layer mode: load helper
+
+from scapy.contrib.automotive.obd.obd import obd_single_layer_mode
+
+= Single layer mode: enable and basic dissect
+
+obd_single_layer_mode(True)
+
+s01 = OBD(b'\x01\x0c')
+assert isinstance(s01, OBD_S01), "Expected OBD_S01, got %s" % type(s01)
+assert s01.service == 0x01
+
+= Single layer mode: build OBD_S01
+
+s01_built = OBD_S01(pid=[0x0c])
+assert bytes(s01_built) == b'\x01\x0c', "Expected b'\\x01\\x0c', got %s" % bytes(s01_built).hex()
+
+= Single layer mode: dissect positive response
+
+s01pr = OBD(b'\x41\x0c\x0f\xa0')
+assert isinstance(s01pr, OBD_S01_PR), "Expected OBD_S01_PR, got %s" % type(s01pr)
+assert s01pr.service == 0x41
+
+= Single layer mode: NegativeResponse dissect
+
+nr = OBD(b'\x7f\x01\x22')
+assert isinstance(nr, OBD_NR), "Expected OBD_NR, got %s" % type(nr)
+assert nr.service == 0x7f
+assert nr.request_service_id == 0x01
+assert nr.response_code == 0x22
+
+= Single layer mode: NegativeResponse answers()
+
+s01_2 = OBD_S01(pid=[0x0c])
+nr2 = OBD_NR(request_service_id=0x01, response_code=0x22)
+assert nr2.answers(s01_2)
+
+= Single layer mode: hashret consistency between request and positive response
+
+s09 = OBD_S09(iid=[0x02])
+s09pr = OBD_S09_PR()
+assert s09.hashret() == s09pr.hashret(), \
+    "hashret mismatch: %s vs %s" % (s09.hashret().hex(), s09pr.hashret().hex())
+
+= Single layer mode: unknown service falls back to OBD
+
+unknown = OBD(b'\xBB\x01\x02')
+assert isinstance(unknown, OBD), "Expected OBD fallback, got %s" % type(unknown)
+
+= Single layer mode: switch back to multi-layer mode
+
+obd_single_layer_mode(False)
+
+s01_3 = OBD(b'\x01\x0c')
+assert s01_3.__class__ == OBD
+assert s01_3.service == 0x01
+assert isinstance(s01_3[OBD_S01], OBD_S01)
+
+= Single layer mode: cleanup
+
+obd_single_layer_mode(False)
+assert not conf.contribs['OBD']['single_layer_OBD']

@@ -19,15 +19,18 @@ from scapy.fields import ByteEnumField, StrField, ConditionalField, \
     ShortField, ObservableDict, XShortEnumField, XByteEnumField, StrLenField, \
     FieldLenField, XStrFixedLenField, XStrLenField, FlagsField, PacketListField, \
     PacketField
-from scapy.packet import Packet, bind_layers, split_layers, NoPayload, Raw
+from scapy.packet import Packet, bind_layers, NoPayload, Raw
 from scapy.compat import orb
 from scapy.config import conf
 from scapy.utils import PeriodicSenderThread
 from scapy.contrib.isotp import ISOTP
+from scapy.contrib.automotive.utils import (
+    _make_service_decorator,
+    _make_single_layer_mode,
+)
 
 # Typing imports
 from typing import (
-    Any,
     Dict,
     Union,
 )
@@ -129,52 +132,19 @@ class UDS(ISOTP):
             return struct.pack('B', bytes(self)[1] & ~0x40)
         return struct.pack('B', self.service & ~0x40)
 
-    _uds_service_cls = {}  # type: Dict[int, type]
+    _service_cls = {}  # type: Dict[int, type]
 
     @classmethod
     def dispatch_hook(cls, _pkt=b"", *args, **kwargs):
-        # type: (bytes, Any, Any) -> type
+        # type: (...) -> type
         """Dispatch to the correct UDS service class in single layer mode."""
         if conf.contribs['UDS'].get('single_layer_UDS', False) and len(_pkt) >= 1:
             service = orb(_pkt[0])
-            return cls._uds_service_cls.get(service, cls)
+            return cls._service_cls.get(service, cls)
         return cls
 
 
-def _uds_service(service_id):
-    # type: (int) -> Any
-    """Class decorator to register a UDS service layer.
-
-    Prepends a conditional 'service' field (active only in single layer mode),
-    registers the class in the UDS dispatch table, and conditionally binds
-    the layer to UDS based on the 'single_layer_UDS' config flag.
-    """
-    def decorator(cls):
-        # type: (type) -> type
-        # Prepend conditional service field to the class
-        svc_field = ConditionalField(
-            XByteEnumField('service', service_id, UDS.services),
-            lambda pkt: conf.contribs['UDS'].get('single_layer_UDS', False)
-        )
-        cls.fields_desc = [svc_field] + list(cls.fields_desc)
-        # Register in UDS dispatch table for single layer mode
-        UDS._uds_service_cls[service_id] = cls
-        # In multi-layer mode, bind to UDS (for backward compatibility)
-        if not conf.contribs['UDS'].get('single_layer_UDS', False):
-            bind_layers(UDS, cls, service=service_id)
-        # _sid captures service_id by value to avoid late-binding closure issues
-        _sid = service_id
-
-        def _hashret(self):
-            # type: () -> bytes
-            if conf.contribs['UDS'].get('single_layer_UDS', False):
-                return struct.pack('B', _sid & ~0x40)
-            return Packet.hashret(self)
-
-        if 'hashret' not in cls.__dict__:
-            cls.hashret = _hashret
-        return cls
-    return decorator
+_uds_service = _make_service_decorator(UDS, 'UDS', 'single_layer_UDS')
 
 
 def uds_single_layer_mode(enable=True):
@@ -202,12 +172,7 @@ def uds_single_layer_mode(enable=True):
         >>> UDS(b'\\x10\\x01')
         <UDS_DSC  service=DiagnosticSessionControl diagnosticSessionType=defaultSession |>
     """
-    conf.contribs['UDS']['single_layer_UDS'] = enable
-    for service_id, cls in UDS._uds_service_cls.items():
-        # Always split first to ensure idempotency (no duplicate bindings)
-        split_layers(UDS, cls, service=service_id)
-        if not enable:
-            bind_layers(UDS, cls, service=service_id)
+    _make_single_layer_mode(UDS, 'UDS', 'single_layer_UDS')(enable)
 
 
 # ########################DSC###################################

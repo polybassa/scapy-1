@@ -32,6 +32,11 @@ from scapy.fields import (
 from scapy.packet import Packet, bind_layers, NoPayload
 from scapy.config import conf
 from scapy.contrib.isotp import ISOTP
+from scapy.contrib.automotive.utils import (
+    _make_service_decorator,
+    _make_single_layer_mode,
+)
+from scapy.compat import orb
 
 """
 GMLAN
@@ -46,7 +51,8 @@ except KeyError:
     #                    "a negative response 'RequestCorrectlyReceived-"
     #                    "ResponsePending' as answer of a request. \n"
     #                    "The default value is False.")
-    conf.contribs['GMLAN'] = {'treat-response-pending-as-answer': False}
+    conf.contribs['GMLAN'] = {'treat-response-pending-as-answer': False,
+                               'single_layer_GMLAN': False}
 
 conf.contribs['GMLAN']['GMLAN_ECU_AddressingScheme'] = None
 
@@ -130,8 +136,24 @@ class GMLAN(ISOTP):
             return struct.pack('B', self.requestServiceId & ~0x40)
         return struct.pack('B', self.service & ~0x40)
 
+    _service_cls = {}  # type: ignore
+
+    @classmethod
+    def dispatch_hook(cls, _pkt=b"", *args, **kwargs):
+        # type: (...) -> type
+        """Dispatch to the correct GMLAN service class in single layer mode."""
+        if conf.contribs['GMLAN'].get('single_layer_GMLAN', False) and len(_pkt) >= 1:
+            service = orb(_pkt[0])
+            return cls._service_cls.get(service, cls)
+        return cls
+
+
+_gmlan_service = _make_service_decorator(GMLAN, 'GMLAN', 'single_layer_GMLAN')
+gmlan_single_layer_mode = _make_single_layer_mode(GMLAN, 'GMLAN', 'single_layer_GMLAN')
+
 
 # ########################IDO###################################
+@_gmlan_service(0x10)
 class GMLAN_IDO(Packet):
     subfunctions = {
         0x02: 'disableAllDTCs',
@@ -143,7 +165,6 @@ class GMLAN_IDO(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_IDO, service=0x10)
 
 
 # ########################RFRD###################################
@@ -160,6 +181,7 @@ class GMLAN_DTC(Packet):
         return "", p
 
 
+@_gmlan_service(0x12)
 class GMLAN_RFRD(Packet):
     subfunctions = {
         0x01: 'readFailureRecordIdentifiers',
@@ -172,9 +194,9 @@ class GMLAN_RFRD(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_RFRD, service=0x12)
 
 
+@_gmlan_service(0x52)
 class GMLAN_RFRDPR(Packet):
     name = 'ReadFailureRecordDataPositiveResponse'
     fields_desc = [
@@ -186,7 +208,6 @@ class GMLAN_RFRDPR(Packet):
             other.subfunction == self.subfunction
 
 
-bind_layers(GMLAN, GMLAN_RFRDPR, service=0x52)
 
 
 class GMLAN_RFRDPR_RFRI(Packet):
@@ -216,6 +237,7 @@ bind_layers(GMLAN_RFRDPR, GMLAN_RFRDPR_RFRP, subfunction=0x02)
 
 
 # ########################RDBI###################################
+@_gmlan_service(0x1A)
 class GMLAN_RDBI(Packet):
     dataIdentifiers = ObservableDict({
         0x90: "$90: VehicleIdentificationNumber (VIN)",
@@ -308,9 +330,9 @@ class GMLAN_RDBI(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_RDBI, service=0x1A)
 
 
+@_gmlan_service(0x5A)
 class GMLAN_RDBIPR(Packet):
     name = 'ReadDataByIdentifierPositiveResponse'
     fields_desc = [
@@ -322,10 +344,10 @@ class GMLAN_RDBIPR(Packet):
             other.dataIdentifier == self.dataIdentifier
 
 
-bind_layers(GMLAN, GMLAN_RDBIPR, service=0x5A)
 
 
 # ########################RDBI###################################
+@_gmlan_service(0x22)
 class GMLAN_RDBPI(Packet):
     dataIdentifiers = ObservableDict({
         0x0005: "OBD_EngineCoolantTemperature",
@@ -340,9 +362,9 @@ class GMLAN_RDBPI(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_RDBPI, service=0x22)
 
 
+@_gmlan_service(0x62)
 class GMLAN_RDBPIPR(Packet):
     name = 'ReadDataByParameterIdentifierPositiveResponse'
     fields_desc = [
@@ -354,10 +376,10 @@ class GMLAN_RDBPIPR(Packet):
             self.parameterIdentifier in other.identifiers
 
 
-bind_layers(GMLAN, GMLAN_RDBPIPR, service=0x62)
 
 
 # ########################RDBPKTI###################################
+@_gmlan_service(0xAA)
 class GMLAN_RDBPKTI(Packet):
     name = 'ReadDataByPacketIdentifier'
     subfunctions = {
@@ -376,10 +398,10 @@ class GMLAN_RDBPKTI(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_RDBPKTI, service=0xAA)
 
 
 # ########################RMBA###################################
+@_gmlan_service(0x23)
 class GMLAN_RMBA(Packet):
     name = 'ReadMemoryByAddress'
     fields_desc = [
@@ -397,9 +419,9 @@ class GMLAN_RMBA(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_RMBA, service=0x23)
 
 
+@_gmlan_service(0x63)
 class GMLAN_RMBAPR(Packet):
     name = 'ReadMemoryByAddressPositiveResponse'
     fields_desc = [
@@ -421,10 +443,10 @@ class GMLAN_RMBAPR(Packet):
             other.memoryAddress == self.memoryAddress
 
 
-bind_layers(GMLAN, GMLAN_RMBAPR, service=0x63)
 
 
 # ########################SA###################################
+@_gmlan_service(0x27)
 class GMLAN_SA(Packet):
     subfunctions = {
         0: 'ReservedByDocument',
@@ -449,9 +471,9 @@ class GMLAN_SA(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_SA, service=0x27)
 
 
+@_gmlan_service(0x67)
 class GMLAN_SAPR(Packet):
     name = 'SecurityAccessPositiveResponse'
     fields_desc = [
@@ -465,10 +487,10 @@ class GMLAN_SAPR(Packet):
             and other.subfunction == self.subfunction
 
 
-bind_layers(GMLAN, GMLAN_SAPR, service=0x67)
 
 
 # ########################DDM###################################
+@_gmlan_service(0x2C)
 class GMLAN_DDM(Packet):
     name = 'DynamicallyDefineMessage'
     fields_desc = [
@@ -477,9 +499,9 @@ class GMLAN_DDM(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_DDM, service=0x2C)
 
 
+@_gmlan_service(0x6C)
 class GMLAN_DDMPR(Packet):
     name = 'DynamicallyDefineMessagePositiveResponse'
     fields_desc = [
@@ -491,10 +513,10 @@ class GMLAN_DDMPR(Packet):
             and other.DPIDIdentifier == self.DPIDIdentifier
 
 
-bind_layers(GMLAN, GMLAN_DDMPR, service=0x6C)
 
 
 # ########################DPBA###################################
+@_gmlan_service(0x2D)
 class GMLAN_DPBA(Packet):
     name = 'DefinePIDByAddress'
     fields_desc = [
@@ -513,9 +535,9 @@ class GMLAN_DPBA(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_DPBA, service=0x2D)
 
 
+@_gmlan_service(0x6D)
 class GMLAN_DPBAPR(Packet):
     name = 'DefinePIDByAddressPositiveResponse'
     fields_desc = [
@@ -527,10 +549,10 @@ class GMLAN_DPBAPR(Packet):
             and other.parameterIdentifier == self.parameterIdentifier
 
 
-bind_layers(GMLAN, GMLAN_DPBAPR, service=0x6D)
 
 
 # ########################RD###################################
+@_gmlan_service(0x34)
 class GMLAN_RD(Packet):
     name = 'RequestDownload'
     fields_desc = [
@@ -548,10 +570,10 @@ class GMLAN_RD(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_RD, service=0x34)
 
 
 # ########################TD###################################
+@_gmlan_service(0x36)
 class GMLAN_TD(Packet):
     subfunctions = {
         0x00: "download",
@@ -574,10 +596,10 @@ class GMLAN_TD(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_TD, service=0x36)
 
 
 # ########################WDBI###################################
+@_gmlan_service(0x3B)
 class GMLAN_WDBI(Packet):
     name = 'WriteDataByIdentifier'
     fields_desc = [
@@ -586,9 +608,9 @@ class GMLAN_WDBI(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_WDBI, service=0x3B)
 
 
+@_gmlan_service(0x7B)
 class GMLAN_WDBIPR(Packet):
     name = 'WriteDataByIdentifierPositiveResponse'
     fields_desc = [
@@ -600,10 +622,10 @@ class GMLAN_WDBIPR(Packet):
             and other.dataIdentifier == self.dataIdentifier
 
 
-bind_layers(GMLAN, GMLAN_WDBIPR, service=0x7B)
 
 
 # ########################RPSPR###################################
+@_gmlan_service(0xE2)
 class GMLAN_RPSPR(Packet):
     programmedStates = {
         0x00: "fully programmed",
@@ -623,10 +645,10 @@ class GMLAN_RPSPR(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_RPSPR, service=0xE2)
 
 
 # ########################PM###################################
+@_gmlan_service(0xA5)
 class GMLAN_PM(Packet):
     subfunctions = {
         0x01: "requestProgrammingMode",
@@ -639,10 +661,10 @@ class GMLAN_PM(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_PM, service=0xA5)
 
 
 # ########################RDI###################################
+@_gmlan_service(0xA9)
 class GMLAN_RDI(Packet):
     subfunctions = {
         0x80: 'readStatusOfDTCByDTCNumber',
@@ -655,7 +677,6 @@ class GMLAN_RDI(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_RDI, service=0xA9)
 
 
 class GMLAN_RDI_BN(Packet):
@@ -694,6 +715,7 @@ bind_layers(GMLAN_RDI, GMLAN_RDI_BC, subfunction=0x82)
 
 
 # ########################DC###################################
+@_gmlan_service(0xAE)
 class GMLAN_DC(Packet):
     name = 'DeviceControl'
     fields_desc = [
@@ -702,9 +724,9 @@ class GMLAN_DC(Packet):
     ]
 
 
-bind_layers(GMLAN, GMLAN_DC, service=0xAE)
 
 
+@_gmlan_service(0xEE)
 class GMLAN_DCPR(Packet):
     name = 'DeviceControlPositiveResponse'
     fields_desc = [
@@ -716,10 +738,10 @@ class GMLAN_DCPR(Packet):
             and other.CPIDNumber == self.CPIDNumber
 
 
-bind_layers(GMLAN, GMLAN_DCPR, service=0xEE)
 
 
 # ########################NRC###################################
+@_gmlan_service(0x7f)
 class GMLAN_NR(Packet):
     negativeResponseCodes = {
         0x11: 'ServiceNotSupported',
@@ -751,4 +773,3 @@ class GMLAN_NR(Packet):
              conf.contribs['GMLAN']['treat-response-pending-as-answer'])
 
 
-bind_layers(GMLAN, GMLAN_NR, service=0x7f)

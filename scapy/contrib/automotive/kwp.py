@@ -27,10 +27,14 @@ from scapy.error import log_loading
 from scapy.utils import PeriodicSenderThread
 from scapy.plist import _PacketIterable
 from scapy.contrib.isotp import ISOTP
+from scapy.contrib.automotive.utils import (
+    _make_service_decorator,
+    _make_single_layer_mode,
+)
+from scapy.compat import orb
 
 from typing import (
     Dict,
-    Any,
 )
 
 
@@ -43,7 +47,8 @@ except KeyError:
                      "a negative response 'requestCorrectlyReceived-"
                      "ResponsePending' as answer of a request. \n"
                      "The default value is False.")
-    conf.contribs['KWP'] = {'treat-response-pending-as-answer': False}
+    conf.contribs['KWP'] = {'treat-response-pending-as-answer': False,
+                             'single_layer_KWP': False}
 
 
 class KWP(ISOTP):
@@ -129,8 +134,24 @@ class KWP(ISOTP):
         else:
             return struct.pack('B', self.service & ~0x40)
 
+    _service_cls = {}  # type: Dict[int, type]
+
+    @classmethod
+    def dispatch_hook(cls, _pkt=b"", *args, **kwargs):
+        # type: (...) -> type
+        """Dispatch to the correct KWP service class in single layer mode."""
+        if conf.contribs['KWP'].get('single_layer_KWP', False) and len(_pkt) >= 1:
+            service = orb(_pkt[0])
+            return cls._service_cls.get(service, cls)
+        return cls
+
+
+_kwp_service = _make_service_decorator(KWP, 'KWP', 'single_layer_KWP')
+kwp_single_layer_mode = _make_single_layer_mode(KWP, 'KWP', 'single_layer_KWP')
+
 
 # ########################SDS###################################
+@_kwp_service(0x10)
 class KWP_SDS(Packet):
     diagnosticSessionTypes = ObservableDict({
         0x81: 'defaultSession',
@@ -144,9 +165,9 @@ class KWP_SDS(Packet):
     ]
 
 
-bind_layers(KWP, KWP_SDS, service=0x10)
 
 
+@_kwp_service(0x50)
 class KWP_SDSPR(Packet):
     name = 'StartDiagnosticSessionPositiveResponse'
     fields_desc = [
@@ -160,10 +181,10 @@ class KWP_SDSPR(Packet):
             other.diagnosticSession == self.diagnosticSession
 
 
-bind_layers(KWP, KWP_SDSPR, service=0x50)
 
 
 # ######################### KWP_ER ###################################
+@_kwp_service(0x11)
 class KWP_ER(Packet):
     resetModes = {
         0x00: 'reserved',
@@ -175,9 +196,9 @@ class KWP_ER(Packet):
     ]
 
 
-bind_layers(KWP, KWP_ER, service=0x11)
 
 
+@_kwp_service(0x51)
 class KWP_ERPR(Packet):
     name = 'ECUResetPositiveResponse'
 
@@ -186,10 +207,10 @@ class KWP_ERPR(Packet):
         return isinstance(other, KWP_ER)
 
 
-bind_layers(KWP, KWP_ERPR, service=0x51)
 
 
 # ######################### KWP_SA ###################################
+@_kwp_service(0x27)
 class KWP_SA(Packet):
     name = 'SecurityAccess'
     fields_desc = [
@@ -199,9 +220,9 @@ class KWP_SA(Packet):
     ]
 
 
-bind_layers(KWP, KWP_SA, service=0x27)
 
 
+@_kwp_service(0x67)
 class KWP_SAPR(Packet):
     name = 'SecurityAccessPositiveResponse'
     fields_desc = [
@@ -216,10 +237,10 @@ class KWP_SAPR(Packet):
             and other.accessMode == self.accessMode
 
 
-bind_layers(KWP, KWP_SAPR, service=0x67)
 
 
 # ######################### KWP_IOCBLI ###################################
+@_kwp_service(0x30)
 class KWP_IOCBLI(Packet):
     name = 'InputOutputControlByLocalIdentifier'
     inputOutputControlParameters = {
@@ -238,9 +259,9 @@ class KWP_IOCBLI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_IOCBLI, service=0x30)
 
 
+@_kwp_service(0x70)
 class KWP_IOCBLIPR(Packet):
     name = 'InputOutputControlByLocalIdentifierPositiveResponse'
     fields_desc = [
@@ -256,10 +277,10 @@ class KWP_IOCBLIPR(Packet):
             and other.localIdentifier == self.localIdentifier
 
 
-bind_layers(KWP, KWP_IOCBLIPR, service=0x70)
 
 
 # ######################### KWP_DNMT ###################################
+@_kwp_service(0x28)
 class KWP_DNMT(Packet):
     responseTypes = {
         0x01: 'responseRequired',
@@ -271,9 +292,9 @@ class KWP_DNMT(Packet):
     ]
 
 
-bind_layers(KWP, KWP_DNMT, service=0x28)
 
 
+@_kwp_service(0x68)
 class KWP_DNMTPR(Packet):
     name = 'DisableNormalMessageTransmissionPositiveResponse'
 
@@ -282,10 +303,10 @@ class KWP_DNMTPR(Packet):
         return isinstance(other, KWP_DNMT)
 
 
-bind_layers(KWP, KWP_DNMTPR, service=0x68)
 
 
 # ######################### KWP_ENMT ###################################
+@_kwp_service(0x29)
 class KWP_ENMT(Packet):
     responseTypes = {
         0x01: 'responseRequired',
@@ -297,9 +318,9 @@ class KWP_ENMT(Packet):
     ]
 
 
-bind_layers(KWP, KWP_ENMT, service=0x29)
 
 
+@_kwp_service(0x69)
 class KWP_ENMTPR(Packet):
     name = 'EnableNormalMessageTransmissionPositiveResponse'
 
@@ -308,10 +329,10 @@ class KWP_ENMTPR(Packet):
         return isinstance(other, KWP_DNMT)
 
 
-bind_layers(KWP, KWP_ENMTPR, service=0x69)
 
 
 # ######################### KWP_TP ###################################
+@_kwp_service(0x3E)
 class KWP_TP(Packet):
     responseTypes = {
         0x01: 'responseRequired',
@@ -323,9 +344,9 @@ class KWP_TP(Packet):
     ]
 
 
-bind_layers(KWP, KWP_TP, service=0x3E)
 
 
+@_kwp_service(0x7E)
 class KWP_TPPR(Packet):
     name = 'TesterPresentPositiveResponse'
 
@@ -334,10 +355,10 @@ class KWP_TPPR(Packet):
         return isinstance(other, KWP_TP)
 
 
-bind_layers(KWP, KWP_TPPR, service=0x7E)
 
 
 # ######################### KWP_CDTCS ###################################
+@_kwp_service(0x85)
 class KWP_CDTCS(Packet):
     responseTypes = {
         0x01: 'responseRequired',
@@ -363,9 +384,9 @@ class KWP_CDTCS(Packet):
     ]
 
 
-bind_layers(KWP, KWP_CDTCS, service=0x85)
 
 
+@_kwp_service(0xC5)
 class KWP_CDTCSPR(Packet):
     name = 'ControlDTCSettingPositiveResponse'
 
@@ -374,10 +395,10 @@ class KWP_CDTCSPR(Packet):
         return isinstance(other, KWP_CDTCS)
 
 
-bind_layers(KWP, KWP_CDTCSPR, service=0xC5)
 
 
 # ######################### KWP_ROE ###################################
+@_kwp_service(0x86)
 class KWP_ROE(Packet):
     responseTypes = {
         0x01: 'responseRequired',
@@ -409,9 +430,9 @@ class KWP_ROE(Packet):
     ]
 
 
-bind_layers(KWP, KWP_ROE, service=0x86)
 
 
+@_kwp_service(0xC6)
 class KWP_ROEPR(Packet):
     name = 'ResponseOnEventPositiveResponse'
     fields_desc = [
@@ -427,10 +448,10 @@ class KWP_ROEPR(Packet):
             and other.eventType == self.eventType
 
 
-bind_layers(KWP, KWP_ROEPR, service=0xC6)
 
 
 # ######################### KWP_RDBLI ###################################
+@_kwp_service(0x21)
 class KWP_RDBLI(Packet):
     localIdentifiers = ObservableDict({
         0xE0: "Development Data",
@@ -452,9 +473,9 @@ class KWP_RDBLI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_RDBLI, service=0x21)
 
 
+@_kwp_service(0x61)
 class KWP_RDBLIPR(Packet):
     name = 'ReadDataByLocalIdentifierPositiveResponse'
     fields_desc = [
@@ -467,10 +488,10 @@ class KWP_RDBLIPR(Packet):
             and self.recordLocalIdentifier == other.recordLocalIdentifier
 
 
-bind_layers(KWP, KWP_RDBLIPR, service=0x61)
 
 
 # ######################### KWP_WDBLI ###################################
+@_kwp_service(0x3B)
 class KWP_WDBLI(Packet):
     name = 'WriteDataByLocalIdentifier'
     fields_desc = [
@@ -478,9 +499,9 @@ class KWP_WDBLI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_WDBLI, service=0x3B)
 
 
+@_kwp_service(0x7B)
 class KWP_WDBLIPR(Packet):
     name = 'WriteDataByLocalIdentifierPositiveResponse'
     fields_desc = [
@@ -493,10 +514,10 @@ class KWP_WDBLIPR(Packet):
             and self.recordLocalIdentifier == other.recordLocalIdentifier
 
 
-bind_layers(KWP, KWP_WDBLIPR, service=0x7B)
 
 
 # ######################### KWP_RDBI ###################################
+@_kwp_service(0x22)
 class KWP_RDBI(Packet):
     dataIdentifiers = ObservableDict()
     name = 'ReadDataByIdentifier'
@@ -505,9 +526,9 @@ class KWP_RDBI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_RDBI, service=0x22)
 
 
+@_kwp_service(0x62)
 class KWP_RDBIPR(Packet):
     name = 'ReadDataByIdentifierPositiveResponse'
     fields_desc = [
@@ -520,10 +541,10 @@ class KWP_RDBIPR(Packet):
             and self.identifier == other.identifier
 
 
-bind_layers(KWP, KWP_RDBIPR, service=0x62)
 
 
 # ######################### KWP_RMBA ###################################
+@_kwp_service(0x23)
 class KWP_RMBA(Packet):
     name = 'ReadMemoryByAddress'
     fields_desc = [
@@ -532,9 +553,9 @@ class KWP_RMBA(Packet):
     ]
 
 
-bind_layers(KWP, KWP_RMBA, service=0x23)
 
 
+@_kwp_service(0x63)
 class KWP_RMBAPR(Packet):
     name = 'ReadMemoryByAddressPositiveResponse'
     fields_desc = [
@@ -546,12 +567,12 @@ class KWP_RMBAPR(Packet):
         return isinstance(other, KWP_RMBA)
 
 
-bind_layers(KWP, KWP_RMBAPR, service=0x63)
 
 
 # ######################### KWP_DDLI ###################################
 # TODO: Implement correct interpretation here,
 #       instead of using just the dataRecord
+@_kwp_service(0x2C)
 class KWP_DDLI(Packet):
     name = 'DynamicallyDefineLocalIdentifier'
     definitionModes = {0x1: "defineByLocalIdentifier",
@@ -565,9 +586,9 @@ class KWP_DDLI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_DDLI, service=0x2C)
 
 
+@_kwp_service(0x6C)
 class KWP_DDLIPR(Packet):
     name = 'DynamicallyDefineLocalIdentifierPositiveResponse'
     fields_desc = [
@@ -580,10 +601,10 @@ class KWP_DDLIPR(Packet):
             other.dynamicallyDefineLocalIdentifier == self.dynamicallyDefineLocalIdentifier  # noqa: E501
 
 
-bind_layers(KWP, KWP_DDLIPR, service=0x6C)
 
 
 # ######################### KWP_WDBI ###################################
+@_kwp_service(0x2E)
 class KWP_WDBI(Packet):
     name = 'WriteDataByIdentifier'
     fields_desc = [
@@ -591,9 +612,9 @@ class KWP_WDBI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_WDBI, service=0x2E)
 
 
+@_kwp_service(0x6E)
 class KWP_WDBIPR(Packet):
     name = 'WriteDataByIdentifierPositiveResponse'
     fields_desc = [
@@ -606,10 +627,10 @@ class KWP_WDBIPR(Packet):
             and other.identifier == self.identifier
 
 
-bind_layers(KWP, KWP_WDBIPR, service=0x6E)
 
 
 # ######################### KWP_WMBA ###################################
+@_kwp_service(0x3D)
 class KWP_WMBA(Packet):
     name = 'WriteMemoryByAddress'
     fields_desc = [
@@ -619,9 +640,9 @@ class KWP_WMBA(Packet):
     ]
 
 
-bind_layers(KWP, KWP_WMBA, service=0x3D)
 
 
+@_kwp_service(0x7D)
 class KWP_WMBAPR(Packet):
     name = 'WriteMemoryByAddressPositiveResponse'
     fields_desc = [
@@ -634,10 +655,10 @@ class KWP_WMBAPR(Packet):
             other.memoryAddress == self.memoryAddress
 
 
-bind_layers(KWP, KWP_WMBAPR, service=0x7D)
 
 
 # ######################### KWP_CDI ###################################
+@_kwp_service(0x14)
 class KWP_CDI(Packet):
     DTCGroups = {
         0x0000: 'allPowertrainDTCs',
@@ -652,9 +673,9 @@ class KWP_CDI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_CDI, service=0x14)
 
 
+@_kwp_service(0x54)
 class KWP_CDIPR(Packet):
     name = 'ClearDiagnosticInformationPositiveResponse'
 
@@ -668,10 +689,10 @@ class KWP_CDIPR(Packet):
             self.groupOfDTC == other.groupOfDTC
 
 
-bind_layers(KWP, KWP_CDIPR, service=0x54)
 
 
 # ######################### KWP_RSODTC ###################################
+@_kwp_service(0x17)
 class KWP_RSODTC(Packet):
     name = 'ReadStatusOfDiagnosticTroubleCodes'
     fields_desc = [
@@ -679,9 +700,9 @@ class KWP_RSODTC(Packet):
     ]
 
 
-bind_layers(KWP, KWP_RSODTC, service=0x17)
 
 
+@_kwp_service(0x57)
 class KWP_RSODTCPR(Packet):
     name = 'ReadStatusOfDiagnosticTroubleCodesPositiveResponse'
 
@@ -694,10 +715,10 @@ class KWP_RSODTCPR(Packet):
         return isinstance(other, KWP_RSODTC)
 
 
-bind_layers(KWP, KWP_RSODTCPR, service=0x57)
 
 
 # ######################### KWP_RECUI ###################################
+@_kwp_service(0x1A)
 class KWP_RECUI(Packet):
     name = 'ReadECUIdentification'
     localIdentifiers = ObservableDict({
@@ -720,9 +741,9 @@ class KWP_RECUI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_RECUI, service=0x1A)
 
 
+@_kwp_service(0x5A)
 class KWP_RECUIPR(Packet):
     name = 'ReadECUIdentificationPositiveResponse'
 
@@ -736,10 +757,10 @@ class KWP_RECUIPR(Packet):
             self.localIdentifier == other.localIdentifier
 
 
-bind_layers(KWP, KWP_RECUIPR, service=0x5A)
 
 
 # ######################### KWP_SRBLI ###################################
+@_kwp_service(0x31)
 class KWP_SRBLI(Packet):
     routineLocalIdentifiers = ObservableDict({
         0xE0: "FlashEraseRoutine",
@@ -759,9 +780,9 @@ class KWP_SRBLI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_SRBLI, service=0x31)
 
 
+@_kwp_service(0x71)
 class KWP_SRBLIPR(Packet):
     name = 'StartRoutineByLocalIdentifierPositiveResponse'
     fields_desc = [
@@ -775,10 +796,10 @@ class KWP_SRBLIPR(Packet):
             and other.routineLocalIdentifier == self.routineLocalIdentifier
 
 
-bind_layers(KWP, KWP_SRBLIPR, service=0x71)
 
 
 # ######################### KWP_STRBLI ###################################
+@_kwp_service(0x32)
 class KWP_STRBLI(Packet):
     name = 'StopRoutineByLocalIdentifier'
     fields_desc = [
@@ -787,9 +808,9 @@ class KWP_STRBLI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_STRBLI, service=0x32)
 
 
+@_kwp_service(0x72)
 class KWP_STRBLIPR(Packet):
     name = 'StopRoutineByLocalIdentifierPositiveResponse'
     fields_desc = [
@@ -803,10 +824,10 @@ class KWP_STRBLIPR(Packet):
             and other.routineLocalIdentifier == self.routineLocalIdentifier
 
 
-bind_layers(KWP, KWP_STRBLIPR, service=0x72)
 
 
 # ######################### KWP_RRRBLI ###################################
+@_kwp_service(0x33)
 class KWP_RRRBLI(Packet):
     name = 'RequestRoutineResultsByLocalIdentifier'
     fields_desc = [
@@ -815,9 +836,9 @@ class KWP_RRRBLI(Packet):
     ]
 
 
-bind_layers(KWP, KWP_RRRBLI, service=0x33)
 
 
+@_kwp_service(0x73)
 class KWP_RRRBLIPR(Packet):
     name = 'RequestRoutineResultsByLocalIdentifierPositiveResponse'
     fields_desc = [
@@ -831,10 +852,10 @@ class KWP_RRRBLIPR(Packet):
             and other.routineLocalIdentifier == self.routineLocalIdentifier
 
 
-bind_layers(KWP, KWP_RRRBLIPR, service=0x73)
 
 
 # ######################### KWP_RD ###################################
+@_kwp_service(0x34)
 class KWP_RD(Packet):
     name = 'RequestDownload'
     fields_desc = [
@@ -845,9 +866,9 @@ class KWP_RD(Packet):
     ]
 
 
-bind_layers(KWP, KWP_RD, service=0x34)
 
 
+@_kwp_service(0x74)
 class KWP_RDPR(Packet):
     name = 'RequestDownloadPositiveResponse'
     fields_desc = [
@@ -859,10 +880,10 @@ class KWP_RDPR(Packet):
         return isinstance(other, KWP_RD)
 
 
-bind_layers(KWP, KWP_RDPR, service=0x74)
 
 
 # ######################### KWP_RU ###################################
+@_kwp_service(0x35)
 class KWP_RU(Packet):
     name = 'RequestUpload'
     fields_desc = [
@@ -873,9 +894,9 @@ class KWP_RU(Packet):
     ]
 
 
-bind_layers(KWP, KWP_RU, service=0x35)
 
 
+@_kwp_service(0x75)
 class KWP_RUPR(Packet):
     name = 'RequestUploadPositiveResponse'
     fields_desc = [
@@ -887,10 +908,10 @@ class KWP_RUPR(Packet):
         return isinstance(other, KWP_RU)
 
 
-bind_layers(KWP, KWP_RUPR, service=0x75)
 
 
 # ######################### KWP_TD ###################################
+@_kwp_service(0x36)
 class KWP_TD(Packet):
     name = 'TransferData'
     fields_desc = [
@@ -899,9 +920,9 @@ class KWP_TD(Packet):
     ]
 
 
-bind_layers(KWP, KWP_TD, service=0x36)
 
 
+@_kwp_service(0x76)
 class KWP_TDPR(Packet):
     name = 'TransferDataPositiveResponse'
     fields_desc = [
@@ -915,10 +936,10 @@ class KWP_TDPR(Packet):
             and other.blockSequenceCounter == self.blockSequenceCounter
 
 
-bind_layers(KWP, KWP_TDPR, service=0x76)
 
 
 # ######################### KWP_RTE ###################################
+@_kwp_service(0x37)
 class KWP_RTE(Packet):
     name = 'RequestTransferExit'
     fields_desc = [
@@ -926,9 +947,9 @@ class KWP_RTE(Packet):
     ]
 
 
-bind_layers(KWP, KWP_RTE, service=0x37)
 
 
+@_kwp_service(0x77)
 class KWP_RTEPR(Packet):
     name = 'RequestTransferExitPositiveResponse'
     fields_desc = [
@@ -940,10 +961,10 @@ class KWP_RTEPR(Packet):
         return isinstance(other, KWP_RTE)
 
 
-bind_layers(KWP, KWP_RTEPR, service=0x77)
 
 
 # ######################### KWP_NR ###################################
+@_kwp_service(0x7f)
 class KWP_NR(Packet):
     negativeResponseCodes = {
         0x00: 'positiveResponse',
@@ -982,7 +1003,6 @@ class KWP_NR(Packet):
              conf.contribs['KWP']['treat-response-pending-as-answer'])
 
 
-bind_layers(KWP, KWP_NR, service=0x7f)
 
 
 # ##################################################################

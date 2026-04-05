@@ -25,7 +25,7 @@ from scapy.packet import Packet, NoPayload
 from scapy.config import conf
 from scapy.error import log_loading
 from scapy.utils import PeriodicSenderThread
-from scapy.plist import _PacketIterable
+from scapy.plist import _PacketIterable  # noqa: F401
 from scapy.contrib.isotp import ISOTP
 from scapy.contrib.automotive.utils import (
     _make_service_decorator,
@@ -33,7 +33,7 @@ from scapy.contrib.automotive.utils import (
 )
 from scapy.compat import orb
 
-from typing import (
+from typing import (  # noqa: F401
     Any,
     Dict,
 )
@@ -119,13 +119,13 @@ class KWP(ISOTP):
         if not isinstance(other, type(self)):
             return False
         if self.service == 0x7f:
-            return self.payload.answers(other)
+            return bool(self.payload.answers(other))
         if self.service == (other.service + 0x40):
             if isinstance(self.payload, NoPayload) or \
                     isinstance(other.payload, NoPayload):
                 return len(self) <= len(other)
             else:
-                return self.payload.answers(other.payload)
+                return bool(self.payload.answers(other.payload))
         return False
 
     def hashret(self):

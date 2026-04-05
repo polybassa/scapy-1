@@ -187,7 +187,7 @@ class GMLAN_RFRD(Packet):
     name = 'ReadFailureRecordData'
     fields_desc = [
         ByteEnumField('subfunction', 0, subfunctions),
-        ConditionalField(PacketField("dtc", b'', GMLAN_DTC),
+        ConditionalField(PacketField("dtc", None, GMLAN_DTC),
                          lambda pkt: pkt.subfunction == 0x02)
     ]
 
@@ -223,7 +223,7 @@ bind_layers(GMLAN_RFRDPR, GMLAN_RFRDPR_RFRI, subfunction=0x01)
 class GMLAN_RFRDPR_RFRP(Packet):
     name = 'ReadFailureRecordDataPositiveResponse_readFailureRecordParameters'
     fields_desc = [
-        PacketField("dtc", b'', GMLAN_DTC)
+        PacketField("dtc", None, GMLAN_DTC)
     ]
 
 

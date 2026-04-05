@@ -30,7 +30,7 @@ from scapy.contrib.automotive.utils import (
 )
 
 # Typing imports
-from typing import (
+from typing import (  # noqa: F401
     Dict,
     Union,
 )
@@ -45,7 +45,7 @@ except KeyError:
     #                 "ResponsePending' as answer of a request. \n"
     #                 "The default value is False.")
     conf.contribs['UDS'] = {'treat-response-pending-as-answer': False,
-                             'single_layer_UDS': False}
+                            'single_layer_UDS': False}
 
 conf.debug_dissector = True
 
@@ -117,13 +117,13 @@ class UDS(ISOTP):
         if other.__class__ != self.__class__:
             return False
         if self.service == 0x7f:
-            return self.payload.answers(other)
+            return bool(self.payload.answers(other))
         if self.service == (other.service + 0x40):
             if isinstance(self.payload, NoPayload) or \
                     isinstance(other.payload, NoPayload):
                 return len(self) <= len(other)
             else:
-                return self.payload.answers(other.payload)
+                return bool(self.payload.answers(other.payload))
         return False
 
     def hashret(self):
@@ -170,7 +170,8 @@ def uds_single_layer_mode(enable=True):
         >>> from scapy.contrib.automotive.uds import uds_single_layer_mode
         >>> uds_single_layer_mode(True)
         >>> UDS(b'\\x10\\x01')
-        <UDS_DSC  service=DiagnosticSessionControl diagnosticSessionType=defaultSession |>
+        <UDS_DSC  service=DiagnosticSessionControl
+                  diagnosticSessionType=defaultSession |>
     """
     _make_single_layer_mode(UDS, 'UDS', 'single_layer_UDS')(enable)
 
@@ -191,7 +192,6 @@ class UDS_DSC(Packet):
     ]
 
 
-
 @_uds_service(0x50)
 class UDS_DSCPR(Packet):
     name = 'DiagnosticSessionControlPositiveResponse'
@@ -204,7 +204,6 @@ class UDS_DSCPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_DSC) and \
             other.diagnosticSessionType == self.diagnosticSessionType
-
 
 
 # #########################ER###################################
@@ -225,7 +224,6 @@ class UDS_ER(Packet):
     ]
 
 
-
 @_uds_service(0x51)
 class UDS_ERPR(Packet):
     name = 'ECUResetPositiveResponse'
@@ -237,7 +235,6 @@ class UDS_ERPR(Packet):
 
     def answers(self, other):
         return isinstance(other, UDS_ER) and other.resetType == self.resetType
-
 
 
 # #########################SA###################################
@@ -253,7 +250,6 @@ class UDS_SA(Packet):
     ]
 
 
-
 @_uds_service(0x67)
 class UDS_SAPR(Packet):
     name = 'SecurityAccessPositiveResponse'
@@ -266,7 +262,6 @@ class UDS_SAPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_SA) \
             and other.securityAccessType == self.securityAccessType
-
 
 
 # #########################CC###################################
@@ -308,7 +303,6 @@ class UDS_CC(Packet):
     ]
 
 
-
 @_uds_service(0x68)
 class UDS_CCPR(Packet):
     name = 'CommunicationControlPositiveResponse'
@@ -319,7 +313,6 @@ class UDS_CCPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_CC) \
             and other.controlType == self.controlType
-
 
 
 # #########################AUTH###################################
@@ -344,8 +337,9 @@ class UDS_AUTH(Packet):
                          lambda pkt: pkt.subFunction in [0x01, 0x02, 0x5]),
         ConditionalField(XShortField('certificateEvaluationId', 0),
                          lambda pkt: pkt.subFunction == 0x04),
-        ConditionalField(XStrFixedLenField('algorithmIndicator', 0, length=16),
-                         lambda pkt: pkt.subFunction in [0x05, 0x06, 0x07]),
+        ConditionalField(
+            XStrFixedLenField('algorithmIndicator', b'\x00' * 16, length=16),
+            lambda pkt: pkt.subFunction in [0x05, 0x06, 0x07]),
         ConditionalField(FieldLenField('lengthOfCertificateClient', None,
                                        fmt="H", length_of='certificateClient'),
                          lambda pkt: pkt.subFunction in [0x01, 0x02]),
@@ -396,7 +390,6 @@ class UDS_AUTH(Packet):
     ]
 
 
-
 @_uds_service(0x69)
 class UDS_AUTHPR(Packet):
     authenticationReturnParameterTypes = {
@@ -421,8 +414,9 @@ class UDS_AUTHPR(Packet):
     fields_desc = [
         ByteEnumField('subFunction', 0, UDS_AUTH.subFunctions),
         ByteEnumField('returnValue', 0, authenticationReturnParameterTypes),
-        ConditionalField(XStrFixedLenField('algorithmIndicator', 0, length=16),
-                         lambda pkt: pkt.subFunction in [0x05, 0x06, 0x07]),
+        ConditionalField(
+            XStrFixedLenField('algorithmIndicator', b'\x00' * 16, length=16),
+            lambda pkt: pkt.subFunction in [0x05, 0x06, 0x07]),
         ConditionalField(FieldLenField('lengthOfChallengeServer', None,
                                        fmt="H", length_of='challengeServer'),
                          lambda pkt: pkt.subFunction in [0x01, 0x02, 0x05]),
@@ -475,7 +469,6 @@ class UDS_AUTHPR(Packet):
             and other.subFunction == self.subFunction
 
 
-
 # #########################TP###################################
 @_uds_service(0x3E)
 class UDS_TP(Packet):
@@ -483,7 +476,6 @@ class UDS_TP(Packet):
     fields_desc = [
         ByteField('subFunction', 0)
     ]
-
 
 
 @_uds_service(0x7E)
@@ -495,7 +487,6 @@ class UDS_TPPR(Packet):
 
     def answers(self, other):
         return isinstance(other, UDS_TP)
-
 
 
 # #########################ATP###################################
@@ -517,7 +508,6 @@ class UDS_ATP(Packet):
     ]
 
 
-
 @_uds_service(0xC3)
 class UDS_ATPPR(Packet):
     name = 'AccessTimingParameterPositiveResponse'
@@ -532,7 +522,6 @@ class UDS_ATPPR(Packet):
         return isinstance(other, UDS_ATP) \
             and other.timingParameterAccessType == \
             self.timingParameterAccessType
-
 
 
 # #########################SDT###################################
@@ -557,7 +546,6 @@ class UDS_SDT(Packet):
     ]
 
 
-
 @_uds_service(0xC4)
 class UDS_SDTPR(Packet):
     name = 'SecuredDataTransmissionPositiveResponse'
@@ -580,7 +568,6 @@ class UDS_SDTPR(Packet):
         return isinstance(other, UDS_SDT)
 
 
-
 # #########################CDTCS###################################
 @_uds_service(0x85)
 class UDS_CDTCS(Packet):
@@ -596,7 +583,6 @@ class UDS_CDTCS(Packet):
     ]
 
 
-
 @_uds_service(0xC5)
 class UDS_CDTCSPR(Packet):
     name = 'ControlDTCSettingPositiveResponse'
@@ -606,7 +592,6 @@ class UDS_CDTCSPR(Packet):
 
     def answers(self, other):
         return isinstance(other, UDS_CDTCS)
-
 
 
 # #########################ROE###################################
@@ -625,7 +610,6 @@ class UDS_ROE(Packet):
     ]
 
 
-
 @_uds_service(0xC6)
 class UDS_ROEPR(Packet):
     name = 'ResponseOnEventPositiveResponse'
@@ -639,7 +623,6 @@ class UDS_ROEPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_ROE) \
             and other.eventType == self.eventType
-
 
 
 # #########################LC###################################
@@ -665,7 +648,6 @@ class UDS_LC(Packet):
     ]
 
 
-
 @_uds_service(0xC7)
 class UDS_LCPR(Packet):
     name = 'LinkControlPositiveResponse'
@@ -676,7 +658,6 @@ class UDS_LCPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_LC) \
             and other.linkControlType == self.linkControlType
-
 
 
 # #########################RDBI###################################
@@ -691,7 +672,6 @@ class UDS_RDBI(Packet):
     ]
 
 
-
 @_uds_service(0x62)
 class UDS_RDBIPR(Packet):
     name = 'ReadDataByIdentifierPositiveResponse'
@@ -703,7 +683,6 @@ class UDS_RDBIPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_RDBI) \
             and self.dataIdentifier in other.identifiers
-
 
 
 # #########################RMBA###################################
@@ -732,7 +711,6 @@ class UDS_RMBA(Packet):
     ]
 
 
-
 @_uds_service(0x63)
 class UDS_RMBAPR(Packet):
     name = 'ReadMemoryByAddressPositiveResponse'
@@ -744,7 +722,6 @@ class UDS_RMBAPR(Packet):
         return isinstance(other, UDS_RMBA)
 
 
-
 # #########################RSDBI###################################
 @_uds_service(0x24)
 class UDS_RSDBI(Packet):
@@ -753,7 +730,6 @@ class UDS_RSDBI(Packet):
     fields_desc = [
         XShortEnumField('dataIdentifier', 0, dataIdentifiers)
     ]
-
 
 
 # TODO: Implement correct scaling here, instead of using just the dataRecord
@@ -769,7 +745,6 @@ class UDS_RSDBIPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_RSDBI) \
             and other.dataIdentifier == self.dataIdentifier
-
 
 
 # #########################RDBPI###################################
@@ -791,7 +766,6 @@ class UDS_RDBPI(Packet):
     ]
 
 
-
 # TODO: Implement correct scaling here, instead of using just the dataRecord
 @_uds_service(0x6A)
 class UDS_RDBPIPR(Packet):
@@ -804,7 +778,6 @@ class UDS_RDBPIPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_RDBPI) \
             and other.periodicDataIdentifier == self.periodicDataIdentifier
-
 
 
 # #########################DDDI###################################
@@ -822,7 +795,6 @@ class UDS_DDDI(Packet):
     ]
 
 
-
 @_uds_service(0x6C)
 class UDS_DDDIPR(Packet):
     name = 'DynamicallyDefineDataIdentifierPositiveResponse'
@@ -836,7 +808,6 @@ class UDS_DDDIPR(Packet):
             and other.subFunction == self.subFunction
 
 
-
 # #########################WDBI###################################
 @_uds_service(0x2E)
 class UDS_WDBI(Packet):
@@ -845,7 +816,6 @@ class UDS_WDBI(Packet):
         XShortEnumField('dataIdentifier', 0,
                         UDS_RDBI.dataIdentifiers)
     ]
-
 
 
 @_uds_service(0x6E)
@@ -859,7 +829,6 @@ class UDS_WDBIPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_WDBI) \
             and other.dataIdentifier == self.dataIdentifier
-
 
 
 # #########################WMBA###################################
@@ -888,7 +857,6 @@ class UDS_WMBA(Packet):
         StrField('dataRecord', b'', fmt="B"),
 
     ]
-
 
 
 @_uds_service(0x7D)
@@ -921,11 +889,10 @@ class UDS_WMBAPR(Packet):
             and other.memoryAddressLen == self.memoryAddressLen
 
 
-
 # ##########################DTC#####################################
 class DTC(Packet):
     name = 'Diagnostic Trouble Code'
-    dtc_descriptions = {}  # Customize this dictionary for each individual ECU / OEM
+    dtc_descriptions = {}  # type: Dict[int, str]
 
     fields_desc = [
         BitEnumField("system", 0, 2, {
@@ -957,14 +924,12 @@ class UDS_CDTCI(Packet):
     ]
 
 
-
 @_uds_service(0x54)
 class UDS_CDTCIPR(Packet):
     name = 'ClearDiagnosticInformationPositiveResponse'
 
     def answers(self, other):
         return isinstance(other, UDS_CDTCI)
-
 
 
 # #########################RDTCI###################################
@@ -1039,7 +1004,6 @@ class UDS_RDTCI(Packet):
     ]
 
 
-
 class DTCAndStatusRecord(Packet):
     name = 'DTC and status record'
     fields_desc = [
@@ -1071,7 +1035,7 @@ class DTCExtendedDataRecord(Packet):
 
 
 class DTCSnapshot(Packet):
-    identifiers = defaultdict(list)  # for later extension
+    identifiers = defaultdict(list)  # type: Dict[int, list]  # for later extension
 
     @staticmethod
     def next_identifier_cb(pkt, lst, cur, remain):
@@ -1149,7 +1113,6 @@ class UDS_RDTCIPR(Packet):
         return True
 
 
-
 # #########################RC###################################
 @_uds_service(0x31)
 class UDS_RC(Packet):
@@ -1165,7 +1128,6 @@ class UDS_RC(Packet):
         ByteEnumField('routineControlType', 0, routineControlTypes),
         XShortEnumField('routineIdentifier', 0, routineControlIdentifiers)
     ]
-
 
 
 @_uds_service(0x71)
@@ -1186,7 +1148,6 @@ class UDS_RCPR(Packet):
             else:
                 return self.payload.answers(other.payload)
         return False
-
 
 
 # #########################RD###################################
@@ -1219,7 +1180,6 @@ class UDS_RD(Packet):
     ]
 
 
-
 @_uds_service(0x74)
 class UDS_RDPR(Packet):
     name = 'RequestDownloadPositiveResponse'
@@ -1231,7 +1191,6 @@ class UDS_RDPR(Packet):
 
     def answers(self, other):
         return isinstance(other, UDS_RD)
-
 
 
 # #########################RU###################################
@@ -1262,7 +1221,6 @@ class UDS_RU(Packet):
     ]
 
 
-
 @_uds_service(0x75)
 class UDS_RUPR(Packet):
     name = 'RequestUploadPositiveResponse'
@@ -1276,7 +1234,6 @@ class UDS_RUPR(Packet):
         return isinstance(other, UDS_RU)
 
 
-
 # #########################TD###################################
 @_uds_service(0x36)
 class UDS_TD(Packet):
@@ -1285,7 +1242,6 @@ class UDS_TD(Packet):
         ByteField('blockSequenceCounter', 0),
         StrField('transferRequestParameterRecord', b"", fmt="B")
     ]
-
 
 
 @_uds_service(0x76)
@@ -1301,7 +1257,6 @@ class UDS_TDPR(Packet):
             and other.blockSequenceCounter == self.blockSequenceCounter
 
 
-
 # #########################RTE###################################
 @_uds_service(0x37)
 class UDS_RTE(Packet):
@@ -1309,7 +1264,6 @@ class UDS_RTE(Packet):
     fields_desc = [
         StrField('transferRequestParameterRecord', b"", fmt="B")
     ]
-
 
 
 @_uds_service(0x77)
@@ -1321,7 +1275,6 @@ class UDS_RTEPR(Packet):
 
     def answers(self, other):
         return isinstance(other, UDS_RTE)
-
 
 
 # #########################RFT###################################
@@ -1367,7 +1320,6 @@ class UDS_RFT(Packet):
     ]
 
 
-
 @_uds_service(0x78)
 class UDS_RFTPR(Packet):
     name = 'RequestFileTransferPositiveResponse'
@@ -1408,7 +1360,6 @@ class UDS_RFTPR(Packet):
         return isinstance(other, UDS_RFT)
 
 
-
 # #########################IOCBI###################################
 @_uds_service(0x2F)
 class UDS_IOCBI(Packet):
@@ -1416,7 +1367,6 @@ class UDS_IOCBI(Packet):
     fields_desc = [
         XShortEnumField('dataIdentifier', 0, UDS_RDBI.dataIdentifiers),
     ]
-
 
 
 @_uds_service(0x6F)
@@ -1429,7 +1379,6 @@ class UDS_IOCBIPR(Packet):
     def answers(self, other):
         return isinstance(other, UDS_IOCBI) \
             and other.dataIdentifier == self.dataIdentifier
-
 
 
 # #########################NR###################################
@@ -1508,7 +1457,6 @@ class UDS_NR(Packet):
         return self.requestServiceId == other.service and \
             (self.negativeResponseCode != 0x78 or
              conf.contribs['UDS']['treat-response-pending-as-answer'])
-
 
 
 # ##################################################################

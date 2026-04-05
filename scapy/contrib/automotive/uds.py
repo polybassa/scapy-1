@@ -19,7 +19,7 @@ from scapy.fields import ByteEnumField, StrField, ConditionalField, \
     ShortField, ObservableDict, XShortEnumField, XByteEnumField, StrLenField, \
     FieldLenField, XStrFixedLenField, XStrLenField, FlagsField, PacketListField, \
     PacketField
-from scapy.packet import Packet, bind_layers, NoPayload, Raw
+from scapy.packet import Packet, NoPayload, Raw
 from scapy.compat import orb
 from scapy.config import conf
 from scapy.utils import PeriodicSenderThread

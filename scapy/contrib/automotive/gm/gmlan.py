@@ -52,7 +52,7 @@ except KeyError:
     #                    "ResponsePending' as answer of a request. \n"
     #                    "The default value is False.")
     conf.contribs['GMLAN'] = {'treat-response-pending-as-answer': False,
-                               'single_layer_GMLAN': False}
+                              'single_layer_GMLAN': False}
 
 conf.contribs['GMLAN']['GMLAN_ECU_AddressingScheme'] = None
 
@@ -165,8 +165,6 @@ class GMLAN_IDO(Packet):
     ]
 
 
-
-
 # ########################RFRD###################################
 class GMLAN_DTC(Packet):
     name = 'GMLAN DTC information'
@@ -194,8 +192,6 @@ class GMLAN_RFRD(Packet):
     ]
 
 
-
-
 @_gmlan_service(0x52)
 class GMLAN_RFRDPR(Packet):
     name = 'ReadFailureRecordDataPositiveResponse'
@@ -206,8 +202,6 @@ class GMLAN_RFRDPR(Packet):
     def answers(self, other):
         return isinstance(other, GMLAN_RFRD) and \
             other.subfunction == self.subfunction
-
-
 
 
 class GMLAN_RFRDPR_RFRI(Packet):
@@ -330,8 +324,6 @@ class GMLAN_RDBI(Packet):
     ]
 
 
-
-
 @_gmlan_service(0x5A)
 class GMLAN_RDBIPR(Packet):
     name = 'ReadDataByIdentifierPositiveResponse'
@@ -342,8 +334,6 @@ class GMLAN_RDBIPR(Packet):
     def answers(self, other):
         return isinstance(other, GMLAN_RDBI) and \
             other.dataIdentifier == self.dataIdentifier
-
-
 
 
 # ########################RDBI###################################
@@ -362,8 +352,6 @@ class GMLAN_RDBPI(Packet):
     ]
 
 
-
-
 @_gmlan_service(0x62)
 class GMLAN_RDBPIPR(Packet):
     name = 'ReadDataByParameterIdentifierPositiveResponse'
@@ -374,8 +362,6 @@ class GMLAN_RDBPIPR(Packet):
     def answers(self, other):
         return isinstance(other, GMLAN_RDBPI) and \
             self.parameterIdentifier in other.identifiers
-
-
 
 
 # ########################RDBPKTI###################################
@@ -398,8 +384,6 @@ class GMLAN_RDBPKTI(Packet):
     ]
 
 
-
-
 # ########################RMBA###################################
 @_gmlan_service(0x23)
 class GMLAN_RMBA(Packet):
@@ -417,8 +401,6 @@ class GMLAN_RMBA(Packet):
             XIntField('memoryAddress', 0)),
         XShortField('memorySize', 0),
     ]
-
-
 
 
 @_gmlan_service(0x63)
@@ -441,8 +423,6 @@ class GMLAN_RMBAPR(Packet):
     def answers(self, other):
         return isinstance(other, GMLAN_RMBA) and \
             other.memoryAddress == self.memoryAddress
-
-
 
 
 # ########################SA###################################
@@ -471,8 +451,6 @@ class GMLAN_SA(Packet):
     ]
 
 
-
-
 @_gmlan_service(0x67)
 class GMLAN_SAPR(Packet):
     name = 'SecurityAccessPositiveResponse'
@@ -487,8 +465,6 @@ class GMLAN_SAPR(Packet):
             and other.subfunction == self.subfunction
 
 
-
-
 # ########################DDM###################################
 @_gmlan_service(0x2C)
 class GMLAN_DDM(Packet):
@@ -497,8 +473,6 @@ class GMLAN_DDM(Packet):
         XByteField('DPIDIdentifier', 0),
         StrField('PIDData', b'\x00\x00')
     ]
-
-
 
 
 @_gmlan_service(0x6C)
@@ -511,8 +485,6 @@ class GMLAN_DDMPR(Packet):
     def answers(self, other):
         return isinstance(other, GMLAN_DDM) \
             and other.DPIDIdentifier == self.DPIDIdentifier
-
-
 
 
 # ########################DPBA###################################
@@ -535,8 +507,6 @@ class GMLAN_DPBA(Packet):
     ]
 
 
-
-
 @_gmlan_service(0x6D)
 class GMLAN_DPBAPR(Packet):
     name = 'DefinePIDByAddressPositiveResponse'
@@ -547,8 +517,6 @@ class GMLAN_DPBAPR(Packet):
     def answers(self, other):
         return isinstance(other, GMLAN_DPBA) \
             and other.parameterIdentifier == self.parameterIdentifier
-
-
 
 
 # ########################RD###################################
@@ -568,8 +536,6 @@ class GMLAN_RD(Packet):
             ],
             XIntField('memorySize', 0))
     ]
-
-
 
 
 # ########################TD###################################
@@ -596,8 +562,6 @@ class GMLAN_TD(Packet):
     ]
 
 
-
-
 # ########################WDBI###################################
 @_gmlan_service(0x3B)
 class GMLAN_WDBI(Packet):
@@ -606,8 +570,6 @@ class GMLAN_WDBI(Packet):
         XByteEnumField('dataIdentifier', 0, GMLAN_RDBI.dataIdentifiers),
         StrField("dataRecord", b'')
     ]
-
-
 
 
 @_gmlan_service(0x7B)
@@ -620,8 +582,6 @@ class GMLAN_WDBIPR(Packet):
     def answers(self, other):
         return isinstance(other, GMLAN_WDBI) \
             and other.dataIdentifier == self.dataIdentifier
-
-
 
 
 # ########################RPSPR###################################
@@ -645,8 +605,6 @@ class GMLAN_RPSPR(Packet):
     ]
 
 
-
-
 # ########################PM###################################
 @_gmlan_service(0xA5)
 class GMLAN_PM(Packet):
@@ -661,8 +619,6 @@ class GMLAN_PM(Packet):
     ]
 
 
-
-
 # ########################RDI###################################
 @_gmlan_service(0xA9)
 class GMLAN_RDI(Packet):
@@ -675,8 +631,6 @@ class GMLAN_RDI(Packet):
     fields_desc = [
         ByteEnumField('subfunction', 0, subfunctions)
     ]
-
-
 
 
 class GMLAN_RDI_BN(Packet):
@@ -724,8 +678,6 @@ class GMLAN_DC(Packet):
     ]
 
 
-
-
 @_gmlan_service(0xEE)
 class GMLAN_DCPR(Packet):
     name = 'DeviceControlPositiveResponse'
@@ -736,8 +688,6 @@ class GMLAN_DCPR(Packet):
     def answers(self, other):
         return isinstance(other, GMLAN_DC) \
             and other.CPIDNumber == self.CPIDNumber
-
-
 
 
 # ########################NRC###################################
@@ -771,5 +721,3 @@ class GMLAN_NR(Packet):
         return self.requestServiceId == other.service and \
             (self.returnCode != 0x78 or
              conf.contribs['GMLAN']['treat-response-pending-as-answer'])
-
-

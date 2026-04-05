@@ -43,17 +43,15 @@ To add single layer support to a protocol:
 """
 
 import struct
+from typing import Any, Callable
 
-from typing import Any
-
-from scapy.compat import orb
 from scapy.config import conf
 from scapy.fields import ConditionalField, XByteEnumField
 from scapy.packet import Packet, bind_layers, split_layers
 
 
 def _make_service_decorator(base_cls, conf_contrib_key, single_layer_flag):
-    # type: (type, str, str) -> Any
+    # type: (Any, str, str) -> Callable[[int], Any]
     """Return a class-decorator factory for an automotive protocol service.
 
     The returned decorator factory accepts a *service_id* integer and returns
@@ -94,10 +92,8 @@ def _make_service_decorator(base_cls, conf_contrib_key, single_layer_flag):
     _key = conf_contrib_key
     _flag = single_layer_flag
 
-    def service_decorator(service_id):
-        # type: (int) -> Any
-        def decorator(cls):
-            # type: (type) -> type
+    def service_decorator(service_id: int) -> Callable[[Any], Any]:
+        def decorator(cls: Any) -> Any:
             # Prepend a conditional service field so that in single layer mode
             # the service byte is part of the subpacket itself.
             svc_field = ConditionalField(
@@ -113,8 +109,7 @@ def _make_service_decorator(base_cls, conf_contrib_key, single_layer_flag):
             # Capture service_id by value to avoid late-binding closure issues.
             _sid = service_id
 
-            def _hashret(self):
-                # type: () -> bytes
+            def _hashret(self: Any) -> bytes:
                 if conf.contribs[_key].get(_flag, False):
                     return struct.pack('B', _sid & ~0x40)
                 return Packet.hashret(self)
@@ -127,7 +122,7 @@ def _make_service_decorator(base_cls, conf_contrib_key, single_layer_flag):
 
 
 def _make_single_layer_mode(base_cls, conf_contrib_key, single_layer_flag):
-    # type: (type, str, str) -> Any
+    # type: (Any, str, str) -> Callable[[bool], None]
     """Return a function that enables or disables single layer mode.
 
     The returned function, when called with ``enable=True`` (default), removes
@@ -162,8 +157,7 @@ def _make_single_layer_mode(base_cls, conf_contrib_key, single_layer_flag):
     _key = conf_contrib_key
     _flag = single_layer_flag
 
-    def single_layer_mode(enable=True):
-        # type: (bool) -> None
+    def single_layer_mode(enable: bool = True) -> None:
         conf.contribs[_key][_flag] = enable
         for service_id, cls in _base._service_cls.items():
             # Always split first to ensure idempotency (no duplicate bindings).

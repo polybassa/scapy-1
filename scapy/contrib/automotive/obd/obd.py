@@ -34,7 +34,7 @@ except KeyError:
     #                     "ResponsePending' as answer of a request. \n"
     #                     "The default value is False.")
     conf.contribs['OBD'] = {'treat-response-pending-as-answer': False,
-                             'single_layer_OBD': False}
+                            'single_layer_OBD': False}
 
 
 class OBD(ISOTP):

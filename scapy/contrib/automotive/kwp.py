@@ -21,7 +21,7 @@ from scapy.fields import (
     XByteField,
     XShortEnumField,
 )
-from scapy.packet import Packet, bind_layers, NoPayload
+from scapy.packet import Packet, NoPayload
 from scapy.config import conf
 from scapy.error import log_loading
 from scapy.utils import PeriodicSenderThread
@@ -34,6 +34,7 @@ from scapy.contrib.automotive.utils import (
 from scapy.compat import orb
 
 from typing import (
+    Any,
     Dict,
 )
 
@@ -48,7 +49,7 @@ except KeyError:
                      "ResponsePending' as answer of a request. \n"
                      "The default value is False.")
     conf.contribs['KWP'] = {'treat-response-pending-as-answer': False,
-                             'single_layer_KWP': False}
+                            'single_layer_KWP': False}
 
 
 class KWP(ISOTP):
@@ -165,8 +166,6 @@ class KWP_SDS(Packet):
     ]
 
 
-
-
 @_kwp_service(0x50)
 class KWP_SDSPR(Packet):
     name = 'StartDiagnosticSessionPositiveResponse'
@@ -179,8 +178,6 @@ class KWP_SDSPR(Packet):
         # type: (Packet) -> int
         return isinstance(other, KWP_SDS) and \
             other.diagnosticSession == self.diagnosticSession
-
-
 
 
 # ######################### KWP_ER ###################################
@@ -196,8 +193,6 @@ class KWP_ER(Packet):
     ]
 
 
-
-
 @_kwp_service(0x51)
 class KWP_ERPR(Packet):
     name = 'ECUResetPositiveResponse'
@@ -205,8 +200,6 @@ class KWP_ERPR(Packet):
     def answers(self, other):
         # type: (Packet) -> int
         return isinstance(other, KWP_ER)
-
-
 
 
 # ######################### KWP_SA ###################################
@@ -218,8 +211,6 @@ class KWP_SA(Packet):
         ConditionalField(StrField('key', b""),
                          lambda pkt: pkt.accessMode % 2 == 0)
     ]
-
-
 
 
 @_kwp_service(0x67)
@@ -235,8 +226,6 @@ class KWP_SAPR(Packet):
         # type: (Packet) -> int
         return isinstance(other, KWP_SA) \
             and other.accessMode == self.accessMode
-
-
 
 
 # ######################### KWP_IOCBLI ###################################
@@ -259,8 +248,6 @@ class KWP_IOCBLI(Packet):
     ]
 
 
-
-
 @_kwp_service(0x70)
 class KWP_IOCBLIPR(Packet):
     name = 'InputOutputControlByLocalIdentifierPositiveResponse'
@@ -277,8 +264,6 @@ class KWP_IOCBLIPR(Packet):
             and other.localIdentifier == self.localIdentifier
 
 
-
-
 # ######################### KWP_DNMT ###################################
 @_kwp_service(0x28)
 class KWP_DNMT(Packet):
@@ -292,8 +277,6 @@ class KWP_DNMT(Packet):
     ]
 
 
-
-
 @_kwp_service(0x68)
 class KWP_DNMTPR(Packet):
     name = 'DisableNormalMessageTransmissionPositiveResponse'
@@ -301,8 +284,6 @@ class KWP_DNMTPR(Packet):
     def answers(self, other):
         # type: (Packet) -> int
         return isinstance(other, KWP_DNMT)
-
-
 
 
 # ######################### KWP_ENMT ###################################
@@ -318,8 +299,6 @@ class KWP_ENMT(Packet):
     ]
 
 
-
-
 @_kwp_service(0x69)
 class KWP_ENMTPR(Packet):
     name = 'EnableNormalMessageTransmissionPositiveResponse'
@@ -327,8 +306,6 @@ class KWP_ENMTPR(Packet):
     def answers(self, other):
         # type: (Packet) -> int
         return isinstance(other, KWP_DNMT)
-
-
 
 
 # ######################### KWP_TP ###################################
@@ -344,8 +321,6 @@ class KWP_TP(Packet):
     ]
 
 
-
-
 @_kwp_service(0x7E)
 class KWP_TPPR(Packet):
     name = 'TesterPresentPositiveResponse'
@@ -353,8 +328,6 @@ class KWP_TPPR(Packet):
     def answers(self, other):
         # type: (Packet) -> int
         return isinstance(other, KWP_TP)
-
-
 
 
 # ######################### KWP_CDTCS ###################################
@@ -384,8 +357,6 @@ class KWP_CDTCS(Packet):
     ]
 
 
-
-
 @_kwp_service(0xC5)
 class KWP_CDTCSPR(Packet):
     name = 'ControlDTCSettingPositiveResponse'
@@ -393,8 +364,6 @@ class KWP_CDTCSPR(Packet):
     def answers(self, other):
         # type: (Packet) -> int
         return isinstance(other, KWP_CDTCS)
-
-
 
 
 # ######################### KWP_ROE ###################################
@@ -430,8 +399,6 @@ class KWP_ROE(Packet):
     ]
 
 
-
-
 @_kwp_service(0xC6)
 class KWP_ROEPR(Packet):
     name = 'ResponseOnEventPositiveResponse'
@@ -446,8 +413,6 @@ class KWP_ROEPR(Packet):
         # type: (Packet) -> int
         return isinstance(other, KWP_ROE) \
             and other.eventType == self.eventType
-
-
 
 
 # ######################### KWP_RDBLI ###################################
@@ -473,8 +438,6 @@ class KWP_RDBLI(Packet):
     ]
 
 
-
-
 @_kwp_service(0x61)
 class KWP_RDBLIPR(Packet):
     name = 'ReadDataByLocalIdentifierPositiveResponse'
@@ -488,8 +451,6 @@ class KWP_RDBLIPR(Packet):
             and self.recordLocalIdentifier == other.recordLocalIdentifier
 
 
-
-
 # ######################### KWP_WDBLI ###################################
 @_kwp_service(0x3B)
 class KWP_WDBLI(Packet):
@@ -497,8 +458,6 @@ class KWP_WDBLI(Packet):
     fields_desc = [
         XByteEnumField('recordLocalIdentifier', 0, KWP_RDBLI.localIdentifiers)
     ]
-
-
 
 
 @_kwp_service(0x7B)
@@ -514,8 +473,6 @@ class KWP_WDBLIPR(Packet):
             and self.recordLocalIdentifier == other.recordLocalIdentifier
 
 
-
-
 # ######################### KWP_RDBI ###################################
 @_kwp_service(0x22)
 class KWP_RDBI(Packet):
@@ -524,8 +481,6 @@ class KWP_RDBI(Packet):
     fields_desc = [
         XShortEnumField('identifier', 0, dataIdentifiers)
     ]
-
-
 
 
 @_kwp_service(0x62)
@@ -541,8 +496,6 @@ class KWP_RDBIPR(Packet):
             and self.identifier == other.identifier
 
 
-
-
 # ######################### KWP_RMBA ###################################
 @_kwp_service(0x23)
 class KWP_RMBA(Packet):
@@ -551,8 +504,6 @@ class KWP_RMBA(Packet):
         X3BytesField('memoryAddress', 0),
         ByteField('memorySize', 0)
     ]
-
-
 
 
 @_kwp_service(0x63)
@@ -565,8 +516,6 @@ class KWP_RMBAPR(Packet):
     def answers(self, other):
         # type: (Packet) -> int
         return isinstance(other, KWP_RMBA)
-
-
 
 
 # ######################### KWP_DDLI ###################################
@@ -586,8 +535,6 @@ class KWP_DDLI(Packet):
     ]
 
 
-
-
 @_kwp_service(0x6C)
 class KWP_DDLIPR(Packet):
     name = 'DynamicallyDefineLocalIdentifierPositiveResponse'
@@ -601,8 +548,6 @@ class KWP_DDLIPR(Packet):
             other.dynamicallyDefineLocalIdentifier == self.dynamicallyDefineLocalIdentifier  # noqa: E501
 
 
-
-
 # ######################### KWP_WDBI ###################################
 @_kwp_service(0x2E)
 class KWP_WDBI(Packet):
@@ -610,8 +555,6 @@ class KWP_WDBI(Packet):
     fields_desc = [
         XShortEnumField('identifier', 0, KWP_RDBI.dataIdentifiers)
     ]
-
-
 
 
 @_kwp_service(0x6E)
@@ -627,8 +570,6 @@ class KWP_WDBIPR(Packet):
             and other.identifier == self.identifier
 
 
-
-
 # ######################### KWP_WMBA ###################################
 @_kwp_service(0x3D)
 class KWP_WMBA(Packet):
@@ -638,8 +579,6 @@ class KWP_WMBA(Packet):
         ByteField('memorySize', 0),
         StrField('dataRecord', b'', fmt="B")
     ]
-
-
 
 
 @_kwp_service(0x7D)
@@ -653,8 +592,6 @@ class KWP_WMBAPR(Packet):
         # type: (Packet) -> int
         return isinstance(other, KWP_WMBA) and \
             other.memoryAddress == self.memoryAddress
-
-
 
 
 # ######################### KWP_CDI ###################################
@@ -673,8 +610,6 @@ class KWP_CDI(Packet):
     ]
 
 
-
-
 @_kwp_service(0x54)
 class KWP_CDIPR(Packet):
     name = 'ClearDiagnosticInformationPositiveResponse'
@@ -689,8 +624,6 @@ class KWP_CDIPR(Packet):
             self.groupOfDTC == other.groupOfDTC
 
 
-
-
 # ######################### KWP_RSODTC ###################################
 @_kwp_service(0x17)
 class KWP_RSODTC(Packet):
@@ -698,8 +631,6 @@ class KWP_RSODTC(Packet):
     fields_desc = [
         XShortEnumField('groupOfDTC', 0, KWP_CDI.DTCGroups)
     ]
-
-
 
 
 @_kwp_service(0x57)
@@ -713,8 +644,6 @@ class KWP_RSODTCPR(Packet):
     def answers(self, other):
         # type: (Packet) -> int
         return isinstance(other, KWP_RSODTC)
-
-
 
 
 # ######################### KWP_RECUI ###################################
@@ -741,8 +670,6 @@ class KWP_RECUI(Packet):
     ]
 
 
-
-
 @_kwp_service(0x5A)
 class KWP_RECUIPR(Packet):
     name = 'ReadECUIdentificationPositiveResponse'
@@ -755,8 +682,6 @@ class KWP_RECUIPR(Packet):
         # type: (Packet) -> int
         return isinstance(other, KWP_RECUI) and \
             self.localIdentifier == other.localIdentifier
-
-
 
 
 # ######################### KWP_SRBLI ###################################
@@ -780,8 +705,6 @@ class KWP_SRBLI(Packet):
     ]
 
 
-
-
 @_kwp_service(0x71)
 class KWP_SRBLIPR(Packet):
     name = 'StartRoutineByLocalIdentifierPositiveResponse'
@@ -796,8 +719,6 @@ class KWP_SRBLIPR(Packet):
             and other.routineLocalIdentifier == self.routineLocalIdentifier
 
 
-
-
 # ######################### KWP_STRBLI ###################################
 @_kwp_service(0x32)
 class KWP_STRBLI(Packet):
@@ -806,8 +727,6 @@ class KWP_STRBLI(Packet):
         XByteEnumField('routineLocalIdentifier', 0,
                        KWP_SRBLI.routineLocalIdentifiers)
     ]
-
-
 
 
 @_kwp_service(0x72)
@@ -824,8 +743,6 @@ class KWP_STRBLIPR(Packet):
             and other.routineLocalIdentifier == self.routineLocalIdentifier
 
 
-
-
 # ######################### KWP_RRRBLI ###################################
 @_kwp_service(0x33)
 class KWP_RRRBLI(Packet):
@@ -834,8 +751,6 @@ class KWP_RRRBLI(Packet):
         XByteEnumField('routineLocalIdentifier', 0,
                        KWP_SRBLI.routineLocalIdentifiers)
     ]
-
-
 
 
 @_kwp_service(0x73)
@@ -852,8 +767,6 @@ class KWP_RRRBLIPR(Packet):
             and other.routineLocalIdentifier == self.routineLocalIdentifier
 
 
-
-
 # ######################### KWP_RD ###################################
 @_kwp_service(0x34)
 class KWP_RD(Packet):
@@ -864,8 +777,6 @@ class KWP_RD(Packet):
         BitField('encryption', 0, 4),
         X3BytesField('uncompressedMemorySize', 0)
     ]
-
-
 
 
 @_kwp_service(0x74)
@@ -880,8 +791,6 @@ class KWP_RDPR(Packet):
         return isinstance(other, KWP_RD)
 
 
-
-
 # ######################### KWP_RU ###################################
 @_kwp_service(0x35)
 class KWP_RU(Packet):
@@ -892,8 +801,6 @@ class KWP_RU(Packet):
         BitField('encryption', 0, 4),
         X3BytesField('uncompressedMemorySize', 0)
     ]
-
-
 
 
 @_kwp_service(0x75)
@@ -908,8 +815,6 @@ class KWP_RUPR(Packet):
         return isinstance(other, KWP_RU)
 
 
-
-
 # ######################### KWP_TD ###################################
 @_kwp_service(0x36)
 class KWP_TD(Packet):
@@ -918,8 +823,6 @@ class KWP_TD(Packet):
         ByteField('blockSequenceCounter', 0),
         StrField('transferDataRequestParameter', b"", fmt="B")
     ]
-
-
 
 
 @_kwp_service(0x76)
@@ -936,8 +839,6 @@ class KWP_TDPR(Packet):
             and other.blockSequenceCounter == self.blockSequenceCounter
 
 
-
-
 # ######################### KWP_RTE ###################################
 @_kwp_service(0x37)
 class KWP_RTE(Packet):
@@ -945,8 +846,6 @@ class KWP_RTE(Packet):
     fields_desc = [
         StrField('transferDataRequestParameter', b"", fmt="B")
     ]
-
-
 
 
 @_kwp_service(0x77)
@@ -959,8 +858,6 @@ class KWP_RTEPR(Packet):
     def answers(self, other):
         # type: (Packet) -> int
         return isinstance(other, KWP_RTE)
-
-
 
 
 # ######################### KWP_NR ###################################
@@ -1001,8 +898,6 @@ class KWP_NR(Packet):
         return self.requestServiceId == other.service and \
             (self.negativeResponseCode != 0x78 or
              conf.contribs['KWP']['treat-response-pending-as-answer'])
-
-
 
 
 # ##################################################################

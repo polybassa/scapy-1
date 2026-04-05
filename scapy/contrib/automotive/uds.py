@@ -19,13 +19,15 @@ from scapy.fields import ByteEnumField, StrField, ConditionalField, \
     ShortField, ObservableDict, XShortEnumField, XByteEnumField, StrLenField, \
     FieldLenField, XStrFixedLenField, XStrLenField, FlagsField, PacketListField, \
     PacketField
-from scapy.packet import Packet, bind_layers, NoPayload, Raw
+from scapy.packet import Packet, bind_layers, split_layers, NoPayload, Raw
+from scapy.compat import orb
 from scapy.config import conf
 from scapy.utils import PeriodicSenderThread
 from scapy.contrib.isotp import ISOTP
 
 # Typing imports
 from typing import (
+    Any,
     Dict,
     Union,
 )
@@ -39,7 +41,8 @@ except KeyError:
     #                 "a negative response 'requestCorrectlyReceived-"
     #                 "ResponsePending' as answer of a request. \n"
     #                 "The default value is False.")
-    conf.contribs['UDS'] = {'treat-response-pending-as-answer': False}
+    conf.contribs['UDS'] = {'treat-response-pending-as-answer': False,
+                             'single_layer_UDS': False}
 
 conf.debug_dissector = True
 
@@ -126,8 +129,89 @@ class UDS(ISOTP):
             return struct.pack('B', bytes(self)[1] & ~0x40)
         return struct.pack('B', self.service & ~0x40)
 
+    _uds_service_cls = {}  # type: Dict[int, type]
+
+    @classmethod
+    def dispatch_hook(cls, _pkt=b"", *args, **kwargs):
+        # type: (bytes, Any, Any) -> type
+        """Dispatch to the correct UDS service class in single layer mode."""
+        if conf.contribs['UDS'].get('single_layer_UDS', False) and _pkt:
+            service = orb(_pkt[0])
+            return cls._uds_service_cls.get(service, cls)
+        return cls
+
+
+def _uds_service(service_id):
+    # type: (int) -> Any
+    """Class decorator to register a UDS service layer.
+
+    Prepends a conditional 'service' field (active only in single layer mode),
+    registers the class in the UDS dispatch table, and conditionally binds
+    the layer to UDS based on the 'single_layer_UDS' config flag.
+    """
+    def decorator(cls):
+        # type: (type) -> type
+        # Prepend conditional service field to the class
+        svc_field = ConditionalField(
+            XByteEnumField('service', service_id, UDS.services),
+            lambda pkt: conf.contribs['UDS'].get('single_layer_UDS', False)
+        )
+        cls.fields_desc = [svc_field] + list(cls.fields_desc)
+        # Register in UDS dispatch table for single layer mode
+        UDS._uds_service_cls[service_id] = cls
+        # In multi-layer mode, bind to UDS (for backward compatibility)
+        if not conf.contribs['UDS'].get('single_layer_UDS', False):
+            bind_layers(UDS, cls, service=service_id)
+        # Inject hashret for single layer mode
+        _sid = service_id
+
+        def _hashret(self):
+            # type: () -> bytes
+            if conf.contribs['UDS'].get('single_layer_UDS', False):
+                return struct.pack('B', _sid & ~0x40)
+            return Packet.hashret(self)
+
+        if 'hashret' not in cls.__dict__:
+            cls.hashret = _hashret
+        return cls
+    return decorator
+
+
+def uds_single_layer_mode(enable=True):
+    # type: (bool) -> None
+    """Enable or disable single layer UDS mode.
+
+    In single layer mode, each UDS service is a standalone packet with a
+    conditional 'service' field, rather than being nested inside a UDS()
+    layer. When dissecting raw bytes, UDS() will directly return the
+    appropriate subpacket class (e.g., UDS_RDBI) instead of UDS / UDS_RDBI.
+
+    This function can be called after the module is loaded to switch modes.
+
+    Args:
+        enable: If True, enable single layer mode. If False, revert to
+                multi-layer mode (default).
+
+    Example::
+
+        >>> conf.contribs['UDS'] = {'single_layer_UDS': True}
+        >>> load_contrib('automotive.uds')
+        # OR after loading:
+        >>> from scapy.contrib.automotive.uds import uds_single_layer_mode
+        >>> uds_single_layer_mode(True)
+        >>> UDS(b'\\x10\\x01')
+        <UDS_DSC  service=DiagnosticSessionControl diagnosticSessionType=defaultSession |>
+    """
+    conf.contribs['UDS']['single_layer_UDS'] = enable
+    for service_id, cls in UDS._uds_service_cls.items():
+        if enable:
+            split_layers(UDS, cls, service=service_id)
+        else:
+            bind_layers(UDS, cls, service=service_id)
+
 
 # ########################DSC###################################
+@_uds_service(0x10)
 class UDS_DSC(Packet):
     diagnosticSessionTypes = ObservableDict({
         0x00: 'ISOSAEReserved',
@@ -142,9 +226,8 @@ class UDS_DSC(Packet):
     ]
 
 
-bind_layers(UDS, UDS_DSC, service=0x10)
 
-
+@_uds_service(0x50)
 class UDS_DSCPR(Packet):
     name = 'DiagnosticSessionControlPositiveResponse'
     fields_desc = [
@@ -158,10 +241,9 @@ class UDS_DSCPR(Packet):
             other.diagnosticSessionType == self.diagnosticSessionType
 
 
-bind_layers(UDS, UDS_DSCPR, service=0x50)
-
 
 # #########################ER###################################
+@_uds_service(0x11)
 class UDS_ER(Packet):
     resetTypes = {
         0x00: 'ISOSAEReserved',
@@ -178,9 +260,8 @@ class UDS_ER(Packet):
     ]
 
 
-bind_layers(UDS, UDS_ER, service=0x11)
 
-
+@_uds_service(0x51)
 class UDS_ERPR(Packet):
     name = 'ECUResetPositiveResponse'
     fields_desc = [
@@ -193,10 +274,9 @@ class UDS_ERPR(Packet):
         return isinstance(other, UDS_ER) and other.resetType == self.resetType
 
 
-bind_layers(UDS, UDS_ERPR, service=0x51)
-
 
 # #########################SA###################################
+@_uds_service(0x27)
 class UDS_SA(Packet):
     name = 'SecurityAccess'
     fields_desc = [
@@ -208,9 +288,8 @@ class UDS_SA(Packet):
     ]
 
 
-bind_layers(UDS, UDS_SA, service=0x27)
 
-
+@_uds_service(0x67)
 class UDS_SAPR(Packet):
     name = 'SecurityAccessPositiveResponse'
     fields_desc = [
@@ -224,10 +303,9 @@ class UDS_SAPR(Packet):
             and other.securityAccessType == self.securityAccessType
 
 
-bind_layers(UDS, UDS_SAPR, service=0x67)
-
 
 # #########################CC###################################
+@_uds_service(0x28)
 class UDS_CC(Packet):
     controlTypes = {
         0x00: 'enableRxAndTx',
@@ -265,9 +343,8 @@ class UDS_CC(Packet):
     ]
 
 
-bind_layers(UDS, UDS_CC, service=0x28)
 
-
+@_uds_service(0x68)
 class UDS_CCPR(Packet):
     name = 'CommunicationControlPositiveResponse'
     fields_desc = [
@@ -279,10 +356,9 @@ class UDS_CCPR(Packet):
             and other.controlType == self.controlType
 
 
-bind_layers(UDS, UDS_CCPR, service=0x68)
-
 
 # #########################AUTH###################################
+@_uds_service(0x29)
 class UDS_AUTH(Packet):
     subFunctions = {
         0x00: 'deAuthenticate',
@@ -355,9 +431,8 @@ class UDS_AUTH(Packet):
     ]
 
 
-bind_layers(UDS, UDS_AUTH, service=0x29)
 
-
+@_uds_service(0x69)
 class UDS_AUTHPR(Packet):
     authenticationReturnParameterTypes = {
         0x00: 'requestAccepted',
@@ -435,10 +510,9 @@ class UDS_AUTHPR(Packet):
             and other.subFunction == self.subFunction
 
 
-bind_layers(UDS, UDS_AUTHPR, service=0x69)
-
 
 # #########################TP###################################
+@_uds_service(0x3E)
 class UDS_TP(Packet):
     name = 'TesterPresent'
     fields_desc = [
@@ -446,9 +520,8 @@ class UDS_TP(Packet):
     ]
 
 
-bind_layers(UDS, UDS_TP, service=0x3E)
 
-
+@_uds_service(0x7E)
 class UDS_TPPR(Packet):
     name = 'TesterPresentPositiveResponse'
     fields_desc = [
@@ -459,10 +532,9 @@ class UDS_TPPR(Packet):
         return isinstance(other, UDS_TP)
 
 
-bind_layers(UDS, UDS_TPPR, service=0x7E)
-
 
 # #########################ATP###################################
+@_uds_service(0x83)
 class UDS_ATP(Packet):
     timingParameterAccessTypes = {
         0: 'ISOSAEReserved',
@@ -480,9 +552,8 @@ class UDS_ATP(Packet):
     ]
 
 
-bind_layers(UDS, UDS_ATP, service=0x83)
 
-
+@_uds_service(0xC3)
 class UDS_ATPPR(Packet):
     name = 'AccessTimingParameterPositiveResponse'
     fields_desc = [
@@ -498,12 +569,11 @@ class UDS_ATPPR(Packet):
             self.timingParameterAccessType
 
 
-bind_layers(UDS, UDS_ATPPR, service=0xC3)
-
 
 # #########################SDT###################################
 # TODO: Implement correct internal message service handling here,
 # instead of using just the dataRecord
+@_uds_service(0x84)
 class UDS_SDT(Packet):
     name = 'SecuredDataTransmission'
     fields_desc = [
@@ -522,9 +592,8 @@ class UDS_SDT(Packet):
     ]
 
 
-bind_layers(UDS, UDS_SDT, service=0x84)
 
-
+@_uds_service(0xC4)
 class UDS_SDTPR(Packet):
     name = 'SecuredDataTransmissionPositiveResponse'
     fields_desc = [
@@ -546,10 +615,9 @@ class UDS_SDTPR(Packet):
         return isinstance(other, UDS_SDT)
 
 
-bind_layers(UDS, UDS_SDTPR, service=0xC4)
-
 
 # #########################CDTCS###################################
+@_uds_service(0x85)
 class UDS_CDTCS(Packet):
     DTCSettingTypes = {
         0: 'ISOSAEReserved',
@@ -563,9 +631,8 @@ class UDS_CDTCS(Packet):
     ]
 
 
-bind_layers(UDS, UDS_CDTCS, service=0x85)
 
-
+@_uds_service(0xC5)
 class UDS_CDTCSPR(Packet):
     name = 'ControlDTCSettingPositiveResponse'
     fields_desc = [
@@ -576,11 +643,10 @@ class UDS_CDTCSPR(Packet):
         return isinstance(other, UDS_CDTCS)
 
 
-bind_layers(UDS, UDS_CDTCSPR, service=0xC5)
-
 
 # #########################ROE###################################
 # TODO: improve this protocol implementation
+@_uds_service(0x86)
 class UDS_ROE(Packet):
     eventTypes = {
         0: 'doNotStoreEvent',
@@ -594,9 +660,8 @@ class UDS_ROE(Packet):
     ]
 
 
-bind_layers(UDS, UDS_ROE, service=0x86)
 
-
+@_uds_service(0xC6)
 class UDS_ROEPR(Packet):
     name = 'ResponseOnEventPositiveResponse'
     fields_desc = [
@@ -611,10 +676,9 @@ class UDS_ROEPR(Packet):
             and other.eventType == self.eventType
 
 
-bind_layers(UDS, UDS_ROEPR, service=0xC6)
-
 
 # #########################LC###################################
+@_uds_service(0x87)
 class UDS_LC(Packet):
     linkControlTypes = {
         0: 'ISOSAEReserved',
@@ -636,9 +700,8 @@ class UDS_LC(Packet):
     ]
 
 
-bind_layers(UDS, UDS_LC, service=0x87)
 
-
+@_uds_service(0xC7)
 class UDS_LCPR(Packet):
     name = 'LinkControlPositiveResponse'
     fields_desc = [
@@ -650,10 +713,9 @@ class UDS_LCPR(Packet):
             and other.linkControlType == self.linkControlType
 
 
-bind_layers(UDS, UDS_LCPR, service=0xC7)
-
 
 # #########################RDBI###################################
+@_uds_service(0x22)
 class UDS_RDBI(Packet):
     dataIdentifiers = ObservableDict()
     name = 'ReadDataByIdentifier'
@@ -664,9 +726,8 @@ class UDS_RDBI(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RDBI, service=0x22)
 
-
+@_uds_service(0x62)
 class UDS_RDBIPR(Packet):
     name = 'ReadDataByIdentifierPositiveResponse'
     fields_desc = [
@@ -679,10 +740,9 @@ class UDS_RDBIPR(Packet):
             and self.dataIdentifier in other.identifiers
 
 
-bind_layers(UDS, UDS_RDBIPR, service=0x62)
-
 
 # #########################RMBA###################################
+@_uds_service(0x23)
 class UDS_RMBA(Packet):
     name = 'ReadMemoryByAddress'
     fields_desc = [
@@ -707,9 +767,8 @@ class UDS_RMBA(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RMBA, service=0x23)
 
-
+@_uds_service(0x63)
 class UDS_RMBAPR(Packet):
     name = 'ReadMemoryByAddressPositiveResponse'
     fields_desc = [
@@ -720,10 +779,9 @@ class UDS_RMBAPR(Packet):
         return isinstance(other, UDS_RMBA)
 
 
-bind_layers(UDS, UDS_RMBAPR, service=0x63)
-
 
 # #########################RSDBI###################################
+@_uds_service(0x24)
 class UDS_RSDBI(Packet):
     name = 'ReadScalingDataByIdentifier'
     dataIdentifiers = ObservableDict()
@@ -732,10 +790,9 @@ class UDS_RSDBI(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RSDBI, service=0x24)
-
 
 # TODO: Implement correct scaling here, instead of using just the dataRecord
+@_uds_service(0x64)
 class UDS_RSDBIPR(Packet):
     name = 'ReadScalingDataByIdentifierPositiveResponse'
     fields_desc = [
@@ -749,10 +806,9 @@ class UDS_RSDBIPR(Packet):
             and other.dataIdentifier == self.dataIdentifier
 
 
-bind_layers(UDS, UDS_RSDBIPR, service=0x64)
-
 
 # #########################RDBPI###################################
+@_uds_service(0x2A)
 class UDS_RDBPI(Packet):
     periodicDataIdentifiers = ObservableDict()
     transmissionModes = {
@@ -770,10 +826,9 @@ class UDS_RDBPI(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RDBPI, service=0x2A)
-
 
 # TODO: Implement correct scaling here, instead of using just the dataRecord
+@_uds_service(0x6A)
 class UDS_RDBPIPR(Packet):
     name = 'ReadDataByPeriodicIdentifierPositiveResponse'
     fields_desc = [
@@ -786,12 +841,11 @@ class UDS_RDBPIPR(Packet):
             and other.periodicDataIdentifier == self.periodicDataIdentifier
 
 
-bind_layers(UDS, UDS_RDBPIPR, service=0x6A)
-
 
 # #########################DDDI###################################
 # TODO: Implement correct interpretation here,
 # instead of using just the dataRecord
+@_uds_service(0x2C)
 class UDS_DDDI(Packet):
     name = 'DynamicallyDefineDataIdentifier'
     subFunctions = {0x1: "defineByIdentifier",
@@ -803,9 +857,8 @@ class UDS_DDDI(Packet):
     ]
 
 
-bind_layers(UDS, UDS_DDDI, service=0x2C)
 
-
+@_uds_service(0x6C)
 class UDS_DDDIPR(Packet):
     name = 'DynamicallyDefineDataIdentifierPositiveResponse'
     fields_desc = [
@@ -818,10 +871,9 @@ class UDS_DDDIPR(Packet):
             and other.subFunction == self.subFunction
 
 
-bind_layers(UDS, UDS_DDDIPR, service=0x6C)
-
 
 # #########################WDBI###################################
+@_uds_service(0x2E)
 class UDS_WDBI(Packet):
     name = 'WriteDataByIdentifier'
     fields_desc = [
@@ -830,9 +882,8 @@ class UDS_WDBI(Packet):
     ]
 
 
-bind_layers(UDS, UDS_WDBI, service=0x2E)
 
-
+@_uds_service(0x6E)
 class UDS_WDBIPR(Packet):
     name = 'WriteDataByIdentifierPositiveResponse'
     fields_desc = [
@@ -845,10 +896,9 @@ class UDS_WDBIPR(Packet):
             and other.dataIdentifier == self.dataIdentifier
 
 
-bind_layers(UDS, UDS_WDBIPR, service=0x6E)
-
 
 # #########################WMBA###################################
+@_uds_service(0x3D)
 class UDS_WMBA(Packet):
     name = 'WriteMemoryByAddress'
     fields_desc = [
@@ -875,9 +925,8 @@ class UDS_WMBA(Packet):
     ]
 
 
-bind_layers(UDS, UDS_WMBA, service=0x3D)
 
-
+@_uds_service(0x7D)
 class UDS_WMBAPR(Packet):
     name = 'WriteMemoryByAddressPositiveResponse'
     fields_desc = [
@@ -907,8 +956,6 @@ class UDS_WMBAPR(Packet):
             and other.memoryAddressLen == self.memoryAddressLen
 
 
-bind_layers(UDS, UDS_WMBAPR, service=0x7D)
-
 
 # ##########################DTC#####################################
 class DTC(Packet):
@@ -935,6 +982,7 @@ class DTC(Packet):
 
 
 # #########################CDTCI###################################
+@_uds_service(0x14)
 class UDS_CDTCI(Packet):
     name = 'ClearDiagnosticInformation'
     fields_desc = [
@@ -944,9 +992,8 @@ class UDS_CDTCI(Packet):
     ]
 
 
-bind_layers(UDS, UDS_CDTCI, service=0x14)
 
-
+@_uds_service(0x54)
 class UDS_CDTCIPR(Packet):
     name = 'ClearDiagnosticInformationPositiveResponse'
 
@@ -954,10 +1001,9 @@ class UDS_CDTCIPR(Packet):
         return isinstance(other, UDS_CDTCI)
 
 
-bind_layers(UDS, UDS_CDTCIPR, service=0x54)
-
 
 # #########################RDTCI###################################
+@_uds_service(0x19)
 class UDS_RDTCI(Packet):
     reportTypes = {
         0: 'ISOSAEReserved',
@@ -1028,8 +1074,6 @@ class UDS_RDTCI(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RDTCI, service=0x19)
-
 
 class DTCAndStatusRecord(Packet):
     name = 'DTC and status record'
@@ -1088,6 +1132,7 @@ class DTCSnapshotRecord(Packet):
     ]
 
 
+@_uds_service(0x59)
 class UDS_RDTCIPR(Packet):
     name = 'ReadDTCInformationPositiveResponse'
     fields_desc = [
@@ -1139,10 +1184,9 @@ class UDS_RDTCIPR(Packet):
         return True
 
 
-bind_layers(UDS, UDS_RDTCIPR, service=0x59)
-
 
 # #########################RC###################################
+@_uds_service(0x31)
 class UDS_RC(Packet):
     routineControlTypes = {
         0: 'ISOSAEReserved',
@@ -1158,9 +1202,8 @@ class UDS_RC(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RC, service=0x31)
 
-
+@_uds_service(0x71)
 class UDS_RCPR(Packet):
     name = 'RoutineControlPositiveResponse'
     fields_desc = [
@@ -1180,10 +1223,9 @@ class UDS_RCPR(Packet):
         return False
 
 
-bind_layers(UDS, UDS_RCPR, service=0x71)
-
 
 # #########################RD###################################
+@_uds_service(0x34)
 class UDS_RD(Packet):
     dataFormatIdentifiers = ObservableDict({
         0: 'noCompressionNoEncryption'
@@ -1212,9 +1254,8 @@ class UDS_RD(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RD, service=0x34)
 
-
+@_uds_service(0x74)
 class UDS_RDPR(Packet):
     name = 'RequestDownloadPositiveResponse'
     fields_desc = [
@@ -1227,10 +1268,9 @@ class UDS_RDPR(Packet):
         return isinstance(other, UDS_RD)
 
 
-bind_layers(UDS, UDS_RDPR, service=0x74)
-
 
 # #########################RU###################################
+@_uds_service(0x35)
 class UDS_RU(Packet):
     name = 'RequestUpload'
     fields_desc = [
@@ -1257,9 +1297,8 @@ class UDS_RU(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RU, service=0x35)
 
-
+@_uds_service(0x75)
 class UDS_RUPR(Packet):
     name = 'RequestUploadPositiveResponse'
     fields_desc = [
@@ -1272,10 +1311,9 @@ class UDS_RUPR(Packet):
         return isinstance(other, UDS_RU)
 
 
-bind_layers(UDS, UDS_RUPR, service=0x75)
-
 
 # #########################TD###################################
+@_uds_service(0x36)
 class UDS_TD(Packet):
     name = 'TransferData'
     fields_desc = [
@@ -1284,9 +1322,8 @@ class UDS_TD(Packet):
     ]
 
 
-bind_layers(UDS, UDS_TD, service=0x36)
 
-
+@_uds_service(0x76)
 class UDS_TDPR(Packet):
     name = 'TransferDataPositiveResponse'
     fields_desc = [
@@ -1299,10 +1336,9 @@ class UDS_TDPR(Packet):
             and other.blockSequenceCounter == self.blockSequenceCounter
 
 
-bind_layers(UDS, UDS_TDPR, service=0x76)
-
 
 # #########################RTE###################################
+@_uds_service(0x37)
 class UDS_RTE(Packet):
     name = 'RequestTransferExit'
     fields_desc = [
@@ -1310,9 +1346,8 @@ class UDS_RTE(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RTE, service=0x37)
 
-
+@_uds_service(0x77)
 class UDS_RTEPR(Packet):
     name = 'RequestTransferExitPositiveResponse'
     fields_desc = [
@@ -1323,10 +1358,9 @@ class UDS_RTEPR(Packet):
         return isinstance(other, UDS_RTE)
 
 
-bind_layers(UDS, UDS_RTEPR, service=0x77)
-
 
 # #########################RFT###################################
+@_uds_service(0x38)
 class UDS_RFT(Packet):
     name = 'RequestFileTransfer'
 
@@ -1368,9 +1402,8 @@ class UDS_RFT(Packet):
     ]
 
 
-bind_layers(UDS, UDS_RFT, service=0x38)
 
-
+@_uds_service(0x78)
 class UDS_RFTPR(Packet):
     name = 'RequestFileTransferPositiveResponse'
 
@@ -1410,10 +1443,9 @@ class UDS_RFTPR(Packet):
         return isinstance(other, UDS_RFT)
 
 
-bind_layers(UDS, UDS_RFTPR, service=0x78)
-
 
 # #########################IOCBI###################################
+@_uds_service(0x2F)
 class UDS_IOCBI(Packet):
     name = 'InputOutputControlByIdentifier'
     fields_desc = [
@@ -1421,9 +1453,8 @@ class UDS_IOCBI(Packet):
     ]
 
 
-bind_layers(UDS, UDS_IOCBI, service=0x2F)
 
-
+@_uds_service(0x6F)
 class UDS_IOCBIPR(Packet):
     name = 'InputOutputControlByIdentifierPositiveResponse'
     fields_desc = [
@@ -1435,10 +1466,9 @@ class UDS_IOCBIPR(Packet):
             and other.dataIdentifier == self.dataIdentifier
 
 
-bind_layers(UDS, UDS_IOCBIPR, service=0x6F)
-
 
 # #########################NR###################################
+@_uds_service(0x7f)
 class UDS_NR(Packet):
     negativeResponseCodes = {
         0x00: 'positiveResponse',
@@ -1514,8 +1544,6 @@ class UDS_NR(Packet):
             (self.negativeResponseCode != 0x78 or
              conf.contribs['UDS']['treat-response-pending-as-answer'])
 
-
-bind_layers(UDS, UDS_NR, service=0x7f)
 
 
 # ##################################################################

@@ -1103,32 +1103,32 @@ feature is backed by the generic helpers in
 To enable before loading a module::
 
     >>> conf.contribs['UDS'] = {'treat-response-pending-as-answer': False,
-    ...                          'single_layer_UDS': True}
+    ...                          'single_layer_mode': True}
     >>> load_contrib('automotive.uds')
 
 To toggle at runtime after loading::
 
-    >>> from scapy.contrib.automotive.uds import uds_single_layer_mode
-    >>> uds_single_layer_mode(True)
+    >>> conf.contribs['UDS']['single_layer_mode'] = True
     >>> UDS(b'\x10\x01')
     <UDS_DSC  service=DiagnosticSessionControl diagnosticSessionType=defaultSession |>
     >>> bytes(UDS_DSC(diagnosticSessionType=0x01))
     b'\x10\x01'
-    >>> uds_single_layer_mode(False)   # revert to multi-layer mode
+    >>> conf.contribs['UDS']['single_layer_mode'] = False   # revert to multi-layer mode
 
-The same API is available for the other protocols:
+The same API is available for the other protocols — use the ``single_layer_mode``
+config key in the corresponding ``conf.contribs`` entry:
 
-+----------+-----------------------+----------------------------+------------------------------------+
-| Protocol | Config flag           | Toggle function            | Module                             |
-+==========+=======================+============================+====================================+
-| UDS      | ``single_layer_UDS``  | ``uds_single_layer_mode``  | ``scapy.contrib.automotive.uds``   |
-+----------+-----------------------+----------------------------+------------------------------------+
-| KWP      | ``single_layer_KWP``  | ``kwp_single_layer_mode``  | ``scapy.contrib.automotive.kwp``   |
-+----------+-----------------------+----------------------------+------------------------------------+
-| OBD      | ``single_layer_OBD``  | ``obd_single_layer_mode``  | ``scapy.contrib.automotive.obd``   |
-+----------+-----------------------+----------------------------+------------------------------------+
-| GMLAN    | ``single_layer_GMLAN``| ``gmlan_single_layer_mode``| ``scapy.contrib.automotive.gm.gmlan`` |
-+----------+-----------------------+----------------------------+------------------------------------+
++----------+-----------------------------------------------+
+| Protocol | Config entry                                  |
++==========+===============================================+
+| UDS      | ``conf.contribs['UDS']['single_layer_mode']`` |
++----------+-----------------------------------------------+
+| KWP      | ``conf.contribs['KWP']['single_layer_mode']`` |
++----------+-----------------------------------------------+
+| OBD      | ``conf.contribs['OBD']['single_layer_mode']`` |
++----------+-----------------------------------------------+
+| GMLAN    | ``conf.contribs['GMLAN']['single_layer_mode']`` |
++----------+-----------------------------------------------+
 
 In single layer mode:
 
@@ -1136,16 +1136,13 @@ In single layer mode:
   it reads the first byte and returns the correct service class directly.
 - Each service packet has a conditional ``service`` field that is present
   (for building and dissection) only when single layer mode is active.
-- ``bind_layers`` between the base class and service classes are disabled;
-  dissection is handled via ``dispatch_hook``.
 - Service packets' ``answers()`` and ``hashret()`` methods work correctly in
   both modes.
 
-The underlying helpers that power this feature are
-:func:`~scapy.contrib.automotive.utils._make_service_decorator` and
-:func:`~scapy.contrib.automotive.utils._make_single_layer_mode` in
+The underlying helper that powers this feature is
+:func:`~scapy.contrib.automotive.utils._make_service_decorator` in
 :mod:`scapy.contrib.automotive.utils`.  OEM-specific protocol extensions can
-use the same helpers to add single layer support to custom protocol classes.
+use the same helper to add single layer support to custom protocol classes.
 
 GMLAN
 =====

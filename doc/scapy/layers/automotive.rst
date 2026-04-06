@@ -1086,9 +1086,7 @@ Single Layer Mode
 -----------------
 
 UDS, KWP, OBD, and GMLAN all support a *single layer mode* that makes each
-service packet a standalone ``Packet`` rather than a nested sublayer.  The
-feature is backed by the generic helpers in
-:mod:`scapy.contrib.automotive.utils` and works identically for every protocol.
+service packet a standalone ``Packet`` rather than a nested sublayer.
 
 **Default (multi-layer) mode**
 
@@ -1115,29 +1113,8 @@ To toggle at runtime after loading::
     b'\x10\x01'
     >>> conf.contribs['UDS']['single_layer_mode'] = False   # revert to multi-layer mode
 
-The same API is available for the other protocols — use the ``single_layer_mode``
-config key in the corresponding ``conf.contribs`` entry:
-
-+----------+-----------------------------------------------+
-| Protocol | Config entry                                  |
-+==========+===============================================+
-| UDS      | ``conf.contribs['UDS']['single_layer_mode']`` |
-+----------+-----------------------------------------------+
-| KWP      | ``conf.contribs['KWP']['single_layer_mode']`` |
-+----------+-----------------------------------------------+
-| OBD      | ``conf.contribs['OBD']['single_layer_mode']`` |
-+----------+-----------------------------------------------+
-| GMLAN    | ``conf.contribs['GMLAN']['single_layer_mode']`` |
-+----------+-----------------------------------------------+
-
-In single layer mode:
-
-- The base class (e.g. ``KWP``) acts as a dispatcher via ``dispatch_hook``:
-  it reads the first byte and returns the correct service class directly.
-- Each service packet has a conditional ``service`` field that is present
-  (for building and dissection) only when single layer mode is active.
-- Service packets' ``answers()`` and ``hashret()`` methods work correctly in
-  both modes.
+The same ``single_layer_mode`` key works for all protocols: replace ``'UDS'``
+with ``'KWP'``, ``'OBD'``, or ``'GMLAN'`` as appropriate.
 
 GMLAN
 =====

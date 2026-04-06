@@ -93,35 +93,154 @@ class OBD(ISOTP):
         return cls
 
 
-_OBD_SERVICES = [
-    (0x01, OBD_S01),
-    (0x02, OBD_S02),
-    (0x03, OBD_S03),
-    (0x04, OBD_S04),
-    (0x06, OBD_S06),
-    (0x07, OBD_S07),
-    (0x08, OBD_S08),
-    (0x09, OBD_S09),
-    (0x0A, OBD_S0A),
-    (0x41, OBD_S01_PR),
-    (0x42, OBD_S02_PR),
-    (0x43, OBD_S03_PR),
-    (0x44, OBD_S04_PR),
-    (0x46, OBD_S06_PR),
-    (0x47, OBD_S07_PR),
-    (0x48, OBD_S08_PR),
-    (0x49, OBD_S09_PR),
-    (0x4A, OBD_S0A_PR),
-    (0x7F, OBD_NR),
-]
+OBD_S01.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x01, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S01.fields_desc)
+bind_layers(OBD, OBD_S01, service=0x01)
+OBD._service_cls[0x01] = OBD_S01
 
-for _sid, _cls in _OBD_SERVICES:
-    _cls.fields_desc = [
-        ConditionalField(
-            XByteEnumField('service', _sid, OBD.services),
-            lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
-    ] + list(_cls.fields_desc)
-    bind_layers(OBD, _cls, service=_sid)
-    OBD._service_cls[_sid] = _cls
+OBD_S02.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x02, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S02.fields_desc)
+bind_layers(OBD, OBD_S02, service=0x02)
+OBD._service_cls[0x02] = OBD_S02
 
-del _sid, _cls
+OBD_S03.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x03, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S03.fields_desc)
+bind_layers(OBD, OBD_S03, service=0x03)
+OBD._service_cls[0x03] = OBD_S03
+
+OBD_S04.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x04, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S04.fields_desc)
+bind_layers(OBD, OBD_S04, service=0x04)
+OBD._service_cls[0x04] = OBD_S04
+
+OBD_S06.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x06, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S06.fields_desc)
+bind_layers(OBD, OBD_S06, service=0x06)
+OBD._service_cls[0x06] = OBD_S06
+
+OBD_S07.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x07, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S07.fields_desc)
+bind_layers(OBD, OBD_S07, service=0x07)
+OBD._service_cls[0x07] = OBD_S07
+
+OBD_S08.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x08, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S08.fields_desc)
+bind_layers(OBD, OBD_S08, service=0x08)
+OBD._service_cls[0x08] = OBD_S08
+
+OBD_S09.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x09, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S09.fields_desc)
+bind_layers(OBD, OBD_S09, service=0x09)
+OBD._service_cls[0x09] = OBD_S09
+
+OBD_S0A.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x0A, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S0A.fields_desc)
+bind_layers(OBD, OBD_S0A, service=0x0A)
+OBD._service_cls[0x0A] = OBD_S0A
+
+OBD_S01_PR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x41, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S01_PR.fields_desc)
+bind_layers(OBD, OBD_S01_PR, service=0x41)
+OBD._service_cls[0x41] = OBD_S01_PR
+
+OBD_S02_PR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x42, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S02_PR.fields_desc)
+bind_layers(OBD, OBD_S02_PR, service=0x42)
+OBD._service_cls[0x42] = OBD_S02_PR
+
+OBD_S03_PR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x43, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S03_PR.fields_desc)
+bind_layers(OBD, OBD_S03_PR, service=0x43)
+OBD._service_cls[0x43] = OBD_S03_PR
+
+OBD_S04_PR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x44, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S04_PR.fields_desc)
+bind_layers(OBD, OBD_S04_PR, service=0x44)
+OBD._service_cls[0x44] = OBD_S04_PR
+
+OBD_S06_PR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x46, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S06_PR.fields_desc)
+bind_layers(OBD, OBD_S06_PR, service=0x46)
+OBD._service_cls[0x46] = OBD_S06_PR
+
+OBD_S07_PR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x47, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S07_PR.fields_desc)
+bind_layers(OBD, OBD_S07_PR, service=0x47)
+OBD._service_cls[0x47] = OBD_S07_PR
+
+OBD_S08_PR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x48, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S08_PR.fields_desc)
+bind_layers(OBD, OBD_S08_PR, service=0x48)
+OBD._service_cls[0x48] = OBD_S08_PR
+
+OBD_S09_PR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x49, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S09_PR.fields_desc)
+bind_layers(OBD, OBD_S09_PR, service=0x49)
+OBD._service_cls[0x49] = OBD_S09_PR
+
+OBD_S0A_PR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x4A, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_S0A_PR.fields_desc)
+bind_layers(OBD, OBD_S0A_PR, service=0x4A)
+OBD._service_cls[0x4A] = OBD_S0A_PR
+
+OBD_NR.fields_desc = [
+    ConditionalField(
+        XByteEnumField('service', 0x7F, OBD.services),
+        lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+] + list(OBD_NR.fields_desc)
+bind_layers(OBD, OBD_NR, service=0x7F)
+OBD._service_cls[0x7F] = OBD_NR

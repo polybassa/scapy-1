@@ -478,7 +478,7 @@ assert p.data == b'\xAA\xBB\xCC\xDD\xEE\xFF\x11'
 
 = J1939_TP_CM_RTS default field values
 rts = J1939_TP_CM_RTS()
-assert rts.ctrl == J1939_TP_CTRL_RTS, "ctrl=%d" % rts.ctrl   # 16
+assert rts.ctrl == J1939_TP_CTRL_RTS, "ctrl=%d" % rts.ctrl
 assert rts.max_packets == 0xFF, "max_packets=%d" % rts.max_packets
 assert len(bytes(rts)) == 8, "RTS wire size must be 8 bytes"
 
@@ -517,7 +517,7 @@ assert len(b) == 8, "ACK wire size must be 8 bytes"
 = J1939_TP_CM_ABORT default reserved bytes
 abort = J1939_TP_CM_ABORT()
 b = bytes(abort)
-assert b[0] == J1939_TP_CTRL_ABORT, "ctrl=0x%02X" % b[0]  # 255
+assert b[0] == J1939_TP_CTRL_ABORT, "ctrl=0x%02X" % b[0]
 assert b[2] == 0xFF and b[3] == 0xFF, "reserved word not 0xFFFF"
 assert b[4] == 0xFF, "reserved2=0x%02X" % b[4]
 assert len(b) == 8, "ABORT wire size must be 8 bytes"
@@ -574,7 +574,7 @@ assert bytes(dt3) == bytes([3]) + tx_payload[14:20] + b'\xFF'
 # RTS: ctrl=16, total_size=18 (LE), num_packets=3, max_packets=1, PGN 0xEF00 (LE)
 rts = J1939_TP_CM_RTS(total_size=18, num_packets=3, max_packets=1, pgn=0xEF00)
 b = bytes(rts)
-assert b[0] == J1939_TP_CTRL_RTS   # 16
+assert b[0] == J1939_TP_CTRL_RTS
 assert b[1] == 18 and b[2] == 0    # total_size=18 LE
 assert b[3] == 3                    # num_packets
 assert b[4] == 1                    # max_packets
@@ -583,7 +583,7 @@ assert b[5] == 0x00 and b[6] == 0xEF and b[7] == 0x00  # PGN 0xEF00 LE
 # CTS: ctrl=17, num_packets=1, next_packet=1, reserved=0xFFFF, PGN 0xEF00 (LE)
 cts = J1939_TP_CM_CTS(num_packets=1, next_packet=1, pgn=0xEF00)
 b = bytes(cts)
-assert b[0] == J1939_TP_CTRL_CTS   # 17
+assert b[0] == J1939_TP_CTRL_CTS
 assert b[1] == 1                    # num_packets
 assert b[2] == 1                    # next_packet
 assert b[3] == 0xFF and b[4] == 0xFF  # reserved=0xFFFF
@@ -592,7 +592,7 @@ assert b[5] == 0x00 and b[6] == 0xEF and b[7] == 0x00  # PGN 0xEF00 LE
 # ACK: ctrl=19, total_size=18 (LE), num_packets=3, reserved=0xFF, PGN 0xEF00 (LE)
 ack = J1939_TP_CM_ACK(total_size=18, num_packets=3, pgn=0xEF00)
 b = bytes(ack)
-assert b[0] == J1939_TP_CTRL_ACK   # 19
+assert b[0] == J1939_TP_CTRL_ACK
 assert b[1] == 18 and b[2] == 0    # total_size=18 LE
 assert b[3] == 3                    # num_packets
 assert b[4] == 0xFF                 # reserved

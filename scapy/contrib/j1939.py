@@ -172,7 +172,7 @@ J1939_ADDR_NAMES = {
 def pgn_is_pdu1(pgn):
     # type: (int) -> bool
     """Return True if *pgn* is a PDU1 (peer-to-peer) Parameter Group Number."""
-    return ((pgn >> 8) & 0xFF) < 240
+    return ((pgn >> 8) & 0xFF) <= J1939_PDU1_MAX_PF
 
 
 def can_id_to_j1939(can_id):
@@ -218,7 +218,7 @@ def pgn_from_fields(data_page, pdu_format, pdu_specific):
     :param pdu_specific: PDU specific byte (0-255)
     :returns: 18-bit PGN value
     """
-    if pdu_format < 240:
+    if pdu_format <= J1939_PDU1_MAX_PF:
         # PDU1: PS is destination address – not included in PGN
         return (data_page << 16) | (pdu_format << 8)
     else:
@@ -234,7 +234,7 @@ def dst_from_fields(pdu_format, pdu_specific):
     :param pdu_specific: PDU specific byte (0-255)
     :returns: destination address (0x00-0xFF), or ``J1939_NO_ADDR`` for PDU2
     """
-    if pdu_format < 240:
+    if pdu_format <= J1939_PDU1_MAX_PF:
         return pdu_specific
     return J1939_NO_ADDR
 

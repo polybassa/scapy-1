@@ -109,6 +109,117 @@ assert dst == 0x42
 dst = dst_from_fields(0xFE, 0xCA)
 assert dst == J1939_NO_ADDR  # 0xFF
 
+= dst_from_fields – PDU1/PDU2 boundary: PF=0xEF (239) is still PDU1
+# PF=0xEF is the last PDU1 value (< 240); pdu_specific is the destination address
+dst = dst_from_fields(0xEF, 0x42)
+assert dst == 0x42, "PF=0xEF (239) must be PDU1 – PS is destination address"
+
+= dst_from_fields – PDU1/PDU2 boundary: PF=0xF0 (240) is the first PDU2 value
+# PF=0xF0 is the first PDU2 value (>= 240); no peer-to-peer destination
+dst = dst_from_fields(0xF0, 0x04)
+assert dst == J1939_NO_ADDR, "PF=0xF0 (240) must be PDU2 – broadcast only"
+
+
+############
+############
++ j1939_to_can_id / can_id_to_j1939 boundary values
+# Inspired by TruckDevil test_j1939_fields_to_can_id_param
+
+= j1939_to_can_id – all-zeros produces CAN ID 0
+can_id = j1939_to_can_id(0, 0, 0, 0, 0, 0)
+assert can_id == 0, "All-zero fields must produce CAN ID 0"
+
+= j1939_to_can_id – all-max produces 29-bit all-ones (0x1FFFFFFF)
+can_id = j1939_to_can_id(7, 1, 1, 0xFF, 0xFF, 0xFF)
+assert can_id == 0x1FFFFFFF, "Max fields must produce 0x1FFFFFFF"
+
+= j1939_to_can_id – TP.CM frame (priority=3, PF=0xEC, PS=0x00, SA=0x0B → 0x0CEC000B)
+# Inspired by TruckDevil: j1939_fields_to_can_id(3, 0, 0, 0xEC, 0x00, 0x0B) == 0x0CEC000B
+can_id = j1939_to_can_id(3, 0, 0, 0xEC, 0x00, 0x0B)
+assert can_id == 0x0CEC000B, "TP.CM PDU1 frame CAN ID mismatch: got 0x%08X" % can_id
+fields = can_id_to_j1939(can_id)
+assert fields['priority'] == 3
+assert fields['pdu_format'] == 0xEC
+assert fields['pdu_specific'] == 0x00
+assert fields['src'] == 0x0B
+
+= j1939_to_can_id – Request PGN (PGN 0xEA00, SA=0xFF → 0x18EA00FF)
+# Standard J1939 Request frame; sender is SA=0xFF, destination is encoded in PS=0x00
+# 0x18EA00FF: priority=6, r=0, dp=0, PF=0xEA, PS=0x00, SA=0xFF
+can_id = j1939_to_can_id(6, 0, 0, 0xEA, 0x00, 0xFF)
+assert can_id == 0x18EA00FF & 0x1FFFFFFF
+fields = can_id_to_j1939(can_id)
+assert fields['priority'] == 6
+assert fields['pdu_format'] == 0xEA
+assert fields['pdu_specific'] == 0x00
+assert fields['src'] == 0xFF
+
+
+############
+############
++ pgn_from_fields additional coverage
+# Inspired by TruckDevil test_j1939_message_pgn_destination_specific_vs_broadcast
+
+= pgn_from_fields – PDU2 with group extension exactly at 0xF0 (TruckDevil: 0x18FEF000 → 0xFEF0)
+# CAN ID 0x18FEF000: priority=6, r=0, dp=0, PF=0xFE (254), PS=0xF0, SA=0x00
+# PF >= 240 → PDU2 → PGN includes PS: (0 << 16) | (0xFE << 8) | 0xF0 = 0xFEF0
+pgn = pgn_from_fields(0, 0xFE, 0xF0)
+assert pgn == 0xFEF0, "PDU2 PGN must include group-extension PS; got 0x%05X" % pgn
+
+= pgn_from_fields – PDU1 PGN masks out destination address (TruckDevil: 0x00EC0B00 → 0xEC00)
+# CAN ID 0x00EC0B00: priority=0, r=0, dp=0, PF=0xEC (236), PS=0x0B, SA=0x00
+# PF < 240 → PDU1 → PS is destination address, not part of PGN
+pgn = pgn_from_fields(0, 0xEC, 0x0B)
+assert pgn == 0xEC00, "PDU1 PGN must not include destination address; got 0x%05X" % pgn
+
+= pgn_from_fields – EEC1 (Electronic Engine Controller 1, PGN 61444 = 0xF004)
+# J1939 PGN 61444 (0xF004): dp=0, PF=0xF0, PS=0x04 – broadcast
+pgn = pgn_from_fields(0, 0xF0, 0x04)
+assert pgn == 0xF004, "EEC1 PGN should be 0xF004; got 0x%05X" % pgn
+
+
+############
+############
++ J1939_CAN with well-known realistic CAN IDs
+# Inspired by TruckDevil test_j1939_message_creation_and_properties
+
+= J1939_CAN – Request PGN frame (CAN ID 0x18EA00FF)
+# CAN ID 0x18EA00FF: priority=6, r=0, dp=0, PF=0xEA, PS=0x00, SA=0xFF
+raw_req = bytes.fromhex('98EA00FF08000000AABBCCDDEEFF0011')
+p_req = J1939_CAN(raw_req)
+assert p_req.priority == 6
+assert p_req.pdu_format == 0xEA
+assert p_req.pdu_specific == 0x00
+assert p_req.src == 0xFF
+assert p_req.pgn == 0xEA00           # PDU1: PS is destination, not in PGN
+assert p_req.dst == 0x00             # destination address is PS=0x00
+
+= J1939_CAN – EEC1 Engine Speed frame (CAN ID 0x18F00400, PGN 0xF004)
+# CAN ID 0x18F00400: priority=6, r=0, dp=0, PF=0xF0, PS=0x04, SA=0x00
+# Typical engine controller broadcast; SA=0x00 = Engine #1
+raw_eec1 = bytes.fromhex('98F0040008000000F87D7D000000F07D')
+p_eec1 = J1939_CAN(raw_eec1)
+assert p_eec1.priority == 6
+assert p_eec1.pdu_format == 0xF0
+assert p_eec1.pdu_specific == 0x04
+assert p_eec1.src == 0x00
+assert p_eec1.pgn == 0xF004          # PDU2: PGN includes group-extension PS
+assert p_eec1.dst == J1939_NO_ADDR   # broadcast
+
+= J1939_CAN – TP.CM PDU1 frame (CAN ID 0x0CEC000B, priority=3)
+# priority=3, r=0, dp=0, PF=0xEC (236), PS=0x00, SA=0x0B
+# 32-bit header word (big-endian) = flags[3]+priority[3]+r[1]+dp[1]+PF[8]+PS[8]+SA[8]
+# = 0b011 (flags=extended) | 011 (priority=3) | 0 (r) | 0 (dp) | 0xEC | 0x00 | 0x0B
+# → 0x6CEC000B
+raw_tp_cm = bytes.fromhex('6CEC000B08000000' + '20100000FFFF0300')
+p_tp_cm = J1939_CAN(raw_tp_cm)
+assert p_tp_cm.priority == 3, "priority=%d" % p_tp_cm.priority
+assert p_tp_cm.pdu_format == 0xEC
+assert p_tp_cm.pdu_specific == 0x00
+assert p_tp_cm.src == 0x0B
+assert p_tp_cm.pgn == 0xEC00         # PDU1: PS=0x00 is destination, not in PGN
+assert p_tp_cm.dst == 0x00
+
 
 ############
 ############
@@ -617,4 +728,4 @@ assert rx.pgn == tx_pgn, "PGN mismatch: 0x%X != 0x%X" % (rx.pgn, tx_pgn)
 assert rx.src == 0x00, "SA mismatch: %d" % rx.src
 
 = Teardown
-os.system("sudo ip link del vcan0")
+pass  # vcan0 is managed by the test infrastructure; do not delete it here

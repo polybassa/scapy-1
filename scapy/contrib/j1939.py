@@ -51,7 +51,6 @@ from scapy.error import Scapy_Exception, log_runtime, warning
 from scapy.fields import (
     BitField,
     ByteField,
-    Field,
     FieldLenField,
     FlagsField,
     LEShortField,
@@ -60,6 +59,7 @@ from scapy.fields import (
     StrFixedLenField,
     StrLenField,
     ThreeBytesField,
+    XLE3BytesField,
 )
 from scapy.layers.can import CAN
 from scapy.packet import Packet
@@ -112,36 +112,6 @@ SOL_CAN_J1939 = SOL_CAN_BASE + socket.CAN_J1939  # 107
 
 # Default configuration key
 conf.contribs['J1939'] = {'channel': 'can0'}
-
-
-# ---------------------------------------------------------------------------
-# Custom field: little-endian 3-byte PGN storage (J1939 wire format)
-# ---------------------------------------------------------------------------
-
-class J1939LEPGNField(Field):  # type: ignore[type-arg]
-    """Little-endian 3-byte field for J1939 PGN values in TP frames.
-
-    J1939-21 encodes PGN values in TP Connection Management frames as three
-    bytes in little-endian order (LSB first).
-    """
-
-    def __init__(self, name, default):
-        # type: (str, int) -> None
-        # Use "<I" as the conceptual format; actual I/O is 3 bytes
-        Field.__init__(self, name, default, "<I")
-
-    def addfield(self, pkt, s, val):
-        # type: (Any, bytes, int) -> bytes
-        val = self.i2m(pkt, val)
-        return s + struct.pack("<I", val)[:3]
-
-    def getfield(self, pkt, s):
-        # type: (Any, bytes) -> Tuple[bytes, int]
-        return s[3:], self.m2i(pkt, struct.unpack("<I", s[:3] + b'\x00')[0])
-
-    def i2repr(self, pkt, val):
-        # type: (Any, int) -> str
-        return "0x%05X" % (val or 0)
 
 # Common source address names (informational)
 J1939_ADDR_NAMES = {
@@ -440,7 +410,7 @@ class J1939_TP_CM_RTS(Packet):
         LEShortField('total_size', 0),                # total message size (bytes)
         ByteField('num_packets', 0),                  # total number of TP.DT packets
         ByteField('max_packets', 0xFF),               # max packets per CTS (0xFF = no limit)
-        J1939LEPGNField('pgn', 0),                    # PGN of the message being transferred
+        XLE3BytesField('pgn', 0),                    # PGN of the message being transferred
     ]
 
 
@@ -456,7 +426,7 @@ class J1939_TP_CM_CTS(Packet):
         ByteField('num_packets', 0),                  # number of packets to send now
         ByteField('next_packet', 1),                  # next expected sequence number
         ShortField('reserved', 0xFFFF),
-        J1939LEPGNField('pgn', 0),                    # PGN of the message
+        XLE3BytesField('pgn', 0),                    # PGN of the message
     ]
 
 
@@ -471,7 +441,7 @@ class J1939_TP_CM_ACK(Packet):
         LEShortField('total_size', 0),                # total message size
         ByteField('num_packets', 0),                  # total TP.DT packets received
         ByteField('reserved', 0xFF),
-        J1939LEPGNField('pgn', 0),                    # PGN of the message
+        XLE3BytesField('pgn', 0),                    # PGN of the message
     ]
 
 
@@ -486,7 +456,7 @@ class J1939_TP_CM_BAM(Packet):
         LEShortField('total_size', 0),                # total message size (bytes)
         ByteField('num_packets', 0),                  # total number of TP.DT packets
         ByteField('reserved', 0xFF),
-        J1939LEPGNField('pgn', 0),                    # PGN of the message
+        XLE3BytesField('pgn', 0),                    # PGN of the message
     ]
 
 
@@ -498,7 +468,7 @@ class J1939_TP_CM_ABORT(Packet):
         ByteField('reason', 0),                       # abort reason
         ShortField('reserved', 0xFFFF),
         ByteField('reserved2', 0xFF),
-        J1939LEPGNField('pgn', 0),                    # PGN of the aborted message
+        XLE3BytesField('pgn', 0),                    # PGN of the aborted message
     ]
 
 

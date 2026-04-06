@@ -34,7 +34,6 @@ from scapy.config import conf
 from scapy.contrib.isotp import ISOTP
 from scapy.contrib.automotive.utils import (
     _make_service_decorator,
-    _make_single_layer_mode,
 )
 from scapy.compat import orb
 
@@ -52,7 +51,7 @@ except KeyError:
     #                    "ResponsePending' as answer of a request. \n"
     #                    "The default value is False.")
     conf.contribs['GMLAN'] = {'treat-response-pending-as-answer': False,
-                              'single_layer_GMLAN': False}
+                              'single_layer_mode': False}
 
 conf.contribs['GMLAN']['GMLAN_ECU_AddressingScheme'] = None
 
@@ -142,14 +141,13 @@ class GMLAN(ISOTP):
     def dispatch_hook(cls, _pkt=b"", *args, **kwargs):
         # type: (...) -> type
         """Dispatch to the correct GMLAN service class in single layer mode."""
-        if conf.contribs['GMLAN'].get('single_layer_GMLAN', False) and len(_pkt) >= 1:
+        if conf.contribs['GMLAN'].get('single_layer_mode', False) and len(_pkt) >= 1:
             service = orb(_pkt[0])
             return cls._service_cls.get(service, cls)
         return cls
 
 
-_gmlan_service = _make_service_decorator(GMLAN, 'GMLAN', 'single_layer_GMLAN')
-gmlan_single_layer_mode = _make_single_layer_mode(GMLAN, 'GMLAN', 'single_layer_GMLAN')
+_gmlan_service = _make_service_decorator(GMLAN, 'GMLAN')
 
 
 # ########################IDO###################################

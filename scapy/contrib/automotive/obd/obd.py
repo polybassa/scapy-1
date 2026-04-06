@@ -20,7 +20,6 @@ from scapy.fields import XByteEnumField
 from scapy.contrib.isotp import ISOTP
 from scapy.contrib.automotive.utils import (
     _make_service_decorator,
-    _make_single_layer_mode,
 )
 from scapy.compat import orb
 
@@ -34,7 +33,7 @@ except KeyError:
     #                     "ResponsePending' as answer of a request. \n"
     #                     "The default value is False.")
     conf.contribs['OBD'] = {'treat-response-pending-as-answer': False,
-                            'single_layer_OBD': False}
+                            'single_layer_mode': False}
 
 
 class OBD(ISOTP):
@@ -91,14 +90,13 @@ class OBD(ISOTP):
     def dispatch_hook(cls, _pkt=b"", *args, **kwargs):
         # type: (...) -> type
         """Dispatch to the correct OBD service class in single layer mode."""
-        if conf.contribs['OBD'].get('single_layer_OBD', False) and len(_pkt) >= 1:
+        if conf.contribs['OBD'].get('single_layer_mode', False) and len(_pkt) >= 1:
             service = orb(_pkt[0])
             return cls._service_cls.get(service, cls)
         return cls
 
 
-_obd_service = _make_service_decorator(OBD, 'OBD', 'single_layer_OBD')
-obd_single_layer_mode = _make_single_layer_mode(OBD, 'OBD', 'single_layer_OBD')
+_obd_service = _make_service_decorator(OBD, 'OBD')
 
 # Service Bindings — applied via the generic decorator (functional form,
 # since the service classes are defined in a separate module)

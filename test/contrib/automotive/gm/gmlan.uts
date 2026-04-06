@@ -615,13 +615,9 @@ assert log[1] == "0x80"
 assert log[0] == "DeviceControlPositiveResponse"
 + Single layer GMLAN mode
 
-= Single layer mode: load helper
-
-from scapy.contrib.automotive.gm.gmlan import gmlan_single_layer_mode
-
 = Single layer mode: enable and basic dissect
 
-gmlan_single_layer_mode(True)
+conf.contribs['GMLAN']['single_layer_mode'] = True
 
 ido = GMLAN(b'\x10\x02')
 assert isinstance(ido, GMLAN_IDO), "Expected GMLAN_IDO, got %s" % type(ido)
@@ -673,7 +669,7 @@ assert isinstance(unknown, GMLAN), "Expected GMLAN fallback, got %s" % type(unkn
 
 = Single layer mode: switch back to multi-layer mode
 
-gmlan_single_layer_mode(False)
+conf.contribs['GMLAN']['single_layer_mode'] = False
 
 ido4 = GMLAN(b'\x10\x02')
 assert ido4.__class__ == GMLAN
@@ -682,5 +678,5 @@ assert ido4[GMLAN_IDO].subfunction == 0x02
 
 = Single layer mode: cleanup
 
-gmlan_single_layer_mode(False)
-assert not conf.contribs['GMLAN']['single_layer_GMLAN']
+conf.contribs['GMLAN']['single_layer_mode'] = False
+assert not conf.contribs['GMLAN']['single_layer_mode']

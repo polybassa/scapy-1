@@ -510,13 +510,9 @@ assert nrc.negativeResponseCode == 0x33
 
 + Single layer KWP mode
 
-= Single layer mode: load helper
-
-from scapy.contrib.automotive.kwp import kwp_single_layer_mode
-
 = Single layer mode: enable and basic dissect
 
-kwp_single_layer_mode(True)
+conf.contribs['KWP']['single_layer_mode'] = True
 
 sds = KWP(b'\x10\x01')
 assert isinstance(sds, KWP_SDS), "Expected KWP_SDS, got %s" % type(sds)
@@ -569,7 +565,7 @@ assert isinstance(unknown, KWP), "Expected KWP fallback, got %s" % type(unknown)
 
 = Single layer mode: switch back to multi-layer mode
 
-kwp_single_layer_mode(False)
+conf.contribs['KWP']['single_layer_mode'] = False
 
 sds5 = KWP(b'\x10\x01')
 assert sds5.__class__ == KWP
@@ -578,13 +574,13 @@ assert sds5[KWP_SDS].diagnosticSession == 0x01
 
 = Single layer mode: idempotency
 
-kwp_single_layer_mode(True)
-kwp_single_layer_mode(True)
+conf.contribs['KWP']['single_layer_mode'] = True
+conf.contribs['KWP']['single_layer_mode'] = True
 sds6 = KWP(b'\x10\x01')
 assert isinstance(sds6, KWP_SDS)
 
-kwp_single_layer_mode(False)
-kwp_single_layer_mode(False)
+conf.contribs['KWP']['single_layer_mode'] = False
+conf.contribs['KWP']['single_layer_mode'] = False
 sds7 = KWP(b'\x10\x01')
 assert sds7.__class__ == KWP
 count = sum(1 for fval, cls in KWP.payload_guess
@@ -593,5 +589,5 @@ assert count == 1, "Expected 1 binding for KWP_SDS, got %d" % count
 
 = Single layer mode: cleanup
 
-kwp_single_layer_mode(False)
-assert not conf.contribs['KWP']['single_layer_KWP']
+conf.contribs['KWP']['single_layer_mode'] = False
+assert not conf.contribs['KWP']['single_layer_mode']

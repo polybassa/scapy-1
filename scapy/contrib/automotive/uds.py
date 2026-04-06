@@ -26,7 +26,6 @@ from scapy.utils import PeriodicSenderThread
 from scapy.contrib.isotp import ISOTP
 from scapy.contrib.automotive.utils import (
     _make_service_decorator,
-    _make_single_layer_mode,
 )
 
 # Typing imports
@@ -45,7 +44,7 @@ except KeyError:
     #                 "ResponsePending' as answer of a request. \n"
     #                 "The default value is False.")
     conf.contribs['UDS'] = {'treat-response-pending-as-answer': False,
-                            'single_layer_UDS': False}
+                            'single_layer_mode': False}
 
 conf.debug_dissector = True
 
@@ -138,42 +137,13 @@ class UDS(ISOTP):
     def dispatch_hook(cls, _pkt=b"", *args, **kwargs):
         # type: (...) -> type
         """Dispatch to the correct UDS service class in single layer mode."""
-        if conf.contribs['UDS'].get('single_layer_UDS', False) and len(_pkt) >= 1:
+        if conf.contribs['UDS'].get('single_layer_mode', False) and len(_pkt) >= 1:
             service = orb(_pkt[0])
             return cls._service_cls.get(service, cls)
         return cls
 
 
-_uds_service = _make_service_decorator(UDS, 'UDS', 'single_layer_UDS')
-
-
-def uds_single_layer_mode(enable=True):
-    # type: (bool) -> None
-    """Enable or disable single layer UDS mode.
-
-    In single layer mode, each UDS service is a standalone packet with a
-    conditional 'service' field, rather than being nested inside a UDS()
-    layer. When dissecting raw bytes, UDS() will directly return the
-    appropriate subpacket class (e.g., UDS_RDBI) instead of UDS / UDS_RDBI.
-
-    This function can be called after the module is loaded to switch modes.
-
-    Args:
-        enable: If True, enable single layer mode. If False, revert to
-                multi-layer mode (default).
-
-    Example::
-
-        >>> conf.contribs['UDS'] = {'single_layer_UDS': True}
-        >>> load_contrib('automotive.uds')
-        # OR after loading:
-        >>> from scapy.contrib.automotive.uds import uds_single_layer_mode
-        >>> uds_single_layer_mode(True)
-        >>> UDS(b'\\x10\\x01')
-        <UDS_DSC  service=DiagnosticSessionControl
-                  diagnosticSessionType=defaultSession |>
-    """
-    _make_single_layer_mode(UDS, 'UDS', 'single_layer_UDS')(enable)
+_uds_service = _make_service_decorator(UDS, 'UDS')
 
 
 # ########################DSC###################################

@@ -1441,13 +1441,9 @@ assert nrc.negativeResponseCode == 0x33
 
 + Single layer UDS mode
 
-= Single layer mode: load helper
-
-from scapy.contrib.automotive.uds import uds_single_layer_mode
-
 = Single layer mode: enable and basic dissect
 
-uds_single_layer_mode(True)
+conf.contribs['UDS']['single_layer_mode'] = True
 
 dsc = UDS(b'\x10\x01')
 assert isinstance(dsc, UDS_DSC), "Expected UDS_DSC, got %s" % type(dsc)
@@ -1524,7 +1520,7 @@ assert isinstance(unknown, UDS), "Expected UDS fallback, got %s" % type(unknown)
 
 = Single layer mode: switch back to multi-layer mode
 
-uds_single_layer_mode(False)
+conf.contribs['UDS']['single_layer_mode'] = False
 
 dsc5 = UDS(b'\x10\x01')
 assert dsc5.__class__ == UDS
@@ -1536,9 +1532,9 @@ assert dscpr5.__class__ == UDS
 assert dscpr5.service == 0x50
 assert dscpr5[UDS_DSCPR].diagnosticSessionType == 0x01
 
-= Single layer mode: enable via conf directly (without uds_single_layer_mode)
+= Single layer mode: enable via conf directly 
 
-conf.contribs['UDS']['single_layer_UDS'] = True
+conf.contribs['UDS']['single_layer_mode'] = True
 
 er6 = UDS(b'\x11\x01')
 assert isinstance(er6, UDS_ER), "Expected UDS_ER, got %s" % type(er6)
@@ -1547,5 +1543,5 @@ assert er6.resetType == 0x01
 
 = Single layer mode: final cleanup - restore default multi-layer mode
 
-uds_single_layer_mode(False)
-assert not conf.contribs['UDS']['single_layer_UDS']
+conf.contribs['UDS']['single_layer_mode'] = False
+assert not conf.contribs['UDS']['single_layer_mode']

@@ -1034,13 +1034,9 @@ assert p.answers(r)
 
 + Single layer OBD mode
 
-= Single layer mode: load helper
-
-from scapy.contrib.automotive.obd.obd import obd_single_layer_mode
-
 = Single layer mode: enable and basic dissect
 
-obd_single_layer_mode(True)
+conf.contribs['OBD']['single_layer_mode'] = True
 
 s01 = OBD(b'\x01\x0c')
 assert isinstance(s01, OBD_S01), "Expected OBD_S01, got %s" % type(s01)
@@ -1085,7 +1081,7 @@ assert isinstance(unknown, OBD), "Expected OBD fallback, got %s" % type(unknown)
 
 = Single layer mode: switch back to multi-layer mode
 
-obd_single_layer_mode(False)
+conf.contribs['OBD']['single_layer_mode'] = False
 
 s01_3 = OBD(b'\x01\x0c')
 assert s01_3.__class__ == OBD
@@ -1094,5 +1090,5 @@ assert isinstance(s01_3[OBD_S01], OBD_S01)
 
 = Single layer mode: cleanup
 
-obd_single_layer_mode(False)
-assert not conf.contribs['OBD']['single_layer_OBD']
+conf.contribs['OBD']['single_layer_mode'] = False
+assert not conf.contribs['OBD']['single_layer_mode']

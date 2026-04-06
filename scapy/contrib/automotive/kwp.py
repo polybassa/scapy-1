@@ -29,7 +29,6 @@ from scapy.plist import _PacketIterable  # noqa: F401
 from scapy.contrib.isotp import ISOTP
 from scapy.contrib.automotive.utils import (
     _make_service_decorator,
-    _make_single_layer_mode,
 )
 from scapy.compat import orb
 
@@ -49,7 +48,7 @@ except KeyError:
                      "ResponsePending' as answer of a request. \n"
                      "The default value is False.")
     conf.contribs['KWP'] = {'treat-response-pending-as-answer': False,
-                            'single_layer_KWP': False}
+                            'single_layer_mode': False}
 
 
 class KWP(ISOTP):
@@ -141,14 +140,13 @@ class KWP(ISOTP):
     def dispatch_hook(cls, _pkt=b"", *args, **kwargs):
         # type: (...) -> type
         """Dispatch to the correct KWP service class in single layer mode."""
-        if conf.contribs['KWP'].get('single_layer_KWP', False) and len(_pkt) >= 1:
+        if conf.contribs['KWP'].get('single_layer_mode', False) and len(_pkt) >= 1:
             service = orb(_pkt[0])
             return cls._service_cls.get(service, cls)
         return cls
 
 
-_kwp_service = _make_service_decorator(KWP, 'KWP', 'single_layer_KWP')
-kwp_single_layer_mode = _make_single_layer_mode(KWP, 'KWP', 'single_layer_KWP')
+_kwp_service = _make_service_decorator(KWP, 'KWP')
 
 
 # ########################SDS###################################

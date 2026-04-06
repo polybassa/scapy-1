@@ -32,9 +32,6 @@ from scapy.fields import (
 from scapy.packet import Packet, bind_layers, NoPayload
 from scapy.config import conf
 from scapy.contrib.isotp import ISOTP
-from scapy.contrib.automotive.utils import (
-    _make_service_decorator,
-)
 from scapy.compat import orb
 
 """
@@ -147,11 +144,7 @@ class GMLAN(ISOTP):
         return cls
 
 
-_gmlan_service = _make_service_decorator(GMLAN, 'GMLAN')
-
-
 # ########################IDO###################################
-@_gmlan_service(0x10)
 class GMLAN_IDO(Packet):
     subfunctions = {
         0x02: 'disableAllDTCs',
@@ -159,8 +152,15 @@ class GMLAN_IDO(Packet):
         0x04: 'wakeUpLinks'}
     name = 'InitiateDiagnosticOperation'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x10, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         ByteEnumField('subfunction', 0, subfunctions)
     ]
+
+
+bind_layers(GMLAN, GMLAN_IDO, service=0x10)
+GMLAN._service_cls[0x10] = GMLAN_IDO
 
 
 # ########################RFRD###################################
@@ -177,29 +177,41 @@ class GMLAN_DTC(Packet):
         return "", p
 
 
-@_gmlan_service(0x12)
 class GMLAN_RFRD(Packet):
     subfunctions = {
         0x01: 'readFailureRecordIdentifiers',
         0x02: 'readFailureRecordParameters'}
     name = 'ReadFailureRecordData'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x12, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         ByteEnumField('subfunction', 0, subfunctions),
         ConditionalField(PacketField("dtc", None, GMLAN_DTC),
                          lambda pkt: pkt.subfunction == 0x02)
     ]
 
 
-@_gmlan_service(0x52)
+bind_layers(GMLAN, GMLAN_RFRD, service=0x12)
+GMLAN._service_cls[0x12] = GMLAN_RFRD
+
+
 class GMLAN_RFRDPR(Packet):
     name = 'ReadFailureRecordDataPositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x52, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         ByteEnumField('subfunction', 0, GMLAN_RFRD.subfunctions)
     ]
 
     def answers(self, other):
         return isinstance(other, GMLAN_RFRD) and \
             other.subfunction == self.subfunction
+
+
+bind_layers(GMLAN, GMLAN_RFRDPR, service=0x52)
+GMLAN._service_cls[0x52] = GMLAN_RFRDPR
 
 
 class GMLAN_RFRDPR_RFRI(Packet):
@@ -229,7 +241,6 @@ bind_layers(GMLAN_RFRDPR, GMLAN_RFRDPR_RFRP, subfunction=0x02)
 
 
 # ########################RDBI###################################
-@_gmlan_service(0x1A)
 class GMLAN_RDBI(Packet):
     dataIdentifiers = ObservableDict({
         0x90: "$90: VehicleIdentificationNumber (VIN)",
@@ -318,14 +329,23 @@ class GMLAN_RDBI(Packet):
 
     name = 'ReadDataByIdentifier'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x1a, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteEnumField('dataIdentifier', 0, dataIdentifiers)
     ]
 
 
-@_gmlan_service(0x5A)
+bind_layers(GMLAN, GMLAN_RDBI, service=0x1a)
+GMLAN._service_cls[0x1a] = GMLAN_RDBI
+
+
 class GMLAN_RDBIPR(Packet):
     name = 'ReadDataByIdentifierPositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x5a, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteEnumField('dataIdentifier', 0, GMLAN_RDBI.dataIdentifiers),
     ]
 
@@ -334,8 +354,11 @@ class GMLAN_RDBIPR(Packet):
             other.dataIdentifier == self.dataIdentifier
 
 
+bind_layers(GMLAN, GMLAN_RDBIPR, service=0x5a)
+GMLAN._service_cls[0x5a] = GMLAN_RDBIPR
+
+
 # ########################RDBI###################################
-@_gmlan_service(0x22)
 class GMLAN_RDBPI(Packet):
     dataIdentifiers = ObservableDict({
         0x0005: "OBD_EngineCoolantTemperature",
@@ -344,16 +367,25 @@ class GMLAN_RDBPI(Packet):
     })
     name = 'ReadDataByParameterIdentifier'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x22, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         FieldListField("identifiers", [],
                        XShortEnumField('parameterIdentifier', 0,
                                        dataIdentifiers))
     ]
 
 
-@_gmlan_service(0x62)
+bind_layers(GMLAN, GMLAN_RDBPI, service=0x22)
+GMLAN._service_cls[0x22] = GMLAN_RDBPI
+
+
 class GMLAN_RDBPIPR(Packet):
     name = 'ReadDataByParameterIdentifierPositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x62, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XShortEnumField('parameterIdentifier', 0, GMLAN_RDBPI.dataIdentifiers),
     ]
 
@@ -362,8 +394,11 @@ class GMLAN_RDBPIPR(Packet):
             self.parameterIdentifier in other.identifiers
 
 
+bind_layers(GMLAN, GMLAN_RDBPIPR, service=0x62)
+GMLAN._service_cls[0x62] = GMLAN_RDBPIPR
+
+
 # ########################RDBPKTI###################################
-@_gmlan_service(0xAA)
 class GMLAN_RDBPKTI(Packet):
     name = 'ReadDataByPacketIdentifier'
     subfunctions = {
@@ -375,6 +410,9 @@ class GMLAN_RDBPKTI(Packet):
     }
 
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0xaa, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteEnumField('subfunction', 0, subfunctions),
         ConditionalField(FieldListField('request_DPIDs', [],
                                         XByteField("", 0)),
@@ -382,11 +420,17 @@ class GMLAN_RDBPKTI(Packet):
     ]
 
 
+bind_layers(GMLAN, GMLAN_RDBPKTI, service=0xaa)
+GMLAN._service_cls[0xaa] = GMLAN_RDBPKTI
+
+
 # ########################RMBA###################################
-@_gmlan_service(0x23)
 class GMLAN_RMBA(Packet):
     name = 'ReadMemoryByAddress'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x23, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         MultipleTypeField(
             [
                 (XShortField('memoryAddress', 0),
@@ -401,10 +445,16 @@ class GMLAN_RMBA(Packet):
     ]
 
 
-@_gmlan_service(0x63)
+bind_layers(GMLAN, GMLAN_RMBA, service=0x23)
+GMLAN._service_cls[0x23] = GMLAN_RMBA
+
+
 class GMLAN_RMBAPR(Packet):
     name = 'ReadMemoryByAddressPositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x63, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         MultipleTypeField(
             [
                 (XShortField('memoryAddress', 0),
@@ -423,8 +473,11 @@ class GMLAN_RMBAPR(Packet):
             other.memoryAddress == self.memoryAddress
 
 
+bind_layers(GMLAN, GMLAN_RMBAPR, service=0x63)
+GMLAN._service_cls[0x63] = GMLAN_RMBAPR
+
+
 # ########################SA###################################
-@_gmlan_service(0x27)
 class GMLAN_SA(Packet):
     subfunctions = {
         0: 'ReservedByDocument',
@@ -443,16 +496,25 @@ class GMLAN_SA(Packet):
 
     name = 'SecurityAccess'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x27, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         ByteEnumField('subfunction', 0, subfunctions),
         ConditionalField(XShortField('securityKey', 0),
                          lambda pkt: pkt.subfunction % 2 == 0)
     ]
 
 
-@_gmlan_service(0x67)
+bind_layers(GMLAN, GMLAN_SA, service=0x27)
+GMLAN._service_cls[0x27] = GMLAN_SA
+
+
 class GMLAN_SAPR(Packet):
     name = 'SecurityAccessPositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x67, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         ByteEnumField('subfunction', 0, GMLAN_SA.subfunctions),
         ConditionalField(XShortField('securitySeed', 0),
                          lambda pkt: pkt.subfunction % 2 == 1),
@@ -463,20 +525,32 @@ class GMLAN_SAPR(Packet):
             and other.subfunction == self.subfunction
 
 
+bind_layers(GMLAN, GMLAN_SAPR, service=0x67)
+GMLAN._service_cls[0x67] = GMLAN_SAPR
+
+
 # ########################DDM###################################
-@_gmlan_service(0x2C)
 class GMLAN_DDM(Packet):
     name = 'DynamicallyDefineMessage'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x2c, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteField('DPIDIdentifier', 0),
         StrField('PIDData', b'\x00\x00')
     ]
 
 
-@_gmlan_service(0x6C)
+bind_layers(GMLAN, GMLAN_DDM, service=0x2c)
+GMLAN._service_cls[0x2c] = GMLAN_DDM
+
+
 class GMLAN_DDMPR(Packet):
     name = 'DynamicallyDefineMessagePositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x6c, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteField('DPIDIdentifier', 0)
     ]
 
@@ -485,11 +559,17 @@ class GMLAN_DDMPR(Packet):
             and other.DPIDIdentifier == self.DPIDIdentifier
 
 
+bind_layers(GMLAN, GMLAN_DDMPR, service=0x6c)
+GMLAN._service_cls[0x6c] = GMLAN_DDMPR
+
+
 # ########################DPBA###################################
-@_gmlan_service(0x2D)
 class GMLAN_DPBA(Packet):
     name = 'DefinePIDByAddress'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x2d, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XShortField('parameterIdentifier', 0),
         MultipleTypeField(
             [
@@ -505,10 +585,16 @@ class GMLAN_DPBA(Packet):
     ]
 
 
-@_gmlan_service(0x6D)
+bind_layers(GMLAN, GMLAN_DPBA, service=0x2d)
+GMLAN._service_cls[0x2d] = GMLAN_DPBA
+
+
 class GMLAN_DPBAPR(Packet):
     name = 'DefinePIDByAddressPositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x6d, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XShortField('parameterIdentifier', 0),
     ]
 
@@ -517,11 +603,17 @@ class GMLAN_DPBAPR(Packet):
             and other.parameterIdentifier == self.parameterIdentifier
 
 
+bind_layers(GMLAN, GMLAN_DPBAPR, service=0x6d)
+GMLAN._service_cls[0x6d] = GMLAN_DPBAPR
+
+
 # ########################RD###################################
-@_gmlan_service(0x34)
 class GMLAN_RD(Packet):
     name = 'RequestDownload'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x34, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteField('dataFormatIdentifier', 0),
         MultipleTypeField(
             [
@@ -536,8 +628,11 @@ class GMLAN_RD(Packet):
     ]
 
 
+bind_layers(GMLAN, GMLAN_RD, service=0x34)
+GMLAN._service_cls[0x34] = GMLAN_RD
+
+
 # ########################TD###################################
-@_gmlan_service(0x36)
 class GMLAN_TD(Packet):
     subfunctions = {
         0x00: "download",
@@ -545,6 +640,9 @@ class GMLAN_TD(Packet):
     }
     name = 'TransferData'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x36, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         ByteEnumField('subfunction', 0, subfunctions),
         MultipleTypeField(
             [
@@ -560,20 +658,32 @@ class GMLAN_TD(Packet):
     ]
 
 
+bind_layers(GMLAN, GMLAN_TD, service=0x36)
+GMLAN._service_cls[0x36] = GMLAN_TD
+
+
 # ########################WDBI###################################
-@_gmlan_service(0x3B)
 class GMLAN_WDBI(Packet):
     name = 'WriteDataByIdentifier'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x3b, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteEnumField('dataIdentifier', 0, GMLAN_RDBI.dataIdentifiers),
         StrField("dataRecord", b'')
     ]
 
 
-@_gmlan_service(0x7B)
+bind_layers(GMLAN, GMLAN_WDBI, service=0x3b)
+GMLAN._service_cls[0x3b] = GMLAN_WDBI
+
+
 class GMLAN_WDBIPR(Packet):
     name = 'WriteDataByIdentifierPositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x7b, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteEnumField('dataIdentifier', 0, GMLAN_RDBI.dataIdentifiers)
     ]
 
@@ -582,8 +692,11 @@ class GMLAN_WDBIPR(Packet):
             and other.dataIdentifier == self.dataIdentifier
 
 
+bind_layers(GMLAN, GMLAN_WDBIPR, service=0x7b)
+GMLAN._service_cls[0x7b] = GMLAN_WDBIPR
+
+
 # ########################RPSPR###################################
-@_gmlan_service(0xE2)
 class GMLAN_RPSPR(Packet):
     programmedStates = {
         0x00: "fully programmed",
@@ -599,12 +712,18 @@ class GMLAN_RPSPR(Packet):
     }
     name = 'ReportProgrammedStatePositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0xe2, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         ByteEnumField('programmedState', 0, programmedStates),
     ]
 
 
+bind_layers(GMLAN, GMLAN_RPSPR, service=0xe2)
+GMLAN._service_cls[0xe2] = GMLAN_RPSPR
+
+
 # ########################PM###################################
-@_gmlan_service(0xA5)
 class GMLAN_PM(Packet):
     subfunctions = {
         0x01: "requestProgrammingMode",
@@ -613,12 +732,18 @@ class GMLAN_PM(Packet):
     }
     name = 'ProgrammingMode'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0xa5, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         ByteEnumField('subfunction', 0, subfunctions),
     ]
 
 
+bind_layers(GMLAN, GMLAN_PM, service=0xa5)
+GMLAN._service_cls[0xa5] = GMLAN_PM
+
+
 # ########################RDI###################################
-@_gmlan_service(0xA9)
 class GMLAN_RDI(Packet):
     subfunctions = {
         0x80: 'readStatusOfDTCByDTCNumber',
@@ -627,8 +752,15 @@ class GMLAN_RDI(Packet):
     }
     name = 'ReadDiagnosticInformation'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0xa9, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         ByteEnumField('subfunction', 0, subfunctions)
     ]
+
+
+bind_layers(GMLAN, GMLAN_RDI, service=0xa9)
+GMLAN._service_cls[0xa9] = GMLAN_RDI
 
 
 class GMLAN_RDI_BN(Packet):
@@ -667,19 +799,27 @@ bind_layers(GMLAN_RDI, GMLAN_RDI_BC, subfunction=0x82)
 
 
 # ########################DC###################################
-@_gmlan_service(0xAE)
 class GMLAN_DC(Packet):
     name = 'DeviceControl'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0xae, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteField('CPIDNumber', 0),
         StrFixedLenField('CPIDControlBytes', b"", 5)
     ]
 
 
-@_gmlan_service(0xEE)
+bind_layers(GMLAN, GMLAN_DC, service=0xae)
+GMLAN._service_cls[0xae] = GMLAN_DC
+
+
 class GMLAN_DCPR(Packet):
     name = 'DeviceControlPositiveResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0xee, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteField('CPIDNumber', 0)
     ]
 
@@ -688,8 +828,11 @@ class GMLAN_DCPR(Packet):
             and other.CPIDNumber == self.CPIDNumber
 
 
+bind_layers(GMLAN, GMLAN_DCPR, service=0xee)
+GMLAN._service_cls[0xee] = GMLAN_DCPR
+
+
 # ########################NRC###################################
-@_gmlan_service(0x7f)
 class GMLAN_NR(Packet):
     negativeResponseCodes = {
         0x11: 'ServiceNotSupported',
@@ -709,6 +852,9 @@ class GMLAN_NR(Packet):
     }
     name = 'NegativeResponse'
     fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', 0x7f, GMLAN.services),
+            lambda pkt: conf.contribs['GMLAN'].get('single_layer_mode', False)),
         XByteEnumField('requestServiceId', 0, GMLAN.services),
         MayEnd(ByteEnumField('returnCode', 0, negativeResponseCodes)),
         # XXX Is this MayEnd correct? Why is the field below also 0xe3 ?
@@ -719,3 +865,7 @@ class GMLAN_NR(Packet):
         return self.requestServiceId == other.service and \
             (self.returnCode != 0x78 or
              conf.contribs['GMLAN']['treat-response-pending-as-answer'])
+
+
+bind_layers(GMLAN, GMLAN_NR, service=0x7f)
+GMLAN._service_cls[0x7f] = GMLAN_NR

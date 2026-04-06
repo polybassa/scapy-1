@@ -14,13 +14,10 @@ from scapy.contrib.automotive.obd.mid.mids import *
 from scapy.contrib.automotive.obd.pid.pids import *
 from scapy.contrib.automotive.obd.tid.tids import *
 from scapy.contrib.automotive.obd.services import *
-from scapy.packet import NoPayload
+from scapy.packet import NoPayload, bind_layers
 from scapy.config import conf
-from scapy.fields import XByteEnumField
+from scapy.fields import ConditionalField, XByteEnumField
 from scapy.contrib.isotp import ISOTP
-from scapy.contrib.automotive.utils import (
-    _make_service_decorator,
-)
 from scapy.compat import orb
 
 try:
@@ -96,28 +93,35 @@ class OBD(ISOTP):
         return cls
 
 
-_obd_service = _make_service_decorator(OBD, 'OBD')
+_OBD_SERVICES = [
+    (0x01, OBD_S01),
+    (0x02, OBD_S02),
+    (0x03, OBD_S03),
+    (0x04, OBD_S04),
+    (0x06, OBD_S06),
+    (0x07, OBD_S07),
+    (0x08, OBD_S08),
+    (0x09, OBD_S09),
+    (0x0A, OBD_S0A),
+    (0x41, OBD_S01_PR),
+    (0x42, OBD_S02_PR),
+    (0x43, OBD_S03_PR),
+    (0x44, OBD_S04_PR),
+    (0x46, OBD_S06_PR),
+    (0x47, OBD_S07_PR),
+    (0x48, OBD_S08_PR),
+    (0x49, OBD_S09_PR),
+    (0x4A, OBD_S0A_PR),
+    (0x7F, OBD_NR),
+]
 
-# Service Bindings — applied via the generic decorator (functional form,
-# since the service classes are defined in a separate module)
+for _sid, _cls in _OBD_SERVICES:
+    _cls.fields_desc = [
+        ConditionalField(
+            XByteEnumField('service', _sid, OBD.services),
+            lambda pkt: conf.contribs['OBD'].get('single_layer_mode', False))
+    ] + list(_cls.fields_desc)
+    bind_layers(OBD, _cls, service=_sid)
+    OBD._service_cls[_sid] = _cls
 
-_obd_service(0x01)(OBD_S01)
-_obd_service(0x02)(OBD_S02)
-_obd_service(0x03)(OBD_S03)
-_obd_service(0x04)(OBD_S04)
-_obd_service(0x06)(OBD_S06)
-_obd_service(0x07)(OBD_S07)
-_obd_service(0x08)(OBD_S08)
-_obd_service(0x09)(OBD_S09)
-_obd_service(0x0A)(OBD_S0A)
-
-_obd_service(0x41)(OBD_S01_PR)
-_obd_service(0x42)(OBD_S02_PR)
-_obd_service(0x43)(OBD_S03_PR)
-_obd_service(0x44)(OBD_S04_PR)
-_obd_service(0x46)(OBD_S06_PR)
-_obd_service(0x47)(OBD_S07_PR)
-_obd_service(0x48)(OBD_S08_PR)
-_obd_service(0x49)(OBD_S09_PR)
-_obd_service(0x4A)(OBD_S0A_PR)
-_obd_service(0x7F)(OBD_NR)
+del _sid, _cls

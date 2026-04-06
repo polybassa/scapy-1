@@ -1139,11 +1139,6 @@ In single layer mode:
 - Service packets' ``answers()`` and ``hashret()`` methods work correctly in
   both modes.
 
-The underlying helper that powers this feature is
-:func:`~scapy.contrib.automotive.utils._make_service_decorator` in
-:mod:`scapy.contrib.automotive.utils`.  OEM-specific protocol extensions can
-use the same helper to add single layer support to custom protocol classes.
-
 GMLAN
 =====
 

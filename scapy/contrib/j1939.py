@@ -70,27 +70,29 @@ log_j1939 = logging.getLogger("scapy.contrib.j1939")
 
 # ---------------------------------------------------------------------------
 # J1939 constants (sourced from Python socket module where available)
+# socket.CAN_J1939 and related constants were added in Python 3.9.
+# Fallback values are taken from the Linux kernel header linux/can/j1939.h.
 # ---------------------------------------------------------------------------
 
 #: 64-bit NAME not used / not relevant
-J1939_NO_NAME = socket.J1939_NO_NAME          # 0
+J1939_NO_NAME = getattr(socket, 'J1939_NO_NAME', 0)           # 0
 #: PGN wildcard – match any PGN when used in bind / filter
-J1939_NO_PGN = socket.J1939_NO_PGN            # 0x40000
+J1939_NO_PGN = getattr(socket, 'J1939_NO_PGN', 0x40000)       # 0x40000
 #: Address wildcard – no specific address
-J1939_NO_ADDR = socket.J1939_NO_ADDR          # 0xFF  (global broadcast)
+J1939_NO_ADDR = getattr(socket, 'J1939_NO_ADDR', 0xFF)         # 0xFF  (global broadcast)
 #: Idle/null address (used during address claiming)
-J1939_IDLE_ADDR = socket.J1939_IDLE_ADDR      # 0xFE
+J1939_IDLE_ADDR = getattr(socket, 'J1939_IDLE_ADDR', 0xFE)    # 0xFE
 #: Maximum normal (unicast) address value
-J1939_MAX_UNICAST_ADDR = socket.J1939_MAX_UNICAST_ADDR  # 0xFD
+J1939_MAX_UNICAST_ADDR = getattr(socket, 'J1939_MAX_UNICAST_ADDR', 0xFD)  # 0xFD
 #: Global broadcast address
-J1939_BROADCAST_ADDR = J1939_NO_ADDR          # 0xFF
+J1939_BROADCAST_ADDR = J1939_NO_ADDR                           # 0xFF
 
 # PGN constants
-J1939_PGN_REQUEST = socket.J1939_PGN_REQUEST                   # 0xEA00
-J1939_PGN_ADDRESS_CLAIMED = socket.J1939_PGN_ADDRESS_CLAIMED   # 0xEE00
-J1939_PGN_ADDRESS_COMMANDED = socket.J1939_PGN_ADDRESS_COMMANDED  # 0xFED8
-J1939_PGN_MAX = socket.J1939_PGN_MAX                           # 0x3FFFF
-J1939_PGN_PDU1_MAX = socket.J1939_PGN_PDU1_MAX                 # 0x3FF00
+J1939_PGN_REQUEST = getattr(socket, 'J1939_PGN_REQUEST', 0xEA00)                    # 0xEA00
+J1939_PGN_ADDRESS_CLAIMED = getattr(socket, 'J1939_PGN_ADDRESS_CLAIMED', 0xEE00)    # 0xEE00
+J1939_PGN_ADDRESS_COMMANDED = getattr(socket, 'J1939_PGN_ADDRESS_COMMANDED', 0xFED8)  # 0xFED8
+J1939_PGN_MAX = getattr(socket, 'J1939_PGN_MAX', 0x3FFFF)                           # 0x3FFFF
+J1939_PGN_PDU1_MAX = getattr(socket, 'J1939_PGN_PDU1_MAX', 0x3FF00)                 # 0x3FF00
 #: Transport Protocol – Connection Management
 J1939_PGN_TP_CM = 0xEC00
 #: Transport Protocol – Data Transfer
@@ -106,9 +108,18 @@ J1939_TP_CTRL_ABORT = 255  # Connection Abort
 # PDU format threshold: PF < 240 → PDU1 (peer-to-peer), PF ≥ 240 → PDU2 (broadcast)
 J1939_PDU1_MAX_PF = 239
 
-# Socket-level constants
+# Socket-level constants (kernel values from linux/can/j1939.h; fallbacks for Python < 3.9)
+CAN_J1939 = getattr(socket, 'CAN_J1939', 7)                              # 7
 SOL_CAN_BASE = 100
-SOL_CAN_J1939 = SOL_CAN_BASE + socket.CAN_J1939  # 107
+SOL_CAN_J1939 = SOL_CAN_BASE + CAN_J1939                                 # 107
+SO_J1939_FILTER = getattr(socket, 'SO_J1939_FILTER', 1)                  # 1
+SO_J1939_PROMISC = getattr(socket, 'SO_J1939_PROMISC', 2)                # 2
+SO_J1939_SEND_PRIO = getattr(socket, 'SO_J1939_SEND_PRIO', 3)            # 3
+SO_J1939_ERRQUEUE = getattr(socket, 'SO_J1939_ERRQUEUE', 4)              # 4
+SCM_J1939_DEST_ADDR = getattr(socket, 'SCM_J1939_DEST_ADDR', 1)          # 1
+SCM_J1939_DEST_NAME = getattr(socket, 'SCM_J1939_DEST_NAME', 2)          # 2
+SCM_J1939_PRIO = getattr(socket, 'SCM_J1939_PRIO', 3)                    # 3
+SCM_J1939_ERRQUEUE = getattr(socket, 'SCM_J1939_ERRQUEUE', 4)            # 4
 
 # Default configuration key
 conf.contribs['J1939'] = {'channel': 'can0'}
@@ -592,14 +603,14 @@ class NativeJ1939Socket(SuperSocket):
         self.basecls = basecls
 
         self.ins = socket.socket(
-            socket.PF_CAN, socket.SOCK_DGRAM, socket.CAN_J1939
+            socket.PF_CAN, socket.SOCK_DGRAM, CAN_J1939
         )
 
         if promisc:
             try:
                 self.ins.setsockopt(
                     SOL_CAN_J1939,
-                    socket.SO_J1939_PROMISC,
+                    SO_J1939_PROMISC,
                     struct.pack('i', 1),
                 )
             except OSError as exc:
@@ -640,7 +651,7 @@ class NativeJ1939Socket(SuperSocket):
                 f.get('addr_mask', J1939_NO_ADDR),
             ) + self._J1939_FILTER_PAD
         try:
-            self.ins.setsockopt(SOL_CAN_J1939, socket.SO_J1939_FILTER, packed)
+            self.ins.setsockopt(SOL_CAN_J1939, SO_J1939_FILTER, packed)
         except OSError as exc:
             raise Scapy_Exception(
                 "Could not set J1939 filter: %s" % exc
@@ -697,10 +708,10 @@ class NativeJ1939Socket(SuperSocket):
         ts = None
 
         for cmsg_level, cmsg_type, cmsg_data in ancdata:
-            if cmsg_type == socket.SCM_J1939_DEST_ADDR:
+            if cmsg_type == SCM_J1939_DEST_ADDR:
                 if cmsg_data:
                     dst_addr = struct.unpack('B', cmsg_data[:1])[0]
-            elif cmsg_type == socket.SCM_J1939_PRIO:
+            elif cmsg_type == SCM_J1939_PRIO:
                 if cmsg_data:
                     priority = struct.unpack('B', cmsg_data[:1])[0]
 
@@ -753,7 +764,7 @@ class NativeJ1939Socket(SuperSocket):
         try:
             self.outs.setsockopt(
                 SOL_CAN_J1939,
-                socket.SO_J1939_SEND_PRIO,
+                SO_J1939_SEND_PRIO,
                 struct.pack('i', priority),
             )
         except OSError:

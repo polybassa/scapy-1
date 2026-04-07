@@ -47,7 +47,7 @@ from typing import (
 
 from scapy.config import conf
 from scapy.data import SO_TIMESTAMPNS
-from scapy.error import Scapy_Exception, log_runtime, warning
+from scapy.error import Scapy_Exception, log_runtime
 from scapy.fields import (
     BitField,
     ByteField,
@@ -79,7 +79,7 @@ J1939_NO_NAME = getattr(socket, 'J1939_NO_NAME', 0)           # 0
 #: PGN wildcard – match any PGN when used in bind / filter
 J1939_NO_PGN = getattr(socket, 'J1939_NO_PGN', 0x40000)       # 0x40000
 #: Address wildcard – no specific address
-J1939_NO_ADDR = getattr(socket, 'J1939_NO_ADDR', 0xFF)         # 0xFF  (global broadcast)
+J1939_NO_ADDR = getattr(socket, 'J1939_NO_ADDR', 0xFF)        # 0xFF
 #: Idle/null address (used during address claiming)
 J1939_IDLE_ADDR = getattr(socket, 'J1939_IDLE_ADDR', 0xFE)    # 0xFE
 #: Maximum normal (unicast) address value
@@ -88,11 +88,13 @@ J1939_MAX_UNICAST_ADDR = getattr(socket, 'J1939_MAX_UNICAST_ADDR', 0xFD)  # 0xFD
 J1939_BROADCAST_ADDR = J1939_NO_ADDR                           # 0xFF
 
 # PGN constants
-J1939_PGN_REQUEST = getattr(socket, 'J1939_PGN_REQUEST', 0xEA00)                    # 0xEA00
-J1939_PGN_ADDRESS_CLAIMED = getattr(socket, 'J1939_PGN_ADDRESS_CLAIMED', 0xEE00)    # 0xEE00
-J1939_PGN_ADDRESS_COMMANDED = getattr(socket, 'J1939_PGN_ADDRESS_COMMANDED', 0xFED8)  # 0xFED8
-J1939_PGN_MAX = getattr(socket, 'J1939_PGN_MAX', 0x3FFFF)                           # 0x3FFFF
-J1939_PGN_PDU1_MAX = getattr(socket, 'J1939_PGN_PDU1_MAX', 0x3FF00)                 # 0x3FF00
+J1939_PGN_REQUEST = getattr(socket, 'J1939_PGN_REQUEST', 0xEA00)              # 0xEA00
+J1939_PGN_ADDRESS_CLAIMED = getattr(                                            # 0xEE00
+    socket, 'J1939_PGN_ADDRESS_CLAIMED', 0xEE00)
+J1939_PGN_ADDRESS_COMMANDED = getattr(                                          # 0xFED8
+    socket, 'J1939_PGN_ADDRESS_COMMANDED', 0xFED8)
+J1939_PGN_MAX = getattr(socket, 'J1939_PGN_MAX', 0x3FFFF)                     # 0x3FFFF
+J1939_PGN_PDU1_MAX = getattr(socket, 'J1939_PGN_PDU1_MAX', 0x3FF00)           # 0x3FF00
 #: Transport Protocol – Connection Management
 J1939_PGN_TP_CM = 0xEC00
 #: Transport Protocol – Data Transfer
@@ -108,8 +110,8 @@ J1939_TP_CTRL_ABORT = 255  # Connection Abort
 # PDU format threshold: PF < 240 → PDU1 (peer-to-peer), PF ≥ 240 → PDU2 (broadcast)
 J1939_PDU1_MAX_PF = 239
 
-# Socket-level constants (kernel values from linux/can/j1939.h; fallbacks for Python < 3.9)
-CAN_J1939 = getattr(socket, 'CAN_J1939', 7)                              # 7
+# Socket-level constants (linux/can/j1939.h; fallbacks for Python < 3.9)
+CAN_J1939 = getattr(socket, 'CAN_J1939', 7)                        # 7
 SOL_CAN_BASE = 100
 SOL_CAN_J1939 = SOL_CAN_BASE + CAN_J1939                                 # 107
 SO_J1939_FILTER = getattr(socket, 'SO_J1939_FILTER', 1)                  # 1
@@ -420,8 +422,8 @@ class J1939_TP_CM_RTS(Packet):
         ByteField('ctrl', J1939_TP_CTRL_RTS),         # 16
         LEShortField('total_size', 0),                # total message size (bytes)
         ByteField('num_packets', 0),                  # total number of TP.DT packets
-        ByteField('max_packets', 0xFF),               # max packets per CTS (0xFF = no limit)
-        XLE3BytesField('pgn', 0),                    # PGN of the message being transferred
+        ByteField('max_packets', 0xFF),         # max packets per CTS (0xFF = no limit)
+        XLE3BytesField('pgn', 0),               # PGN of the message being transferred
     ]
 
 
@@ -580,9 +582,9 @@ class NativeJ1939Socket(SuperSocket):
 
     desc = "read/write J1939 messages using Linux kernel PF_CAN/CAN_J1939 sockets"
 
-    # struct j1939_filter layout: name(Q) name_mask(Q) pgn(I) pgn_mask(I) addr(B) addr_mask(B)
+    # struct j1939_filter: name(Q) name_mask(Q) pgn(I) pgn_mask(I) addr(B) addr_mask(B)
     _J1939_FILTER_FMT = "=QQIIBB"
-    _J1939_FILTER_PAD = b'\x00' * 4   # 4 bytes of struct padding to reach 28-byte alignment
+    _J1939_FILTER_PAD = b'\x00' * 4  # 4 bytes padding to reach 28-byte alignment
 
     def __init__(
             self,

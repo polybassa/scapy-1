@@ -25,23 +25,17 @@ import random
 import threading
 import time
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 from scapy.contrib.j1939 import (
-    J1939,
     J1939_CAN,
-    J1939_NO_ADDR,
     J1939_PDU1_MAX_PF,
-    J1939_PGN_ADDRESS_CLAIMED,
-    J1939_PGN_REQUEST,
 )
 from scapy.contrib.j1939_spn_pgn_db import (
     lookup_pgn,
     lookup_spn,
     lookup_src_addr,
-    spns_for_pgn,
 )
-from scapy.packet import Packet
 
 __all__ = [
     "J1939ECU",
@@ -132,7 +126,8 @@ class J1939ECU:
 
     def add_prop_message(self, msg):
         # type: (J1939_CAN) -> None
-        """Add a proprietary message to this ECU's list (deduplication by CAN ID + data).
+        """Add a proprietary message to this ECU's list (deduplication by
+        CAN ID + data).
 
         :param msg: J1939_CAN frame to add
         """
@@ -169,21 +164,23 @@ class J1939ECU:
         import struct
         val = struct.unpack_from('<Q', self._name_bytes)[0]
         return {
-            "identity_number":          (val >> 0) & 0x1FFFFF,
-            "manufacturer_code":        (val >> 21) & 0x7FF,
-            "ecu_instance":             (val >> 32) & 0x07,
-            "function_instance":        (val >> 35) & 0x1F,
-            "function":                 (val >> 40) & 0xFF,
-            "reserved":                 (val >> 48) & 0x01,
-            "vehicle_system":           (val >> 49) & 0x7F,
-            "vehicle_system_instance":  (val >> 56) & 0x0F,
-            "industry_group":           (val >> 60) & 0x07,
-            "arbitrary_address_capable":(val >> 63) & 0x01,
+            "identity_number": (val >> 0) & 0x1FFFFF,
+            "manufacturer_code": (val >> 21) & 0x7FF,
+            "ecu_instance": (val >> 32) & 0x07,
+            "function_instance": (val >> 35) & 0x1F,
+            "function": (val >> 40) & 0xFF,
+            "reserved": (val >> 48) & 0x01,
+            "vehicle_system": (val >> 49) & 0x7F,
+            "vehicle_system_instance": (val >> 56) & 0x0F,
+            "industry_group": (val >> 60) & 0x07,
+            "arbitrary_address_capable": (val >> 63) & 0x01,
         }
 
     def __repr__(self):
         # type: () -> str
-        return "J1939ECU(address=0x%02X, name=%r)" % (self._address, self.preferred_name)
+        return (
+            "J1939ECU(address=0x%02X, name=%r)" % (self._address, self.preferred_name)
+        )
 
     def __str__(self):
         # type: () -> str

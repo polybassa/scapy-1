@@ -659,7 +659,7 @@ assert sa3.hashret() == sapr3.hashret(), \
 
 = Single layer mode: sub-subpacket bindings are unaffected
 
-rfrdpr = GMLAN(b'\x52\x01\x00\x01\x02\x03')
+rfrdpr = GMLAN(b'\x52\x01\x00\x01\x02\x03\x04')
 assert isinstance(rfrdpr, GMLAN_RFRDPR), "Expected GMLAN_RFRDPR, got %s" % type(rfrdpr)
 
 = Single layer mode: unknown service falls back to GMLAN

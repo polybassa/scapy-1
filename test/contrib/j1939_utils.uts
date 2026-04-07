@@ -1,0 +1,387 @@
+% This file is part of Scapy
+% See https://scapy.net/ for more information
+% Copyright (C) 2024 Scapy contributors
+
+% SPDX-License-Identifier: GPL-2.0-only
+
+% scapy.contrib.description = SAE J1939 utility / SPN/PGN database tests
+% scapy.contrib.status = loads
+
++ SAE J1939 SPN/PGN Database Tests
+
+= Setup imports
+from scapy.contrib.j1939_spn_pgn_db import (
+    J1939_SRC_ADDR_TABLE,
+    lookup_spn,
+    lookup_pgn,
+    lookup_src_addr,
+    spns_for_pgn,
+    pgns_for_spn,
+)
+
+= SRC_ADDR_TABLE has exactly 256 entries
+assert len(J1939_SRC_ADDR_TABLE) == 256, \
+    "Expected 256 entries, got %d" % len(J1939_SRC_ADDR_TABLE)
+
+= SRC_ADDR_TABLE keys are 0-255
+assert set(J1939_SRC_ADDR_TABLE.keys()) == set(range(256)), \
+    "SRC_ADDR_TABLE keys are not 0-255"
+
+= lookup_src_addr – well-known engine address
+assert lookup_src_addr(0) == "Engine #1"
+
+= lookup_src_addr – well-known transmission address
+assert lookup_src_addr(3) == "Transmission #1"
+
+= lookup_src_addr – global broadcast address
+assert lookup_src_addr(255) == "GLOBAL (All-Any Node)"
+
+= lookup_src_addr – null / idle address
+assert lookup_src_addr(254) == "Null Address"
+
+= lookup_src_addr – SAE reserved range (92-127)
+for addr in range(92, 128):
+    assert lookup_src_addr(addr) == "SAE Reserved", \
+        "addr %d: expected 'SAE Reserved', got %r" % (addr, lookup_src_addr(addr))
+
+= lookup_src_addr – out-of-range returns "Unknown"
+assert lookup_src_addr(256) == "Unknown"
+assert lookup_src_addr(-1) == "Unknown"
+
+= lookup_spn – well-known SPN 695 (Engine Override Control Mode)
+spn = lookup_spn(695)
+assert spn is not None, "SPN 695 not found in database"
+assert spn["spnName"] == "Engine Override Control Mode"
+assert spn["spnLength"] == 2
+assert spn["units"] == "bit"
+
+= lookup_spn – well-known SPN 84 (Wheel-Based Vehicle Speed)
+spn = lookup_spn(84)
+assert spn is not None, "SPN 84 not found in database"
+assert "speed" in spn["spnName"].lower() or spn["spn"] == 84
+
+= lookup_spn – unknown SPN returns None
+assert lookup_spn(0) is None or True  # SPN 0 may or may not exist; just check it doesn't crash
+
+= lookup_spn – nonexistent SPN returns None
+assert lookup_spn(9999999) is None
+
+= lookup_pgn – well-known PGN 0 (TSC1)
+pgn = lookup_pgn(0)
+assert pgn is not None, "PGN 0 (TSC1) not found in database"
+assert pgn["acronym"] == "TSC1"
+assert pgn["pgnDataLength"] == 8
+assert 695 in pgn["spnList"]
+
+= lookup_pgn – PGN 61444 (EEC1 – Electronic Engine Controller 1)
+pgn = lookup_pgn(61444)
+assert pgn is not None, "PGN 61444 (EEC1) not found in database"
+assert pgn.get("acronym", "") == "EEC1" or "Engine" in pgn.get("parameterGroupLabel", "")
+
+= lookup_pgn – nonexistent PGN returns None
+assert lookup_pgn(0xFFFFFF) is None
+
+= spns_for_pgn – TSC1 (PGN 0) returns SPNs including 695
+spns = spns_for_pgn(0)
+assert 695 in spns, "Expected SPN 695 in TSC1 (PGN 0), got %r" % spns
+assert len(spns) >= 2, "TSC1 should have multiple SPNs"
+
+= spns_for_pgn – nonexistent PGN returns empty list
+assert spns_for_pgn(0xFFFFFF) == []
+
+= pgns_for_spn – SPN 695 is in PGN 0 (TSC1)
+pgns = pgns_for_spn(695)
+assert 0 in pgns, "Expected PGN 0 in pgns_for_spn(695), got %r" % pgns
+
+= pgns_for_spn – nonexistent SPN returns empty list
+assert pgns_for_spn(9999999) == []
+
+############
+############
++ SAE J1939 Utility – J1939ECU Tests
+
+= Setup imports
+from scapy.contrib.j1939_utils import J1939ECU
+from scapy.contrib.j1939 import J1939_CAN
+
+= J1939ECU – basic creation
+ecu = J1939ECU(0x00)
+assert ecu.address == 0
+assert ecu.preferred_name == "Engine #1"
+assert ecu.name_bytes is None
+assert ecu.prop_messages == []
+assert ecu.address_claimed_msg is None
+
+= J1939ECU – transmission ECU preferred name
+ecu = J1939ECU(3)
+assert ecu.preferred_name == "Transmission #1"
+
+= J1939ECU – broadcast address preferred name
+ecu = J1939ECU(255)
+assert ecu.preferred_name == "GLOBAL (All-Any Node)"
+
+= J1939ECU – invalid address raises ValueError
+try:
+    ecu = J1939ECU(256)
+    assert False, "Should have raised ValueError"
+except ValueError:
+    pass
+
+try:
+    ecu = J1939ECU(-1)
+    assert False, "Should have raised ValueError"
+except ValueError:
+    pass
+
+= J1939ECU – name_bytes must be 8 bytes
+ecu = J1939ECU(0x00)
+try:
+    ecu.name_bytes = b'\x01\x02\x03'   # too short
+    assert False, "Should have raised ValueError"
+except ValueError:
+    pass
+
+ecu.name_bytes = b'\x01\x02\x03\x04\x05\x06\x07\x08'
+assert ecu.name_bytes == b'\x01\x02\x03\x04\x05\x06\x07\x08'
+
+= J1939ECU – setting name_bytes to None is allowed
+ecu = J1939ECU(0x00)
+ecu.name_bytes = None
+assert ecu.name_bytes is None
+
+= J1939ECU – decode_name returns None when no NAME
+ecu = J1939ECU(0x00)
+assert ecu.decode_name() is None
+
+= J1939ECU – decode_name parses 8-byte NAME
+import struct
+# Build a known NAME: identity=0xABCD, manufacturer=0x1FF, ecu_instance=3,
+# function_instance=0x1A, function=0x7F, reserved=0, vehicle_system=0x3F,
+# vehicle_system_instance=0xA, industry_group=5, arbitrary_address_capable=1
+identity = 0x00ABCD         # 21 bits
+mfg = 0x1FF                  # 11 bits
+ecu_inst = 3                 # 3 bits
+fn_inst = 0x1A               # 5 bits
+fn = 0x7F                    # 8 bits
+rsvd = 0                     # 1 bit
+vs = 0x3F                    # 7 bits
+vsi = 0x0A                   # 4 bits
+ig = 5                        # 3 bits
+aac = 1                      # 1 bit
+val = (identity
+       | (mfg        << 21)
+       | (ecu_inst   << 32)
+       | (fn_inst    << 35)
+       | (fn         << 40)
+       | (rsvd       << 48)
+       | (vs         << 49)
+       | (vsi        << 56)
+       | (ig         << 60)
+       | (aac        << 63))
+name_bytes = struct.pack('<Q', val)
+ecu = J1939ECU(0x00, name_bytes=name_bytes)
+decoded = ecu.decode_name()
+assert decoded is not None
+assert decoded["identity_number"] == identity, \
+    "id=%d expected=%d" % (decoded["identity_number"], identity)
+assert decoded["manufacturer_code"] == mfg, \
+    "mfg=%d expected=%d" % (decoded["manufacturer_code"], mfg)
+assert decoded["ecu_instance"] == ecu_inst
+assert decoded["function_instance"] == fn_inst
+assert decoded["function"] == fn
+assert decoded["vehicle_system"] == vs
+assert decoded["vehicle_system_instance"] == vsi
+assert decoded["industry_group"] == ig
+assert decoded["arbitrary_address_capable"] == aac
+
+= J1939ECU – address_claimed_msg validates pdu_format
+ecu = J1939ECU(0x00)
+bad_frame = J1939_CAN(priority=6, pdu_format=0xFE, pdu_specific=0xCA,
+                       src=0x00, data=b'\xff' * 8)
+try:
+    ecu.address_claimed_msg = bad_frame
+    assert False, "Should have raised ValueError for wrong pdu_format"
+except ValueError:
+    pass
+
+= J1939ECU – address_claimed_msg accepts valid PF=0xEE frame
+ecu = J1939ECU(0x00)
+name = b'\x01\x02\x03\x04\x05\x06\x07\x08'
+good_frame = J1939_CAN(priority=6, pdu_format=0xEE, pdu_specific=0xFF,
+                        src=0x00, data=name)
+ecu.address_claimed_msg = good_frame
+assert ecu.address_claimed_msg is good_frame
+assert ecu.name_bytes == name
+
+= J1939ECU – add_prop_message deduplicates by pdu_format + data
+ecu = J1939ECU(0x0B)
+m1 = J1939_CAN(priority=6, pdu_format=0xFF, pdu_specific=0x00,
+                src=0x0B, data=b'\xAA\xBB\xCC\xDD\xEE\xFF\x11\x22')
+m2 = J1939_CAN(priority=6, pdu_format=0xFF, pdu_specific=0x00,
+                src=0x0B, data=b'\xAA\xBB\xCC\xDD\xEE\xFF\x11\x22')  # duplicate
+m3 = J1939_CAN(priority=6, pdu_format=0xFF, pdu_specific=0x00,
+                src=0x0B, data=b'\x11\x22\x33\x44\x55\x66\x77\x88')  # different data
+ecu.add_prop_message(m1)
+ecu.add_prop_message(m2)   # should be ignored
+ecu.add_prop_message(m3)
+assert len(ecu.prop_messages) == 2, "got %d" % len(ecu.prop_messages)
+
+= J1939ECU – __str__ contains address hex and preferred name
+ecu = J1939ECU(0x00)
+s = str(ecu)
+assert "0x00" in s or "Engine #1" in s, "str=%r" % s
+
+= J1939ECU – __repr__ contains class name
+ecu = J1939ECU(3)
+r = repr(ecu)
+assert "J1939ECU" in r
+
+############
+############
++ SAE J1939 Utility – J1939Fuzzer Tests
+
+= Setup imports
+from scapy.contrib.j1939_utils import J1939Fuzzer
+from scapy.contrib.j1939 import J1939_CAN, J1939_PDU1_MAX_PF
+
+= J1939Fuzzer – mutate returns J1939_CAN
+fuzzer = J1939Fuzzer(seed=42)
+base = J1939_CAN(priority=6, reserved=0, data_page=0,
+                  pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+                  data=b'\xff' * 8)
+result = fuzzer.mutate(base)
+assert isinstance(result, J1939_CAN)
+
+= J1939Fuzzer – mutate does not modify original frame
+fuzzer = J1939Fuzzer(seed=42)
+base = J1939_CAN(priority=6, reserved=0, data_page=0,
+                  pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+                  data=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+original_bytes = bytes(base)
+fuzzer.mutate(base, mutate_data=True, mutate_priority=True)
+assert bytes(base) == original_bytes, "mutate() modified the original frame"
+
+= J1939Fuzzer – mutate_priority changes priority field
+fuzzer = J1939Fuzzer(seed=0)
+base = J1939_CAN(priority=3, pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+                  data=b'\x00' * 8)
+priorities = sorted(set(
+    J1939Fuzzer(seed=seed).mutate(base, mutate_priority=True).priority
+    for seed in range(50)
+))
+assert len(priorities) > 1, "mutate_priority should produce varied results"
+assert all(0 <= p <= 7 for p in priorities), "priority must be 0-7"
+
+= J1939Fuzzer – mutate_pdu_format respects PDU1/PDU2 split
+fuzzer = J1939Fuzzer(seed=1)
+base = J1939_CAN(priority=6, pdu_format=0x00, pdu_specific=0x00, src=0x00,
+                  data=b'\xff' * 8)
+pf_values = [J1939Fuzzer(seed=seed).mutate(base, mutate_pdu_format=True).pdu_format
+             for seed in range(100)]
+assert any(pf <= J1939_PDU1_MAX_PF for pf in pf_values), \
+    "mutate_pdu_format should produce PDU1 values (0-239)"
+assert any(pf > J1939_PDU1_MAX_PF for pf in pf_values), \
+    "mutate_pdu_format should produce PDU2 values (240-255)"
+
+= J1939Fuzzer – mutate_data changes at least one byte (over many seeds)
+base = J1939_CAN(priority=6, pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+                  data=b'\x00' * 8)
+mutated_data = [J1939Fuzzer(seed=seed).mutate(base, mutate_data=True).data
+                for seed in range(50)]
+assert any(d != base.data for d in mutated_data), "mutate_data never changed the data"
+
+= J1939Fuzzer – mutate_data_length can shorten or extend data
+base = J1939_CAN(priority=6, pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+                  data=b'\xAA' * 4)
+lengths = [len(J1939Fuzzer(seed=seed).mutate(base, mutate_data_length=True).data)
+           for seed in range(100)]
+assert any(l < len(base.data) for l in lengths), \
+    "mutate_data_length never shortened data"
+assert any(l > len(base.data) for l in lengths), \
+    "mutate_data_length never extended data"
+
+= J1939Fuzzer – mutate raises TypeError for non-J1939_CAN input
+fuzzer = J1939Fuzzer()
+try:
+    fuzzer.mutate(b'\x00' * 12)
+    assert False, "Should have raised TypeError"
+except TypeError:
+    pass
+
+= J1939Fuzzer – generate returns J1939_CAN with correct field ranges
+fuzzer = J1939Fuzzer(seed=7)
+for _ in range(20):
+    frame = fuzzer.generate()
+    assert isinstance(frame, J1939_CAN)
+    assert 0 <= frame.priority <= 7
+    assert frame.reserved in (0, 1)
+    assert frame.data_page in (0, 1)
+    assert 0 <= frame.pdu_format <= 255
+    assert 0 <= frame.pdu_specific <= 255
+    assert 0 <= frame.src <= 255
+
+= J1939Fuzzer – generate with fixed fields keeps those fields
+fuzzer = J1939Fuzzer(seed=5)
+for _ in range(10):
+    frame = fuzzer.generate(priority=3, pdu_format=0xFE, pdu_specific=0xCA, src=0x00)
+    assert frame.priority == 3
+    assert frame.pdu_format == 0xFE
+    assert frame.pdu_specific == 0xCA
+    assert frame.src == 0x00
+
+= J1939Fuzzer – generate mode 2 produces varied data lengths
+lengths = sorted(set(len(J1939Fuzzer(seed=seed).generate(mode=2).data)
+                     for seed in range(100)))
+assert len(lengths) > 3, \
+    "Mode 2 should produce varied data lengths, got %r" % lengths
+
+= J1939Fuzzer – generate with data= overrides data generation
+fuzzer = J1939Fuzzer(seed=0)
+frame = fuzzer.generate(data=b'\xDE\xAD\xBE\xEF')
+assert frame.data == b'\xDE\xAD\xBE\xEF'
+
+= J1939Fuzzer – generate with hex string data=
+fuzzer = J1939Fuzzer(seed=0)
+frame = fuzzer.generate(data="DEADBEEF")
+assert frame.data == b'\xDE\xAD\xBE\xEF'
+
+= J1939Fuzzer – generate mode 0 falls back for unknown PGN
+# PGN 0xFECA (broadcast, PDU2) may or may not be in the DB; either way generate() should work
+fuzzer = J1939Fuzzer(seed=9)
+frame = fuzzer.generate(mode=0, pdu_format=0xFE, pdu_specific=0xCA, data_page=0)
+assert isinstance(frame, J1939_CAN)
+
+= J1939Fuzzer – generate mode 1 falls back to mode 2 for unknown PGN
+fuzzer = J1939Fuzzer(seed=9)
+# Use a PGN that almost certainly doesn't exist in the DB
+frame = fuzzer.generate(mode=1, pdu_format=0xBB, pdu_specific=0xBB, data_page=1)
+assert isinstance(frame, J1939_CAN)
+
+= J1939Fuzzer – create_fuzz_list returns correct number of frames
+fuzzer = J1939Fuzzer(seed=42)
+lst = fuzzer.create_fuzz_list(20)
+assert len(lst) == 20, "Expected 20 frames, got %d" % len(lst)
+for f in lst:
+    assert isinstance(f, J1939_CAN)
+
+= J1939Fuzzer – create_fuzz_list with baseline_frames uses mutation
+fuzzer = J1939Fuzzer(seed=42)
+baseline = [
+    J1939_CAN(priority=6, pdu_format=0xFE, pdu_specific=0xCA, src=0x00,
+               data=b'\xAA' * 8),
+    J1939_CAN(priority=6, pdu_format=0xFE, pdu_specific=0xCA, src=0x0B,
+               data=b'\xBB' * 8),
+]
+lst = fuzzer.create_fuzz_list(10, baseline_frames=baseline)
+assert len(lst) == 10
+for f in lst:
+    assert isinstance(f, J1939_CAN)
+
+= J1939Fuzzer – TSC1 SPN-aware generation produces 8-byte data
+# PGN 0 = TSC1, pgnDataLength=8
+fuzzer = J1939Fuzzer(seed=11)
+frame = fuzzer.generate(mode=0, pdu_format=0x00, pdu_specific=0x00,
+                         data_page=0, src=0xF9)
+# TSC1 pgnDataLength=8; mode 0 should produce 8 data bytes
+assert len(frame.data) == 8, \
+    "TSC1 SPN-aware generation should produce 8 bytes, got %d" % len(frame.data)

@@ -51,14 +51,14 @@ assert lookup_src_addr(-1) == "Unknown"
 = lookup_spn – well-known SPN 695 (Engine Override Control Mode)
 spn = lookup_spn(695)
 assert spn is not None, "SPN 695 not found in database"
-assert spn["spnName"] == "Engine Override Control Mode"
-assert spn["spnLength"] == 2
-assert spn["units"] == "bit"
+assert spn.spn_name == "Engine Override Control Mode"
+assert spn.spn_length == 2
+assert spn.units == "bit"
 
 = lookup_spn – well-known SPN 84 (Wheel-Based Vehicle Speed)
 spn = lookup_spn(84)
 assert spn is not None, "SPN 84 not found in database"
-assert "speed" in spn["spnName"].lower() or spn["spn"] == 84
+assert "speed" in spn.spn_name.lower() or spn.spn == 84
 
 = lookup_spn – unknown SPN returns None
 assert lookup_spn(0) is None or True  # SPN 0 may or may not exist; just check it doesn't crash
@@ -69,14 +69,14 @@ assert lookup_spn(9999999) is None
 = lookup_pgn – well-known PGN 0 (TSC1)
 pgn = lookup_pgn(0)
 assert pgn is not None, "PGN 0 (TSC1) not found in database"
-assert pgn["acronym"] == "TSC1"
-assert pgn["pgnDataLength"] == 8
-assert 695 in pgn["spnList"]
+assert pgn.acronym == "TSC1"
+assert pgn.data_length == 8
+assert 695 in pgn.spn_list
 
 = lookup_pgn – PGN 61444 (EEC1 – Electronic Engine Controller 1)
 pgn = lookup_pgn(61444)
 assert pgn is not None, "PGN 61444 (EEC1) not found in database"
-assert pgn.get("acronym", "") == "EEC1" or "Engine" in pgn.get("parameterGroupLabel", "")
+assert pgn.acronym == "EEC1" or "Engine" in pgn.label
 
 = lookup_pgn – nonexistent PGN returns None
 assert lookup_pgn(0xFFFFFF) is None

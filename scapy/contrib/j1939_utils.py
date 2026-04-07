@@ -9,8 +9,6 @@
 """
 SAE J1939 utility functions: ECU discovery and fuzzing.
 
-Inspired by the TruckDevil project (https://github.com/LittleBlondeDevil/TruckDevil).
-
 Three main classes are provided:
 
 :class:`J1939ECU`
@@ -653,9 +651,9 @@ class J1939Fuzzer:
                 mode = 1
 
         if mode == 1:
-            pgn_info = lookup_pgn(pgn)
-            if pgn_info is not None and isinstance(pgn_info.get("pgnDataLength"), int):
-                data_len = pgn_info["pgnDataLength"]
+            pgn_def = lookup_pgn(pgn)
+            if pgn_def is not None and isinstance(pgn_def.data_length, int):
+                data_len = pgn_def.data_length
                 return bytes(random.randint(0, 255) for _ in range(data_len))
             mode = 2
 
@@ -675,30 +673,30 @@ class J1939Fuzzer:
         is missing or has variable-length SPNs, so the caller can fall back
         to mode 1 or 2.
         """
-        pgn_info = lookup_pgn(pgn)
-        if pgn_info is None:
+        pgn_def = lookup_pgn(pgn)
+        if pgn_def is None:
             raise KeyError("PGN %d not in database" % pgn)
 
-        data_len = pgn_info.get("pgnDataLength")
+        data_len = pgn_def.data_length
         if not isinstance(data_len, int):
             raise ValueError("variable-length PGN %d" % pgn)
 
-        spn_list = pgn_info.get("spnList", [])
+        spn_list = pgn_def.spn_list
         bin_data = ""
         used_bits = 0
 
         for spn_num in spn_list:
             if not isinstance(spn_num, int):
                 continue
-            spn_info = lookup_spn(spn_num)
-            if spn_info is None:
+            spn_def = lookup_spn(spn_num)
+            if spn_def is None:
                 continue
-            spn_length = spn_info.get("spnLength")
+            spn_length = spn_def.spn_length
             if not isinstance(spn_length, int):
                 raise ValueError("variable-length SPN %d" % spn_num)
 
             # Insert padding bits if there is a gap before this SPN starts
-            bit_start = spn_info.get("bitPositionStart", used_bits)
+            bit_start = spn_def.bit_position_start
             if bit_start > used_bits:
                 gap = bit_start - used_bits
                 bin_data += "1" * gap

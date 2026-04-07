@@ -8,24 +8,30 @@
 
 """
 SAE J1939 SPN (Suspect Parameter Number) and PGN (Parameter Group Number)
-reference database, derived from the TruckDevil open-source database.
+reference database.
 
-The SPN and PGN data are stored as JSON files alongside this module and are
-loaded on first access (lazy loading).  The ECU preferred-source-address table
-is inlined as a plain Python dict because it is small (256 entries).
+The SPN data is in :mod:`scapy.contrib.j1939_spn_db` and the PGN data is in
+:mod:`scapy.contrib.j1939_pgn_db`.  Both modules define inline Python
+namedtuple tables (:class:`~scapy.contrib.j1939_spn_db.J1939SPNDef` and
+:class:`~scapy.contrib.j1939_pgn_db.J1939PGNDef`) that are imported here and
+exposed through a stable public API.
+
+The ECU preferred-source-address table is inlined as a plain Python dict
+because it is small (256 entries) and sourced from SAE J1939 Table B1.
 
 References:
-    - TruckDevil: https://github.com/LittleBlondeDevil/TruckDevil
     - SAE J1939-71 (Surface Vehicle Recommended Practice)
 """
 
-import json
-import os
-
 from typing import Dict, List, Optional
+
+from scapy.contrib.j1939_pgn_db import J1939PGNDef, J1939_PGN_DB
+from scapy.contrib.j1939_spn_db import J1939SPNDef, J1939_SPN_DB
 
 __all__ = [
     "J1939_SRC_ADDR_TABLE",
+    "J1939PGNDef",
+    "J1939SPNDef",
     "lookup_spn",
     "lookup_pgn",
     "lookup_src_addr",
@@ -36,7 +42,6 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # ECU preferred source-address table
 # Sourced from SAE J1939 Table B1 (preferred addresses).
-# Derived from TruckDevil's src_addr_list.json.
 # ---------------------------------------------------------------------------
 
 #: Maps source-address integer (0-255) to the preferred J1939 ECU name.
@@ -133,10 +138,7 @@ J1939_SRC_ADDR_TABLE = {
     89: "Atmospheric Sensor",
     90: "Powertrain Control Module",
     91: "Power Systems Manager",
-    # 92-127: SAE Reserved
-    **{i: "SAE Reserved" for i in range(92, 128)},
-    # 128-158: SAE Reserved (continued)
-    **{i: "SAE Reserved" for i in range(128, 159)},
+    **{i: "SAE Reserved" for i in range(92, 159)},
     159: "Roadway Information System",
     160: "Advanced emergency braking system",
     161: "Fifth Wheel Smart Systems",
@@ -186,7 +188,6 @@ J1939_SRC_ADDR_TABLE = {
     205: "Trailer #1 Chassis-Suspension",
     206: "Other Trailer #1 Devices",
     207: "Other Trailer #1 Devices",
-    # 208-227: SAE Reserved
     **{i: "SAE Reserved" for i in range(208, 228)},
     228: "Steering Input Unit",
     229: "Body Controller #2",
@@ -218,84 +219,52 @@ J1939_SRC_ADDR_TABLE = {
     255: "GLOBAL (All-Any Node)",
 }  # type: Dict[int, str]
 
-# ---------------------------------------------------------------------------
-# Lazy-loaded SPN / PGN databases
-# ---------------------------------------------------------------------------
-
-_spn_db = None   # type: Optional[Dict[str, dict]]
-_pgn_db = None   # type: Optional[Dict[str, dict]]
-
-_DB_DIR = os.path.dirname(os.path.abspath(__file__))
-_SPN_JSON = os.path.join(_DB_DIR, "j1939_spn_list.json")
-_PGN_JSON = os.path.join(_DB_DIR, "j1939_pgn_list.json")
-
-
-def _load_spn_db():
-    # type: () -> Dict[str, dict]
-    global _spn_db
-    if _spn_db is None:
-        with open(_SPN_JSON, encoding="utf-8") as fh:
-            _spn_db = json.load(fh)
-    return _spn_db
-
-
-def _load_pgn_db():
-    # type: () -> Dict[str, dict]
-    global _pgn_db
-    if _pgn_db is None:
-        with open(_PGN_JSON, encoding="utf-8") as fh:
-            _pgn_db = json.load(fh)
-    return _pgn_db
-
 
 # ---------------------------------------------------------------------------
 # Public lookup helpers
 # ---------------------------------------------------------------------------
 
 def lookup_spn(spn):
-    # type: (int) -> Optional[dict]
-    """Return the SPN definition dict for the given SPN number, or ``None``.
+    # type: (int) -> Optional[J1939SPNDef]
+    """Return the :class:`~scapy.contrib.j1939_spn_db.J1939SPNDef` for the
+    given SPN number, or ``None`` if not found.
 
-    Each returned dict has the following keys (matching the TruckDevil schema):
+    Returned namedtuple fields:
 
-    * ``spn`` – SPN number
-    * ``spnName`` – short human-readable name
-    * ``spnDescription`` – full SAE description
-    * ``pgn`` – PGN this SPN is typically found in
-    * ``bitPositionStart`` – bit position within the PGN data
-    * ``spnLength`` – field length in bits (or ``"variable"``)
-    * ``resolutionNumerator`` / ``resolutionDenominator`` – scaling factor
-    * ``offset`` – value offset
-    * ``dataRangeLower`` / ``dataRangeUpper`` – valid data range
-    * ``operationalRange`` – operational range note
-    * ``units`` – engineering units string
+    * ``spn`` - SPN number (int)
+    * ``pgn`` - PGN this SPN belongs to (int)
+    * ``bit_position_start`` - bit position within the PGN data (int)
+    * ``spn_length`` - field width in bits (int) or ``"variable"``
+    * ``spn_name`` - short human-readable name (str)
+    * ``units`` - engineering units string (str)
+    * ``resolution_num`` / ``resolution_den`` - scaling factor
+    * ``offset`` - value offset (float)
+    * ``data_range_lower`` / ``data_range_upper`` - valid data range (float)
 
     :param spn: SPN number (integer)
-    :returns: dict or None if not found
+    :returns: J1939SPNDef namedtuple or None
     """
-    return _load_spn_db().get(str(spn))
+    return J1939_SPN_DB.get(spn)
 
 
 def lookup_pgn(pgn):
-    # type: (int) -> Optional[dict]
-    """Return the PGN definition dict for the given PGN number, or ``None``.
+    # type: (int) -> Optional[J1939PGNDef]
+    """Return the :class:`~scapy.contrib.j1939_pgn_db.J1939PGNDef` for the
+    given PGN number, or ``None`` if not found.
 
-    Each returned dict has the following keys (matching the TruckDevil schema):
+    Returned namedtuple fields:
 
-    * ``pgn`` – PGN number
-    * ``parameterGroupLabel`` – human-readable PGN label
-    * ``acronym`` – short acronym (e.g. ``"EEC1"``)
-    * ``pgnDescription`` – full SAE description
-    * ``multipacket`` – ``"Yes"`` or ``"No"``
-    * ``transmissionRate`` – typical transmission rate string
-    * ``pgnDataLength`` – data length in bytes (int, or ``"variable"``)
-    * ``defaultPriority`` – default CAN priority (int 0-7, or ``""``)
-    * ``spnList`` – list of SPN numbers carried by this PGN
+    * ``pgn`` - PGN number (int)
+    * ``label`` - human-readable parameter group label (str)
+    * ``acronym`` - short acronym such as ``"EEC1"`` (str)
+    * ``data_length`` - payload length in bytes (int) or ``"variable"``
+    * ``default_priority`` - default CAN priority 0-7 (int) or ``None``
+    * ``spn_list`` - tuple of SPN numbers carried by this PGN
 
     :param pgn: PGN number (integer)
-    :returns: dict or None if not found
+    :returns: J1939PGNDef namedtuple or None
     """
-    return _load_pgn_db().get(str(pgn))
+    return J1939_PGN_DB.get(pgn)
 
 
 def lookup_src_addr(addr):
@@ -315,34 +284,22 @@ def spns_for_pgn(pgn):
     :param pgn: PGN number (integer)
     :returns: list of SPN integers (empty list if PGN not found or has no SPNs)
     """
-    pgn_info = lookup_pgn(pgn)
-    if pgn_info is None:
+    pgn_def = lookup_pgn(pgn)
+    if pgn_def is None:
         return []
-    spn_list = pgn_info.get("spnList", [])
-    return [s for s in spn_list if isinstance(s, int)]
+    return list(pgn_def.spn_list)
 
 
 def pgns_for_spn(spn):
     # type: (int) -> List[int]
     """Return the list of PGNs that carry the given SPN.
 
-    This does a reverse lookup: it first reads the PGN stored in the SPN
-    definition record, then verifies that the PGN's ``spnList`` actually
-    includes this SPN.
+    This does a reverse lookup via the PGN stored in the SPN definition record.
 
     :param spn: SPN number (integer)
     :returns: list of PGN integers (empty list if SPN not found)
     """
-    spn_info = lookup_spn(spn)
-    if spn_info is None:
+    spn_def = lookup_spn(spn)
+    if spn_def is None:
         return []
-    pgn = spn_info.get("pgn")
-    if pgn is None:
-        return []
-    pgn_info = lookup_pgn(pgn)
-    if pgn_info is None:
-        return [pgn]
-    spn_list = pgn_info.get("spnList", [])
-    if spn in spn_list:
-        return [pgn]
-    return [pgn]
+    return [spn_def.pgn]

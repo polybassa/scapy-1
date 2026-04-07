@@ -15,7 +15,7 @@ from scapy.contrib.automotive.obd.pid.pids import *
 from scapy.contrib.automotive.obd.tid.tids import *
 from scapy.contrib.automotive.obd.services import *
 from scapy.contrib.automotive.obd.services import _OBD_SERVICES
-from scapy.packet import NoPayload, Packet, bind_layers
+from scapy.packet import NoPayload, bind_layers
 from scapy.config import conf
 from scapy.fields import XByteEnumField
 from scapy.contrib.isotp import ISOTP

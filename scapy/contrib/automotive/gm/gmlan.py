@@ -83,6 +83,7 @@ def _gmlan_slm(pkt):
         return pkt.underlayer is None or not isinstance(pkt.underlayer, GMLAN)
     return True
 
+
 class GMLAN(ISOTP):
     @staticmethod
     def determine_len(x):

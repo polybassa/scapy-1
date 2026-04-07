@@ -74,6 +74,7 @@ def _kwp_slm(pkt):
         return pkt.underlayer is None or not isinstance(pkt.underlayer, KWP)
     return True
 
+
 class KWP(ISOTP):
     services = ObservableDict(
         {0x10: 'StartDiagnosticSession',

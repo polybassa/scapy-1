@@ -6,7 +6,10 @@
 
 # scapy.contrib.status = skip
 
-from scapy.fields import ConditionalField, FlagsField, ByteField, ScalingField, PacketListField, XByteEnumField
+from scapy.fields import (
+    ConditionalField, FlagsField, ByteField, ScalingField, PacketListField,
+    XByteEnumField
+)
 from scapy.packet import bind_layers, Packet
 from scapy.contrib.automotive.obd.packet import OBD_Packet
 from scapy.contrib.automotive.obd.services import OBD_S08, _OBD_SERVICES, _obd_slm

@@ -9,7 +9,9 @@
 from scapy.packet import Packet, bind_layers
 from scapy.fields import ConditionalField, PacketListField, XByteEnumField
 
-from scapy.contrib.automotive.obd.services import OBD_S01, OBD_S02, _OBD_SERVICES, _obd_slm
+from scapy.contrib.automotive.obd.services import (
+    OBD_S01, OBD_S02, _OBD_SERVICES, _obd_slm
+)
 from scapy.contrib.automotive.obd.pid.pids_00_1F import *
 from scapy.contrib.automotive.obd.pid.pids_20_3F import *
 from scapy.contrib.automotive.obd.pid.pids_40_5F import *

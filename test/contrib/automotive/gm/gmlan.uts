@@ -680,3 +680,60 @@ assert ido4[GMLAN_IDO].subfunction == 0x02
 
 conf.contribs['GMLAN']['single_layer_mode'] = False
 assert not conf.contribs['GMLAN']['single_layer_mode']
+
++ Compatibility mode GMLAN
+
+= Compatibility mode: setup - enable both SLM and compat mode (default)
+
+conf.contribs['GMLAN']['single_layer_mode'] = True
+conf.contribs['GMLAN']['compatibility_mode'] = True
+
+= Compatibility mode ON + SLM ON: standalone sub-packet has service field
+
+ido_sa = GMLAN_IDO(subfunction=0x02)
+assert bytes(ido_sa) == b'\x10\x02', \
+    "Standalone GMLAN_IDO should include service byte, got %s" % bytes(ido_sa).hex()
+assert ido_sa.service == 0x10
+
+= Compatibility mode ON + SLM ON: stacked sub-packet suppresses its service field
+
+stacked = GMLAN() / GMLAN_IDO(subfunction=0x02)
+assert bytes(stacked) == b'\x10\x02', \
+    "Stacked GMLAN/GMLAN_IDO should produce 2 bytes (no duplicate service), got %s" % bytes(stacked).hex()
+
+= Compatibility mode ON + SLM ON: dissect standalone still works
+
+ido_dis = GMLAN(b'\x10\x02')
+assert isinstance(ido_dis, GMLAN_IDO)
+assert ido_dis.service == 0x10
+assert ido_dis.subfunction == 0x02
+
+= Compatibility mode OFF + SLM ON: stacked sub-packet always emits service field
+
+conf.contribs['GMLAN']['compatibility_mode'] = False
+
+stacked_nc = GMLAN() / GMLAN_IDO(subfunction=0x02)
+assert bytes(stacked_nc) == b'\x10\x10\x02', \
+    "With compat OFF, stacked GMLAN/GMLAN_IDO should produce 3 bytes, got %s" % bytes(stacked_nc).hex()
+
+= Compatibility mode OFF + SLM ON: standalone sub-packet also has service field
+
+ido_nc = GMLAN_IDO(subfunction=0x02)
+assert bytes(ido_nc) == b'\x10\x02', \
+    "Standalone GMLAN_IDO should include service byte even with compat OFF, got %s" % bytes(ido_nc).hex()
+
+= Compatibility mode: SLM OFF overrides compat mode - no service field in sub-packet
+
+conf.contribs['GMLAN']['single_layer_mode'] = False
+conf.contribs['GMLAN']['compatibility_mode'] = False
+
+stacked_slm_off = GMLAN() / GMLAN_IDO(subfunction=0x02)
+assert bytes(stacked_slm_off) == b'\x10\x02', \
+    "With SLM OFF, no service field in GMLAN_IDO regardless of compat mode, got %s" % bytes(stacked_slm_off).hex()
+
+= Compatibility mode: cleanup
+
+conf.contribs['GMLAN']['single_layer_mode'] = False
+conf.contribs['GMLAN']['compatibility_mode'] = True
+assert not conf.contribs['GMLAN']['single_layer_mode']
+assert conf.contribs['GMLAN']['compatibility_mode']

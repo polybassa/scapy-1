@@ -46,11 +46,33 @@ except KeyError:
                      "ResponsePending' as answer of a request. \n"
                      "The default value is False.")
     conf.contribs['KWP'] = {'treat-response-pending-as-answer': False,
-                            'single_layer_mode': False}
+                            'single_layer_mode': False,
+                            'compatibility_mode': True}
 
 
 def _kwp_slm(pkt):
-    return conf.contribs['KWP'].get('single_layer_mode', False)
+    # type: (Any) -> bool
+    """Return True when the service ConditionalField should be present.
+
+    Two configuration keys in ``conf.contribs['KWP']`` control the behaviour:
+
+    ``single_layer_mode`` (bool, default ``False``):
+        When *True*, :class:`KWP` acts as a dispatch layer and returns the
+        matching service sub-packet directly.  Each sub-packet gains its own
+        ``service`` field so that it can be built and dissected stand-alone.
+
+    ``compatibility_mode`` (bool, default ``True``):
+        Only relevant when ``single_layer_mode`` is *True*.  When *True* the
+        ``service`` field is **suppressed** in a sub-packet whose immediate
+        underlayer is already a :class:`KWP` packet, preventing a duplicate
+        service byte when sub-packets are stacked (``KWP()/KWP_SDS()``).
+        Set to *False* to always emit the ``service`` byte from the sub-packet.
+    """
+    if not conf.contribs['KWP'].get('single_layer_mode', False):
+        return False
+    if conf.contribs['KWP'].get('compatibility_mode', True):
+        return pkt.underlayer is None or not isinstance(pkt.underlayer, KWP)
+    return True
 
 class KWP(ISOTP):
     services = ObservableDict(

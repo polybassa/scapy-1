@@ -1545,3 +1545,72 @@ assert er6.resetType == 0x01
 
 conf.contribs['UDS']['single_layer_mode'] = False
 assert not conf.contribs['UDS']['single_layer_mode']
+
++ Compatibility mode UDS
+
+= Compatibility mode: setup - enable both SLM and compat mode (default)
+
+conf.contribs['UDS']['single_layer_mode'] = True
+conf.contribs['UDS']['compatibility_mode'] = True
+
+= Compatibility mode ON + SLM ON: standalone sub-packet has service field
+
+dsc_sa = UDS_DSC(diagnosticSessionType=0x01)
+assert bytes(dsc_sa) == b'\x10\x01', \
+    "Standalone UDS_DSC should include service byte, got %s" % bytes(dsc_sa).hex()
+assert dsc_sa.service == 0x10
+
+= Compatibility mode ON + SLM ON: stacked sub-packet suppresses its service field
+
+stacked = UDS() / UDS_DSC(diagnosticSessionType=0x01)
+assert bytes(stacked) == b'\x10\x01', \
+    "Stacked UDS/UDS_DSC should produce 2 bytes (no duplicate service), got %s" % bytes(stacked).hex()
+
+= Compatibility mode ON + SLM ON: positive response stacked suppresses service
+
+stacked_pr = UDS() / UDS_DSCPR(diagnosticSessionType=0x01, sessionParameterRecord=b"")
+assert bytes(stacked_pr) == b'\x50\x01', \
+    "Stacked UDS/UDS_DSCPR should produce 2 bytes, got %s" % bytes(stacked_pr).hex()
+
+= Compatibility mode ON + SLM ON: dissect standalone still works
+
+dsc_dis = UDS(b'\x10\x01')
+assert isinstance(dsc_dis, UDS_DSC)
+assert dsc_dis.service == 0x10
+assert dsc_dis.diagnosticSessionType == 0x01
+
+= Compatibility mode OFF + SLM ON: stacked sub-packet always emits service field
+
+conf.contribs['UDS']['compatibility_mode'] = False
+
+stacked_nc = UDS() / UDS_DSC(diagnosticSessionType=0x01)
+assert bytes(stacked_nc) == b'\x10\x10\x01', \
+    "With compat OFF, stacked UDS/UDS_DSC should produce 3 bytes (duplicate service), got %s" % bytes(stacked_nc).hex()
+
+= Compatibility mode OFF + SLM ON: standalone sub-packet also has service field
+
+dsc_nc = UDS_DSC(diagnosticSessionType=0x01)
+assert bytes(dsc_nc) == b'\x10\x01', \
+    "Standalone UDS_DSC should include service byte even with compat OFF, got %s" % bytes(dsc_nc).hex()
+
+= Compatibility mode OFF + SLM ON: dissect standalone still works
+
+dsc_dis2 = UDS(b'\x10\x01')
+assert isinstance(dsc_dis2, UDS_DSC)
+assert dsc_dis2.service == 0x10
+
+= Compatibility mode: SLM OFF overrides compat mode - no service field in sub-packet
+
+conf.contribs['UDS']['single_layer_mode'] = False
+conf.contribs['UDS']['compatibility_mode'] = False
+
+stacked_slm_off = UDS() / UDS_DSC(diagnosticSessionType=0x01)
+assert bytes(stacked_slm_off) == b'\x10\x01', \
+    "With SLM OFF, no service field in UDS_DSC regardless of compat mode, got %s" % bytes(stacked_slm_off).hex()
+
+= Compatibility mode: cleanup
+
+conf.contribs['UDS']['single_layer_mode'] = False
+conf.contribs['UDS']['compatibility_mode'] = True
+assert not conf.contribs['UDS']['single_layer_mode']
+assert conf.contribs['UDS']['compatibility_mode']

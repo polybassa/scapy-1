@@ -53,13 +53,35 @@ except KeyError:
     #                    "ResponsePending' as answer of a request. \n"
     #                    "The default value is False.")
     conf.contribs['GMLAN'] = {'treat-response-pending-as-answer': False,
-                              'single_layer_mode': False}
+                              'single_layer_mode': False,
+                              'compatibility_mode': True}
 
 conf.contribs['GMLAN']['GMLAN_ECU_AddressingScheme'] = None
 
 
 def _gmlan_slm(pkt):
-    return conf.contribs['GMLAN'].get('single_layer_mode', False)
+    # type: (Packet) -> bool
+    """Return True when the service ConditionalField should be present.
+
+    Two configuration keys in ``conf.contribs['GMLAN']`` control the behaviour:
+
+    ``single_layer_mode`` (bool, default ``False``):
+        When *True*, :class:`GMLAN` acts as a dispatch layer and returns the
+        matching service sub-packet directly.  Each sub-packet gains its own
+        ``service`` field so that it can be built and dissected stand-alone.
+
+    ``compatibility_mode`` (bool, default ``True``):
+        Only relevant when ``single_layer_mode`` is *True*.  When *True* the
+        ``service`` field is **suppressed** in a sub-packet whose immediate
+        underlayer is already a :class:`GMLAN` packet, preventing a duplicate
+        service byte when sub-packets are stacked (``GMLAN()/GMLAN_IDO()``).
+        Set to *False* to always emit the ``service`` byte from the sub-packet.
+    """
+    if not conf.contribs['GMLAN'].get('single_layer_mode', False):
+        return False
+    if conf.contribs['GMLAN'].get('compatibility_mode', True):
+        return pkt.underlayer is None or not isinstance(pkt.underlayer, GMLAN)
+    return True
 
 class GMLAN(ISOTP):
     @staticmethod

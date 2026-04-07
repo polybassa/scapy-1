@@ -42,12 +42,38 @@ except KeyError:
     #                 "ResponsePending' as answer of a request. \n"
     #                 "The default value is False.")
     conf.contribs['UDS'] = {'treat-response-pending-as-answer': False,
-                            'single_layer_mode': False}
+                            'single_layer_mode': False,
+                            'compatibility_mode': True}
 
 conf.debug_dissector = True
 
+
 def _uds_slm(pkt):
-    return conf.contribs['UDS'].get('single_layer_mode', False)
+    # type: (Packet) -> bool
+    """Return True when the service ConditionalField should be present.
+
+    Two configuration keys in ``conf.contribs['UDS']`` control the behaviour:
+
+    ``single_layer_mode`` (bool, default ``False``):
+        When *True*, :class:`UDS` acts as a dispatch layer and returns the
+        matching service sub-packet directly (e.g.
+        ``UDS(b'\\x10\\x01')`` → ``UDS_DSC``).  Each sub-packet gains its
+        own ``service`` field so that it can be built and dissected
+        stand-alone.
+
+    ``compatibility_mode`` (bool, default ``True``):
+        Only relevant when ``single_layer_mode`` is *True*.  When *True* the
+        ``service`` field is **suppressed** in a sub-packet whose immediate
+        underlayer is already a :class:`UDS` packet.  This prevents a
+        duplicate service byte when a sub-packet is stacked on top of a UDS
+        base layer (``UDS()/UDS_DSC()``).  Set to *False* to always emit the
+        ``service`` byte from the sub-packet regardless of stacking.
+    """
+    if not conf.contribs['UDS'].get('single_layer_mode', False):
+        return False
+    if conf.contribs['UDS'].get('compatibility_mode', True):
+        return pkt.underlayer is None or not isinstance(pkt.underlayer, UDS)
+    return True
 
 
 class UDS(ISOTP):

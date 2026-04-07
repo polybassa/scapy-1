@@ -591,3 +591,60 @@ assert count == 1, "Expected 1 binding for KWP_SDS, got %d" % count
 
 conf.contribs['KWP']['single_layer_mode'] = False
 assert not conf.contribs['KWP']['single_layer_mode']
+
++ Compatibility mode KWP
+
+= Compatibility mode: setup - enable both SLM and compat mode (default)
+
+conf.contribs['KWP']['single_layer_mode'] = True
+conf.contribs['KWP']['compatibility_mode'] = True
+
+= Compatibility mode ON + SLM ON: standalone sub-packet has service field
+
+sds_sa = KWP_SDS(diagnosticSession=0x01)
+assert bytes(sds_sa) == b'\x10\x01', \
+    "Standalone KWP_SDS should include service byte, got %s" % bytes(sds_sa).hex()
+assert sds_sa.service == 0x10
+
+= Compatibility mode ON + SLM ON: stacked sub-packet suppresses its service field
+
+stacked = KWP() / KWP_SDS(diagnosticSession=0x01)
+assert bytes(stacked) == b'\x10\x01', \
+    "Stacked KWP/KWP_SDS should produce 2 bytes (no duplicate service), got %s" % bytes(stacked).hex()
+
+= Compatibility mode ON + SLM ON: dissect standalone still works
+
+sds_dis = KWP(b'\x10\x01')
+assert isinstance(sds_dis, KWP_SDS)
+assert sds_dis.service == 0x10
+assert sds_dis.diagnosticSession == 0x01
+
+= Compatibility mode OFF + SLM ON: stacked sub-packet always emits service field
+
+conf.contribs['KWP']['compatibility_mode'] = False
+
+stacked_nc = KWP() / KWP_SDS(diagnosticSession=0x01)
+assert bytes(stacked_nc) == b'\x10\x10\x01', \
+    "With compat OFF, stacked KWP/KWP_SDS should produce 3 bytes, got %s" % bytes(stacked_nc).hex()
+
+= Compatibility mode OFF + SLM ON: standalone sub-packet also has service field
+
+sds_nc = KWP_SDS(diagnosticSession=0x01)
+assert bytes(sds_nc) == b'\x10\x01', \
+    "Standalone KWP_SDS should include service byte even with compat OFF, got %s" % bytes(sds_nc).hex()
+
+= Compatibility mode: SLM OFF overrides compat mode - no service field in sub-packet
+
+conf.contribs['KWP']['single_layer_mode'] = False
+conf.contribs['KWP']['compatibility_mode'] = False
+
+stacked_slm_off = KWP() / KWP_SDS(diagnosticSession=0x01)
+assert bytes(stacked_slm_off) == b'\x10\x01', \
+    "With SLM OFF, no service field in KWP_SDS regardless of compat mode, got %s" % bytes(stacked_slm_off).hex()
+
+= Compatibility mode: cleanup
+
+conf.contribs['KWP']['single_layer_mode'] = False
+conf.contribs['KWP']['compatibility_mode'] = True
+assert not conf.contribs['KWP']['single_layer_mode']
+assert conf.contribs['KWP']['compatibility_mode']

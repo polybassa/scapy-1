@@ -39,7 +39,35 @@ _OBD_SERVICES = {
 
 
 def _obd_slm(pkt):
-    return conf.contribs['OBD'].get('single_layer_mode', False)
+    # type: (Packet) -> bool
+    """Return True when the service ConditionalField should be present.
+
+    Two configuration keys in ``conf.contribs['OBD']`` control the behaviour:
+
+    ``single_layer_mode`` (bool, default ``False``):
+        When *True*, :class:`OBD` acts as a dispatch layer and returns the
+        matching service sub-packet directly.  Each sub-packet gains its own
+        ``service`` field so that it can be built and dissected stand-alone.
+
+    ``compatibility_mode`` (bool, default ``True``):
+        Only relevant when ``single_layer_mode`` is *True*.  When *True* the
+        ``service`` field is **suppressed** in a sub-packet whose immediate
+        underlayer is already an :class:`OBD` packet, preventing a duplicate
+        service byte when sub-packets are stacked (``OBD()/OBD_S01()``).
+        Set to *False* to always emit the ``service`` byte from the sub-packet.
+
+    .. note::
+        OBD service classes live in ``services.py`` which is imported by
+        ``obd.py``.  To avoid a circular import the underlayer class is
+        identified by its class name (``'OBD'``) rather than by an
+        ``isinstance`` check.
+    """
+    if not conf.contribs['OBD'].get('single_layer_mode', False):
+        return False
+    if conf.contribs['OBD'].get('compatibility_mode', True):
+        ul = pkt.underlayer
+        return ul is None or type(ul).__name__ != 'OBD'
+    return True
 
 
 class OBD_DTC(OBD_Packet):

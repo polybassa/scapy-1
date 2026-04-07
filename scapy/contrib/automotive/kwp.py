@@ -51,7 +51,7 @@ except KeyError:
 
 
 def _kwp_slm(pkt):
-    # type: (Any) -> bool
+    # type: (Packet) -> bool
     """Return True when the service ConditionalField should be present.
 
     Two configuration keys in ``conf.contribs['KWP']`` control the behaviour:

@@ -1112,7 +1112,7 @@ stacked = OBD() / OBD_S01(pid=[0x0c])
 stacked_bytes = bytes(stacked)
 assert stacked_bytes[0:1] == b'\x01', \
     "Stacked OBD/OBD_S01 first byte should be 0x01 (OBD service), got %s" % stacked_bytes.hex()
-assert stacked_bytes.count(b'\x01') == 1 or stacked_bytes[1:2] != b'\x01', \
+assert stacked_bytes[1:2] != b'\x01', \
     "No duplicate service byte expected, got %s" % stacked_bytes.hex()
 assert len(stacked_bytes) == 2, \
     "Stacked OBD/OBD_S01(pid=[0x0c]) should be 2 bytes, got %s" % stacked_bytes.hex()

@@ -4959,7 +4959,7 @@ J1939_SPN_DB = {  # type: ignore[misc]
     5293: J1939SPNDef(5293, 53760, 54, 2, 'Allow Level Control During Braking Command', 'bit', 4, 2, 0, 0, 3),
     5294: J1939SPNDef(5294, 65114, 52, 2, 'Allow Level Control During Braking Status', 'bit', 4, 2, 0, 0, 3),
     5295: J1939SPNDef(5295, 53760, 56, 2, 'Speed Dependent Level Control Request', 'bit', 4, 2, 0, 0, 3),
-    5296: J1939SPNDef(5296, 65114, 54, 2, 'Speed Dependant Level Control Status', 'bit', 4, 2, 0, 0, 3),
+    5296: J1939SPNDef(5296, 65114, 54, 2, 'Speed Dependent Level Control Status', 'bit', 4, 2, 0, 0, 3),
     5297: J1939SPNDef(5297, 0, 0, 'variable', 'Aftertreatment 2 Warm Up Diesel Oxidation Catalyst Conversion Efficiency', '', 0, 1, 0, 0, 0),
     5298: J1939SPNDef(5298, 0, 0, 'variable', 'Aftertreatment 1 Diesel Oxidation Catalyst Conversion Efficiency', '', 0, 1, 0, 0, 0),
     5299: J1939SPNDef(5299, 0, 0, 'variable', 'Aftertreatment 2 Diesel Oxidation Catalyst Conversion Efficiency', '', 0, 1, 0, 0, 0),

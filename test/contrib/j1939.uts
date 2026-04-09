@@ -828,7 +828,7 @@ sock.close()
 = NativeJ1939Socket send and recv
 import socket as _socket
 
-sender = NativeJ1939Socket("vcan0", src_addr=0x00, pgn=_socket.J1939_NO_PGN)
+sender = NativeJ1939Socket("vcan0", src_addr=J1939_IDLE_ADDR, pgn=_socket.J1939_NO_PGN)
 receiver = NativeJ1939Socket("vcan0", promisc=True)
 
 tx_data = b'\x01\x02\x03\x04'
@@ -836,7 +836,7 @@ tx_pgn = 0xFECA
 
 def _send():
     sleep(0.1)
-    msg = J1939(tx_data, pgn=tx_pgn, src=0x00, dst=0xFF)
+    msg = J1939(tx_data, pgn=tx_pgn, src=J1939_IDLE_ADDR, dst=0xFF)
     sender.send(msg)
 
 t = threading.Thread(target=_send)
@@ -852,7 +852,7 @@ receiver.close()
 assert rx is not None, "No packet received"
 assert rx.data == tx_data, "Data mismatch: %r != %r" % (rx.data, tx_data)
 assert rx.pgn == tx_pgn, "PGN mismatch: 0x%X != 0x%X" % (rx.pgn, tx_pgn)
-assert rx.src == 0x00, "SA mismatch: %d" % rx.src
+assert rx.src == J1939_IDLE_ADDR, "SA mismatch: %d" % rx.src
 
 = NativeJ1939Socket long message sends TP.CM BAM + TP.DT to NativeCANSocket
 # J1939 kernel stack auto-segments the payload; NativeCANSocket collects the raw CAN frames
@@ -860,7 +860,7 @@ from scapy.contrib.cansocket_native import NativeCANSocket
 
 tx_long_payload = bytes(range(0x01, 0x15))   # 20 bytes → 1 BAM + 3 TP.DT
 tx_long_pgn = 0xFECA
-tx_long_src = 0x0A
+tx_long_src = J1939_IDLE_ADDR  # 0xFE: no address claiming needed
 
 j1939_sender_long = NativeJ1939Socket("vcan0", src_addr=tx_long_src)
 can_receiver_long = NativeCANSocket("vcan0", basecls=J1939_CAN)

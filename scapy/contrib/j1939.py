@@ -77,7 +77,7 @@ log_j1939 = logging.getLogger("scapy.contrib.j1939")
 #: 64-bit NAME not used / not relevant
 J1939_NO_NAME = getattr(socket, 'J1939_NO_NAME', 0)           # 0
 #: PGN wildcard – match any PGN when used in bind / filter
-J1939_NO_PGN = getattr(socket, 'J1939_NO_PGN', 0x40000)       # 0x40000
+J1939_NO_PGN = getattr(socket, 'J1939_NO_PGN', 0x40000000)    # 0x40000000
 #: Address wildcard – no specific address
 J1939_NO_ADDR = getattr(socket, 'J1939_NO_ADDR', 0xFF)        # 0xFF
 #: Idle/null address (used during address claiming)

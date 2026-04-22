@@ -962,3 +962,151 @@ assert rx_bam.src == tx_bam_src, "SA mismatch: %d != %d" % (rx_bam.src, tx_bam_s
 
 = Teardown
 pass  # vcan0 is managed by the test infrastructure; do not delete it here
+
+
+############
+############
++ J1939 interoperability tests with j1939cat and j1939sr
+~ vcan_socket needs_root
+
+= Setup interoperability tools
+import subprocess
+import shutil as _shutil
+import threading
+from time import sleep
+
+_j1939cat = _shutil.which("j1939cat")
+_j1939sr = _shutil.which("j1939sr")
+
+= j1939cat sends broadcast; NativeJ1939Socket receives (promisc)
+# j1939cat (SA=0x40) broadcasts PGN 0xFECA → NativeJ1939Socket (promisc) receives.
+# Skipped silently when j1939cat is not installed.
+if _j1939cat:
+    _cat_tx = b'\x01\x02\x03\x04\x05\x06\x07'
+    _cat_sa = 0x40
+    _cat_pgn = 0xFECA  # PDU2 broadcast (PF=0xFE >= 240)
+
+    _cat_receiver = NativeJ1939Socket("vcan0", promisc=True)
+    _cat_receiver.ins.settimeout(3.0)
+
+    def _cat_send_bcast():
+        sleep(0.2)
+        subprocess.Popen(
+            [_j1939cat, '-B',
+             'vcan0:0x%02x' % _cat_sa,
+             ':0xff,0x%x' % _cat_pgn],
+            stdin=subprocess.PIPE,
+        ).communicate(input=_cat_tx)
+
+    _t_cat = threading.Thread(target=_cat_send_bcast)
+    _t_cat.start()
+    _cat_rx = _cat_receiver.recv()
+    _t_cat.join()
+    _cat_receiver.close()
+
+    assert _cat_rx is not None, "No packet received from j1939cat"
+    assert _cat_rx.data == _cat_tx, \
+        "Payload mismatch: %r != %r" % (_cat_rx.data, _cat_tx)
+    assert _cat_rx.pgn == _cat_pgn, "PGN mismatch: 0x%X" % _cat_rx.pgn
+    assert _cat_rx.src == _cat_sa, "SA mismatch: 0x%X" % _cat_rx.src
+
+= NativeJ1939Socket sends unicast; j1939cat receives
+# NativeJ1939Socket (SA=0x41) sends PDU1 unicast (PGN 0xEF00, DA=0x50).
+# j1939cat bound at SA=0x50 receives the payload.
+# Skipped silently when j1939cat is not installed.
+if _j1939cat:
+    _cat2_sa = 0x50    # j1939cat receiver source address
+    _scapy_sa2 = 0x41  # NativeJ1939Socket sender source address
+    _cat2_pgn = 0xEF00  # PDU1 (PF=0xEF=239 < 240), unicast
+
+    _p_cat2 = subprocess.Popen(
+        [_j1939cat, 'vcan0:0x%02x' % _cat2_sa, '-r'],
+        stdout=subprocess.PIPE,
+    )
+    sleep(0.2)  # give j1939cat time to bind
+
+    _cat2_tx = b'\x0a\x0b\x0c\x0d\x0e\x0f\x10'
+    _cat2_sock = NativeJ1939Socket("vcan0", src_addr=_scapy_sa2, promisc=False)
+    _cat2_sock.send(
+        J1939(_cat2_tx, pgn=_cat2_pgn, src=_scapy_sa2, dst=_cat2_sa)
+    )
+    _cat2_sock.close()
+
+    try:
+        _cat2_out, _ = _p_cat2.communicate(timeout=3.0)
+    except subprocess.TimeoutExpired:
+        _p_cat2.terminate()
+        _cat2_out = _p_cat2.stdout.read()
+
+    assert _cat2_out == _cat2_tx, \
+        "j1939cat received: %r != expected: %r" % (_cat2_out, _cat2_tx)
+
+= j1939sr sends unicast; NativeJ1939Socket receives
+# j1939sr (SA=0x60, PGN 0xEF00) sends to SA=0x71 → NativeJ1939Socket at SA=0x71 receives.
+# Skipped silently when j1939sr is not installed.
+if _j1939sr:
+    _sr_src_sa = 0x60
+    _sr_dst_sa = 0x71  # NativeJ1939Socket receiver source address
+    _sr_pgn = 0xEF00   # PDU1 (unicast)
+
+    _sr_receiver = NativeJ1939Socket(
+        "vcan0", src_addr=_sr_dst_sa, pgn=_sr_pgn, promisc=False
+    )
+    _sr_receiver.ins.settimeout(3.0)
+
+    _sr_tx = b'\xaa\xbb\xcc\xdd\xee\xff'
+
+    def _j1939sr_send():
+        sleep(0.2)
+        subprocess.Popen(
+            [_j1939sr,
+             'vcan0:0x%02x,0x%04x' % (_sr_src_sa, _sr_pgn),
+             '0x%02x' % _sr_dst_sa],
+            stdin=subprocess.PIPE,
+        ).communicate(input=_sr_tx)
+
+    _t_sr = threading.Thread(target=_j1939sr_send)
+    _t_sr.start()
+    _sr_rx = _sr_receiver.recv()
+    _t_sr.join()
+    _sr_receiver.close()
+
+    assert _sr_rx is not None, "No packet received from j1939sr"
+    assert _sr_rx.data == _sr_tx, \
+        "Payload mismatch: %r != %r" % (_sr_rx.data, _sr_tx)
+    assert _sr_rx.src == _sr_src_sa, "SA mismatch: 0x%X" % _sr_rx.src
+
+= NativeJ1939Socket sends unicast; j1939sr receives
+# NativeJ1939Socket (SA=0x61) sends PDU1 unicast (PGN 0xEF00, DA=0x80).
+# j1939sr bound at SA=0x80 receives and writes payload to stdout.
+# Skipped silently when j1939sr is not installed.
+if _j1939sr:
+    _sr2_dst_sa = 0x80  # j1939sr receiver source address
+    _scapy_sa4 = 0x61   # NativeJ1939Socket sender source address
+    _sr2_pgn = 0xEF00   # PDU1 (unicast)
+
+    _p_sr2 = subprocess.Popen(
+        [_j1939sr,
+         'vcan0:0x%02x,0x%04x' % (_sr2_dst_sa, _sr2_pgn)],
+        stdout=subprocess.PIPE,
+    )
+    sleep(0.2)  # give j1939sr time to bind
+
+    _sr2_tx = b'\x11\x22\x33\x44\x55\x66'
+    _sr2_sock = NativeJ1939Socket("vcan0", src_addr=_scapy_sa4, promisc=False)
+    _sr2_sock.send(
+        J1939(_sr2_tx, pgn=_sr2_pgn, src=_scapy_sa4, dst=_sr2_dst_sa)
+    )
+    _sr2_sock.close()
+
+    try:
+        _sr2_out, _ = _p_sr2.communicate(timeout=3.0)
+    except subprocess.TimeoutExpired:
+        _p_sr2.terminate()
+        _sr2_out = _p_sr2.stdout.read()
+
+    assert _sr2_out == _sr2_tx, \
+        "j1939sr received: %r != expected: %r" % (_sr2_out, _sr2_tx)
+
+= Teardown interoperability test section
+pass

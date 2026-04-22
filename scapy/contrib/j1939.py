@@ -624,7 +624,7 @@ class NativeJ1939Socket(SuperSocket):
 
         # Allow sending and receiving broadcast (global address 0xFF / J1939_NO_ADDR).
         # The Linux kernel J1939 stack refuses sendto() calls with addr=J1939_NO_ADDR
-        # unless SOCK_BROADCAST is set, returning EACCES.
+        # unless SO_BROADCAST is set, returning EACCES.
         try:
             self.ins.setsockopt(
                 socket.SOL_SOCKET,

@@ -971,12 +971,12 @@ pass  # vcan0 is managed by the test infrastructure; do not delete it here
 
 = Setup interoperability tools
 import subprocess
-import shutil as _shutil
+import shutil
 import threading
 from time import sleep
 
-_j1939cat = _shutil.which("j1939cat")
-_j1939sr = _shutil.which("j1939sr")
+_j1939cat = shutil.which("j1939cat")
+_j1939sr = shutil.which("j1939sr")
 
 = j1939cat sends broadcast; NativeJ1939Socket receives (promisc)
 # j1939cat (SA=0x40) broadcasts PGN 0xFECA → NativeJ1939Socket (promisc) receives.
@@ -1217,8 +1217,6 @@ pass
 #      marker is correctly decoded by ISOTPSoftSocket as an ISOTP SF.
 
 = Setup ISOTPSoftSocket interoperability imports
-import threading as _interop_threading
-from time import sleep as _interop_sleep
 from scapy.contrib.isotp import ISOTPSoftSocket, ISOTP
 from scapy.contrib.cansocket_native import NativeCANSocket
 from scapy.sendrecv import sniff

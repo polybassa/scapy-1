@@ -582,9 +582,11 @@ class NativeJ1939Socket(SuperSocket):
 
     desc = "read/write J1939 messages using Linux kernel PF_CAN/CAN_J1939 sockets"
 
-    # struct j1939_filter: name(Q) name_mask(Q) pgn(I) pgn_mask(I) addr(B) addr_mask(B)
-    # sizeof(struct j1939_filter) = 32 bytes on 64-bit Linux (26 bytes data + 6 bytes padding
-    # to align to the 8-byte boundary required by the __u64 members).
+    # struct j1939_filter: name(Q=8) name_mask(Q=8) pgn(I=4) pgn_mask(I=4) addr(B=1) addr_mask(B=1)
+    # Packed size of the 6 fields = 8+8+4+4+1+1 = 26 bytes.
+    # sizeof(struct j1939_filter) = 32 bytes on 64-bit Linux: the compiler adds 6 bytes of
+    # trailing padding so that the struct size is a multiple of the largest member alignment
+    # (__u64, 8 bytes).  The padding must be included when passing an array to setsockopt(2).
     _J1939_FILTER_FMT = "=QQIIBB"
     _J1939_FILTER_PAD = b'\x00' * 6  # 6 bytes padding to reach 32-byte alignment
 

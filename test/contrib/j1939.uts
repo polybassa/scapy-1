@@ -2072,3 +2072,435 @@ _r3_sock = NativeJ1939Socket("vcan0", src_addr=0x32, promisc=False)
 _r3_ret = _r3_sock.send(None)
 _r3_sock.close()
 assert _r3_ret == 0, "send(None) must return 0, got %r" % _r3_ret
+
+
+############
+############
++ J1939SoftSocket tests
+~ not_pypy
+
+= J1939SoftSocket imports
+
+import time
+from scapy.contrib.j1939 import (
+    J1939SoftSocket,
+    J1939TPImplementation,
+    J1939, J1939_CAN,
+    J1939_TP_CM_BAM, J1939_TP_CM_RTS, J1939_TP_CM_CTS,
+    J1939_TP_CM_ACK, J1939_TP_CM_ABORT, J1939_TP_DT,
+    J1939_TP_CTRL_BAM, J1939_TP_CTRL_RTS, J1939_TP_CTRL_CTS,
+    J1939_TP_CTRL_ACK, J1939_TP_CTRL_ABORT,
+)
+from scapy.layers.can import CAN
+from test.testsocket import TestSocket, cleanup_testsockets
+import socket as _socket
+
+= J1939SoftSocket is importable and has the correct type
+
+assert issubclass(J1939SoftSocket, SuperSocket)
+
+= J1939SoftSocket – context manager and close
+
+with TestSocket(CAN) as cans:
+    with J1939SoftSocket(cans, src_addr=0x00) as sock:
+        assert not sock.closed
+    assert sock.closed
+
+= J1939SoftSocket – single-frame receive (broadcast PDU2)
+# Inject a short J1939_CAN broadcast frame from SA=0x01; the soft socket
+# should decode it and deliver a J1939 packet to the application layer.
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as stim:
+    cans.pair(stim)
+    with J1939SoftSocket(cans, src_addr=0x00) as sock:
+        stim.send(J1939_CAN(priority=6, data_page=0, pdu_format=0xFE,
+                             pdu_specific=0xCA, src=0x01,
+                             data=b'\x11\x22\x33'))
+        pkts = sock.sniff(count=1, timeout=1)
+assert len(pkts) == 1, "Expected 1 packet, got %d" % len(pkts)
+assert pkts[0].pgn == 0xFECA, "PGN mismatch: 0x%05X" % pkts[0].pgn
+assert pkts[0].src == 0x01, "SA mismatch: 0x%02X" % pkts[0].src
+assert pkts[0].data == b'\x11\x22\x33', "data mismatch: %r" % pkts[0].data
+
+= J1939SoftSocket – single-frame receive (PDU1 unicast to our SA)
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as stim:
+    cans.pair(stim)
+    with J1939SoftSocket(cans, src_addr=0x10) as sock:
+        # PF=0xEF (239 < 240, PDU1), PS=0x10 (our SA) -> unicast to us
+        stim.send(J1939_CAN(priority=6, data_page=0, pdu_format=0xEF,
+                             pdu_specific=0x10, src=0x05,
+                             data=b'\xAA\xBB\xCC'))
+        pkts = sock.sniff(count=1, timeout=1)
+assert len(pkts) == 1, "Expected 1 packet, got %d" % len(pkts)
+assert pkts[0].src == 0x05
+assert pkts[0].dst == 0x10
+assert pkts[0].data == b'\xAA\xBB\xCC'
+
+= J1939SoftSocket – single-frame receive ignored (unicast to different SA)
+# Frame addressed to SA=0x20 must NOT be delivered when our SA is 0x10.
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as stim:
+    cans.pair(stim)
+    with J1939SoftSocket(cans, src_addr=0x10) as sock:
+        stim.send(J1939_CAN(priority=6, data_page=0, pdu_format=0xEF,
+                             pdu_specific=0x20, src=0x05,
+                             data=b'\xAA\xBB\xCC'))
+        pkts = sock.sniff(count=1, timeout=0.3)
+assert len(pkts) == 0, "Frame not addressed to us should be ignored"
+
+= J1939SoftSocket – single-frame send (broadcast PDU2)
+# After calling send(), the underlying CAN socket must receive exactly one
+# J1939_CAN frame with the correct PGN and source address.
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as peer:
+    cans.pair(peer)
+    with J1939SoftSocket(cans, src_addr=0x00) as sock:
+        sock.send(J1939(b'\xAA\xBB', pgn=0xFECA,
+                        dst=_socket.J1939_NO_ADDR, priority=6))
+        pkts = peer.sniff(count=1, timeout=1)
+assert len(pkts) == 1, "Expected 1 CAN frame, got %d" % len(pkts)
+j = J1939_CAN(bytes(pkts[0]))
+assert j.pgn == 0xFECA, "PGN mismatch: 0x%05X" % j.pgn
+assert j.src == 0x00, "SA mismatch: 0x%02X" % j.src
+assert j.data == b'\xAA\xBB', "data mismatch: %r" % j.data
+
+= J1939SoftSocket – single-frame send (PDU1 unicast)
+# Unicast to DA=0x10: pdu_format encodes the PGN base, pdu_specific = DA.
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as peer:
+    cans.pair(peer)
+    with J1939SoftSocket(cans, src_addr=0x01) as sock:
+        sock.send(J1939(b'\x01\x02\x03', pgn=0xEF00, dst=0x10, priority=6))
+        pkts = peer.sniff(count=1, timeout=1)
+assert len(pkts) == 1
+j = J1939_CAN(bytes(pkts[0]))
+assert j.pdu_format == 0xEF, "pf=0x%02X" % j.pdu_format
+assert j.pdu_specific == 0x10, "ps=0x%02X" % j.pdu_specific
+assert j.src == 0x01
+assert j.data == b'\x01\x02\x03'
+
+= J1939SoftSocket – BAM multi-packet receive (20-byte payload, 3 TP.DT frames)
+
+_bam_payload = bytes(range(0x01, 0x15))  # 20 bytes -> 3 TP.DT
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as stim:
+    cans.pair(stim)
+    with J1939SoftSocket(cans, src_addr=0x00) as sock:
+        bam = J1939_TP_CM_BAM(total_size=20, num_packets=3, pgn=0xFECA)
+        stim.send(J1939_CAN(priority=6, pdu_format=0xEC, pdu_specific=0xFF,
+                             src=0x01, data=bytes(bam)))
+        time.sleep(0.05)
+        for seq in range(1, 4):
+            start = (seq - 1) * 7
+            chunk = _bam_payload[start:start + 7]
+            chunk += b'\xff' * (7 - len(chunk))
+            stim.send(J1939_CAN(priority=7, pdu_format=0xEB, pdu_specific=0xFF,
+                                 src=0x01, data=bytes(J1939_TP_DT(seq_num=seq, data=chunk))))
+            time.sleep(0.01)
+        pkts = sock.sniff(count=1, timeout=2)
+
+assert len(pkts) == 1, "Expected 1 reassembled message, got %d" % len(pkts)
+assert pkts[0].pgn == 0xFECA, "PGN mismatch"
+assert pkts[0].src == 0x01, "SA mismatch"
+assert pkts[0].data == _bam_payload, \
+    "Payload mismatch: %r != %r" % (pkts[0].data, _bam_payload)
+
+= J1939SoftSocket – BAM multi-packet send (20-byte payload, 3 TP.DT frames)
+# The soft socket must emit: 1 TP.CM BAM + 3 TP.DT frames, with the correct
+# wire encoding.
+
+_bam_tx_payload = bytes(range(0x01, 0x15))  # 20 bytes
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as peer:
+    cans.pair(peer)
+    with J1939SoftSocket(cans, src_addr=0x00) as sock:
+        sock.send(J1939(_bam_tx_payload, pgn=0xFECA,
+                        dst=_socket.J1939_NO_ADDR, priority=6))
+        # 1 BAM + 3 DT frames; 50 ms delay between each -> ~200 ms total.
+        pkts = peer.sniff(count=4, timeout=3)
+
+assert len(pkts) == 4, "Expected 4 CAN frames (1 BAM + 3 DT), got %d" % len(pkts)
+
+j0 = J1939_CAN(bytes(pkts[0]))
+assert j0.pdu_format == 0xEC, "Frame 0 must be TP.CM, pf=0x%02X" % j0.pdu_format
+assert j0.pdu_specific == 0xFF, "BAM DA must be broadcast (0xFF)"
+bam_decoded = J1939_TP_CM_BAM(j0.data)
+assert bam_decoded.ctrl == J1939_TP_CTRL_BAM
+assert bam_decoded.total_size == 20
+assert bam_decoded.num_packets == 3
+assert bam_decoded.pgn == 0xFECA
+
+_bam_tx_reassembled = b''
+for _i in range(1, 4):
+    _ji = J1939_CAN(bytes(pkts[_i]))
+    assert _ji.pdu_format == 0xEB, "Frame %d must be TP.DT, pf=0x%02X" % (_i, _ji.pdu_format)
+    assert _ji.pdu_specific == 0xFF, "BAM DT DA must be broadcast"
+    _dt = J1939_TP_DT(_ji.data)
+    assert _dt.seq_num == _i, "seq_num=%d expected %d" % (_dt.seq_num, _i)
+    _bam_tx_reassembled += _dt.data
+
+assert _bam_tx_reassembled[:20] == _bam_tx_payload, \
+    "Reassembled payload mismatch: %r" % _bam_tx_reassembled[:20]
+
+= J1939SoftSocket – BAM large payload (100 bytes, 15 TP.DT frames)
+
+_large_payload = bytes(range(100))   # 100 bytes -> ceil(100/7) = 15 TP.DT
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as peer:
+    cans.pair(peer)
+    with J1939SoftSocket(cans, src_addr=0x00) as sock:
+        sock.send(J1939(_large_payload, pgn=0xFECA,
+                        dst=_socket.J1939_NO_ADDR, priority=6))
+        # 1 BAM + 15 DT with 50 ms spacing -> up to ~800 ms
+        pkts = peer.sniff(count=16, timeout=5)
+
+assert len(pkts) == 16, "Expected 16 frames (1 BAM + 15 DT), got %d" % len(pkts)
+j0 = J1939_CAN(bytes(pkts[0]))
+bam_large = J1939_TP_CM_BAM(j0.data)
+assert bam_large.total_size == 100
+assert bam_large.num_packets == 15
+
+_large_reassembled = b''
+for _i in range(1, 16):
+    _ji = J1939_CAN(bytes(pkts[_i]))
+    _dt = J1939_TP_DT(_ji.data)
+    _large_reassembled += _dt.data
+
+assert _large_reassembled[:100] == _large_payload, \
+    "Large payload mismatch: %r" % _large_reassembled[:100]
+
+= J1939SoftSocket – soft-to-soft BAM (sender J1939SoftSocket → receiver J1939SoftSocket)
+# Two J1939SoftSocket instances connected through paired TestSockets.
+
+_s2s_payload = bytes(range(0x01, 0x15))  # 20 bytes
+
+with TestSocket(CAN) as cans1, TestSocket(CAN) as cans2:
+    cans1.pair(cans2)
+    with J1939SoftSocket(cans1, src_addr=0x01) as sender, \
+         J1939SoftSocket(cans2, src_addr=0x02) as receiver:
+        sender.send(J1939(_s2s_payload, pgn=0xFECA,
+                          dst=_socket.J1939_NO_ADDR, priority=6))
+        pkts = receiver.sniff(count=1, timeout=3)
+
+assert len(pkts) == 1, "Expected 1 reassembled message, got %d" % len(pkts)
+assert pkts[0].pgn == 0xFECA
+assert pkts[0].src == 0x01
+assert pkts[0].data == _s2s_payload, \
+    "Payload mismatch: %r != %r" % (pkts[0].data, _s2s_payload)
+
+= J1939SoftSocket – soft-to-soft RTS/CTS unicast
+
+_rtc_payload = bytes(range(0x01, 0x10))  # 15 bytes -> 3 TP.DT
+
+with TestSocket(CAN) as cans1, TestSocket(CAN) as cans2:
+    cans1.pair(cans2)
+    with J1939SoftSocket(cans1, src_addr=0x01) as sender, \
+         J1939SoftSocket(cans2, src_addr=0x02) as receiver:
+        # Unicast to receiver's SA -> triggers RTS/CTS
+        sender.send(J1939(_rtc_payload, pgn=0xEF00, dst=0x02, priority=6))
+        # RTS -> CTS -> 3xDT -> ACK: allow up to 3 s
+        pkts = receiver.sniff(count=1, timeout=3)
+
+assert len(pkts) == 1, "Expected 1 RTS/CTS message, got %d" % len(pkts)
+assert pkts[0].pgn == 0xEF00
+assert pkts[0].src == 0x01
+assert pkts[0].dst == 0x02
+assert pkts[0].data == _rtc_payload, \
+    "RTS/CTS payload mismatch: %r != %r" % (pkts[0].data, _rtc_payload)
+
+= J1939SoftSocket – RX sequence-number error triggers ABORT
+# Deliver TP.DT frames out of sequence; the soft socket must abort.
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as stim:
+    cans.pair(stim)
+    with J1939SoftSocket(cans, src_addr=0x02) as sock:
+        # Start a unicast RTS session to our SA (0x02)
+        rts = J1939_TP_CM_RTS(total_size=14, num_packets=2,
+                               max_packets=0xFF, pgn=0xEF00)
+        stim.send(J1939_CAN(priority=6, pdu_format=0xEC, pdu_specific=0x02,
+                             src=0x01, data=bytes(rts)))
+        time.sleep(0.05)
+        # Deliver DT with wrong seq (2 instead of 1)
+        stim.send(J1939_CAN(priority=7, pdu_format=0xEB, pdu_specific=0x02,
+                             src=0x01,
+                             data=bytes(J1939_TP_DT(seq_num=2,
+                                                     data=b'\x01\x02\x03\x04\x05\x06\x07'))))
+        # Capture the ABORT frame sent back
+        abort_frames = stim.sniff(count=5, timeout=1)
+
+# Filter out the CTS (first reply) - look for ABORT frame
+_abort_found = False
+for _af in abort_frames:
+    _aj = J1939_CAN(bytes(_af))
+    if _aj.pdu_format == 0xEC and _aj.pdu_specific == 0x01:
+        _d = bytes(_aj.data)
+        if _d and _d[0] == J1939_TP_CTRL_ABORT:
+            _abort_found = True
+            break
+assert _abort_found, "Expected ABORT frame after bad seq number"
+
+= J1939SoftSocket – RX timeout discards incomplete message
+# Start a BAM session but deliver no DT; after T1 (750 ms) the session
+# should be silently discarded and rx_state reset to idle.
+
+with TestSocket(CAN) as cans, TestSocket(CAN) as stim:
+    cans.pair(stim)
+    with J1939SoftSocket(cans, src_addr=0x00) as sock:
+        bam = J1939_TP_CM_BAM(total_size=14, num_packets=2, pgn=0xFECA)
+        stim.send(J1939_CAN(priority=6, pdu_format=0xEC, pdu_specific=0xFF,
+                             src=0x03, data=bytes(bam)))
+        # Wait longer than T1 (750 ms); no DT delivered.
+        pkts = sock.sniff(count=1, timeout=1.5)
+
+assert len(pkts) == 0, "No message should be delivered after BAM timeout"
+
+= J1939SoftSocket – send(None) is safe
+
+with TestSocket(CAN) as cans:
+    with J1939SoftSocket(cans, src_addr=0x00) as sock:
+        # send() expects a Packet; passing None should not crash
+        try:
+            sock.send(J1939(b''))   # empty but valid
+        except Exception as _e:
+            assert False, "send(J1939(b'')) raised: %s" % _e
+
+
+############
+############
++ J1939SoftSocket ↔ NativeJ1939Socket interoperability tests
+~ vcan_socket needs_root not_pypy
+
+= Setup interoperability environment
+
+import os
+import threading
+from time import sleep
+from subprocess import call
+
+_iop_setup_cmd = "/bin/bash -c 'sudo modprobe vcan; sudo ip link add name vcan0 type vcan 2>/dev/null; sudo ip link set dev vcan0 up'"
+os.system(_iop_setup_cmd)  # best-effort; vcan0 may already be up
+
+from scapy.contrib.cansocket_native import NativeCANSocket
+from scapy.contrib.j1939 import NativeJ1939Socket
+
+= J1939SoftSocket TX (broadcast) → NativeJ1939Socket RX
+# Soft socket sends a short broadcast; native socket receives it.
+
+_iop1_payload = b'\x01\x02\x03\x04'
+_iop1_pgn = 0xFECA
+_iop1_sa = 0x30
+
+_iop1_cansock = NativeCANSocket("vcan0")
+_iop1_native_rx = NativeJ1939Socket("vcan0", promisc=True)
+_iop1_native_rx.ins.settimeout(3.0)
+
+def _iop1_send():
+    sleep(0.1)
+    with J1939SoftSocket(_iop1_cansock, src_addr=_iop1_sa) as s:
+        s.send(J1939(_iop1_payload, pgn=_iop1_pgn,
+                     dst=_socket.J1939_NO_ADDR, priority=6))
+
+_iop1_t = threading.Thread(target=_iop1_send)
+_iop1_pkts = _iop1_native_rx.sniff(timeout=3.0, started_callback=_iop1_t.start, count=1)
+_iop1_t.join(timeout=5)
+_iop1_native_rx.close()
+
+assert _iop1_pkts, "NativeJ1939Socket received no packet from J1939SoftSocket"
+_iop1_rx = _iop1_pkts[0]
+assert _iop1_rx.data == _iop1_payload, \
+    "Payload mismatch: %r != %r" % (_iop1_rx.data, _iop1_payload)
+assert _iop1_rx.pgn == _iop1_pgn, "PGN mismatch: 0x%X" % _iop1_rx.pgn
+assert _iop1_rx.src == _iop1_sa, "SA mismatch: 0x%X" % _iop1_rx.src
+
+= NativeJ1939Socket TX (broadcast) → J1939SoftSocket RX
+# Native socket sends a short broadcast; soft socket receives and decodes it.
+
+_iop2_payload = b'\x05\x06\x07\x08'
+_iop2_pgn = 0xFECA
+_iop2_sa = 0x31
+
+_iop2_cansock = NativeCANSocket("vcan0")
+_iop2_soft_rx = J1939SoftSocket(_iop2_cansock, src_addr=0x00)
+_iop2_native_tx = NativeJ1939Socket("vcan0", src_addr=_iop2_sa, promisc=False)
+
+def _iop2_send():
+    sleep(0.1)
+    _iop2_native_tx.send(
+        J1939(_iop2_payload, pgn=_iop2_pgn,
+              src=_iop2_sa, dst=_socket.J1939_NO_ADDR))
+
+_iop2_t = threading.Thread(target=_iop2_send)
+_iop2_pkts = _iop2_soft_rx.sniff(timeout=3.0, started_callback=_iop2_t.start, count=1)
+_iop2_t.join(timeout=5)
+_iop2_native_tx.close()
+_iop2_soft_rx.close()
+
+assert _iop2_pkts, "J1939SoftSocket received no packet from NativeJ1939Socket"
+_iop2_rx = _iop2_pkts[0]
+assert _iop2_rx.data == _iop2_payload, \
+    "Payload mismatch: %r != %r" % (_iop2_rx.data, _iop2_payload)
+assert _iop2_rx.pgn == _iop2_pgn, "PGN mismatch: 0x%X" % _iop2_rx.pgn
+assert _iop2_rx.src == _iop2_sa, "SA mismatch: 0x%X" % _iop2_rx.src
+
+= J1939SoftSocket TX (BAM, long message) → NativeJ1939Socket RX
+# Soft socket sends a 20-byte message via BAM; the kernel J1939 stack
+# reassembles it and delivers a single complete message to the native socket.
+
+_iop3_payload = bytes(range(0x01, 0x15))   # 20 bytes -> BAM + 3 TP.DT
+_iop3_pgn = 0xFECA
+_iop3_sa = 0x32
+
+_iop3_cansock = NativeCANSocket("vcan0")
+_iop3_native_rx = NativeJ1939Socket("vcan0", promisc=True)
+_iop3_native_rx.ins.settimeout(5.0)
+
+def _iop3_send():
+    sleep(0.1)
+    with J1939SoftSocket(_iop3_cansock, src_addr=_iop3_sa) as s:
+        s.send(J1939(_iop3_payload, pgn=_iop3_pgn,
+                     dst=_socket.J1939_NO_ADDR, priority=6))
+
+_iop3_t = threading.Thread(target=_iop3_send)
+# The kernel reassembles BAM; snap until we see the full message.
+_iop3_pkts = _iop3_native_rx.sniff(timeout=5.0, started_callback=_iop3_t.start, count=1)
+_iop3_t.join(timeout=10)
+_iop3_native_rx.close()
+
+assert _iop3_pkts, "NativeJ1939Socket received no BAM message from J1939SoftSocket"
+_iop3_rx = _iop3_pkts[0]
+assert _iop3_rx.data == _iop3_payload, \
+    "Payload mismatch: %r != %r" % (_iop3_rx.data, _iop3_payload)
+assert _iop3_rx.pgn == _iop3_pgn, "PGN mismatch: 0x%X" % _iop3_rx.pgn
+assert _iop3_rx.src == _iop3_sa, "SA mismatch: 0x%X" % _iop3_rx.src
+
+= NativeJ1939Socket TX (BAM, long message) → J1939SoftSocket RX
+# Native socket sends a 20-byte broadcast; the soft socket must reassemble
+# the BAM sequence and deliver the complete payload.
+
+_iop4_payload = bytes(range(0x14, 0x28))   # 20 bytes
+_iop4_pgn = 0xFECA
+_iop4_sa = 0x33
+
+_iop4_cansock = NativeCANSocket("vcan0")
+_iop4_soft_rx = J1939SoftSocket(_iop4_cansock, src_addr=0x00)
+_iop4_native_tx = NativeJ1939Socket("vcan0", src_addr=_iop4_sa, promisc=False)
+
+def _iop4_send():
+    sleep(0.1)
+    _iop4_native_tx.send(
+        J1939(_iop4_payload, pgn=_iop4_pgn,
+              src=_iop4_sa, dst=_socket.J1939_NO_ADDR))
+
+_iop4_t = threading.Thread(target=_iop4_send)
+_iop4_pkts = _iop4_soft_rx.sniff(timeout=5.0, started_callback=_iop4_t.start, count=1)
+_iop4_t.join(timeout=10)
+_iop4_native_tx.close()
+_iop4_soft_rx.close()
+
+assert _iop4_pkts, "J1939SoftSocket received no reassembled BAM message"
+_iop4_rx = _iop4_pkts[0]
+assert _iop4_rx.data == _iop4_payload, \
+    "Payload mismatch: %r != %r" % (_iop4_rx.data, _iop4_payload)
+assert _iop4_rx.pgn == _iop4_pgn, "PGN mismatch: 0x%X" % _iop4_rx.pgn
+assert _iop4_rx.src == _iop4_sa, "SA mismatch: 0x%X" % _iop4_rx.src

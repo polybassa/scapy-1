@@ -1,0 +1,480 @@
+% Regression tests for the ISOBUS (ISO 11783) layer
+
+############
+############
+
++ Basic operations
+
+= Load module
+load_contrib("automotive.isobus", globals_dict=globals())
+
+= Build a minimal ISOBUS header (PDU1 - Address Claimed)
+
+pkt = ISOBUS(priority=6, pdu_format=0xEE, pdu_specific=0xFF,
+             source_address=0x80, length=8)
+
+assert pkt.priority == 6
+assert pkt.reserved == 0
+assert pkt.data_page == 0
+assert pkt.pdu_format == 0xEE
+assert pkt.pdu_specific == 0xFF
+assert pkt.source_address == 0x80
+assert pkt.length == 8
+
+= Check ISOBUS header byte encoding
+
+pkt = ISOBUS(priority=6, pdu_format=0xEE, pdu_specific=0xFF,
+             source_address=0x80, length=8)
+raw = bytes(pkt)
+
+# Byte 0: flags(000) + priority(110=6) + reserved(0) + data_page(0) = 0x18
+assert raw[0] == 0x18
+# Byte 1: pdu_format = 0xEE
+assert raw[1] == 0xEE
+# Byte 2: pdu_specific = 0xFF
+assert raw[2] == 0xFF
+# Byte 3: source_address = 0x80
+assert raw[3] == 0x80
+# Byte 4: length = 8
+assert raw[4] == 0x08
+
+= PGN computation for PDU1 (pdu_format < 0xF0)
+
+pkt = ISOBUS(priority=6, pdu_format=0xEE, pdu_specific=0xFF, source_address=0x80)
+# PDU1: PGN = (reserved=0 << 17) | (data_page=0 << 16) | (pdu_format=0xEE << 8)
+assert pkt.pgn == 0x00EE00
+
+pkt2 = ISOBUS(priority=6, pdu_format=0xEA, pdu_specific=0x42, source_address=0x80)
+# Destination address (0x42) is NOT part of the PGN for PDU1
+assert pkt2.pgn == 0x00EA00
+
+= PGN computation for PDU2 (pdu_format >= 0xF0)
+
+pkt = ISOBUS(priority=6, pdu_format=0xFE, pdu_specific=0xD8, source_address=0x26)
+# PDU2: PGN = (reserved=0 << 17) | (data_page=0 << 16) | (pdu_format=0xFE << 8) | pdu_specific=0xD8
+assert pkt.pgn == 0x00FED8
+
+pkt2 = ISOBUS(priority=6, data_page=1, pdu_format=0xF0, pdu_specific=0x01, source_address=0x80)
+assert pkt2.pgn == 0x01F001
+
+= ISOBUS inherits CAN swap-bytes and byte-swap logic
+
+conf.contribs['CAN']['swap-bytes'] = False
+pkt = ISOBUS(priority=6, pdu_format=0xEE, pdu_specific=0xFF, source_address=0x80, length=8)
+raw_normal = bytes(pkt)
+
+conf.contribs['CAN']['swap-bytes'] = True
+raw_swapped = bytes(pkt)
+assert raw_normal != raw_swapped
+
+# Restore default
+conf.contribs['CAN']['swap-bytes'] = False
+
+############
+############
+
++ build_isobus_name helper function
+
+= Build NAME with all components
+
+name_val = build_isobus_name(
+    identity_number=0x001,
+    manufacturer_code=0x123,
+    ecu_instance=0,
+    function_instance=0,
+    function=0,
+    reserved_name=0,
+    device_class=4,
+    device_class_instance=0,
+    industry_group=2,
+    self_configurable_address=1,
+)
+
+# Verify each component is encoded correctly
+assert (name_val & 0x1FFFFF) == 0x001          # identity_number
+assert ((name_val >> 21) & 0x7FF) == 0x123     # manufacturer_code
+assert ((name_val >> 32) & 0x7) == 0           # ecu_instance
+assert ((name_val >> 35) & 0x1F) == 0          # function_instance
+assert ((name_val >> 40) & 0xFF) == 0          # function
+assert ((name_val >> 48) & 0x1) == 0           # reserved_name
+assert ((name_val >> 49) & 0x7F) == 4          # device_class
+assert ((name_val >> 56) & 0xF) == 0           # device_class_instance
+assert ((name_val >> 60) & 0x7) == 2           # industry_group
+assert ((name_val >> 63) & 0x1) == 1           # self_configurable_address
+
+= Build NAME with default values
+
+name_default = build_isobus_name()
+assert (name_default & 0x1FFFFF) == 0          # identity_number=0
+assert ((name_default >> 21) & 0x7FF) == 0     # manufacturer_code=0
+assert ((name_default >> 60) & 0x7) == 2       # industry_group=2 (default)
+assert ((name_default >> 63) & 0x1) == 1       # self_configurable_address=1 (default)
+
+= NAME field masking (out-of-range values are masked)
+
+name_val = build_isobus_name(identity_number=0x3FFFFF)   # 22 bits, should mask to 21
+assert (name_val & 0x1FFFFF) == (0x3FFFFF & 0x1FFFFF)
+
+############
+############
+
++ ISOBUSAddressClaimed (PGN 0x00EE00)
+
+= Build Address Claimed packet
+
+nn = build_isobus_name(
+    identity_number=0x001,
+    manufacturer_code=0x123,
+    industry_group=2,
+    device_class=4,
+)
+hdr = ISOBUS(priority=6, pdu_format=0xEE, pdu_specific=0xFF,
+             source_address=0x80, length=8)
+pkt = hdr / ISOBUSAddressClaimed(node_name=nn)
+
+assert bytes(pkt)[1] == 0xEE   # pdu_format
+assert len(bytes(pkt)) == 16   # 8 header + 8 NAME
+
+= Dissect Address Claimed packet
+
+nn = build_isobus_name(
+    identity_number=0x001,
+    manufacturer_code=0x123,
+    industry_group=2,
+    device_class=4,
+)
+raw = bytes(ISOBUS(priority=6, pdu_format=0xEE, pdu_specific=0xFF,
+                   source_address=0x80, length=8) / ISOBUSAddressClaimed(node_name=nn))
+parsed = ISOBUS(raw)
+
+assert isinstance(parsed.payload, ISOBUSAddressClaimed)
+assert parsed.payload.identity_number == 0x001
+assert parsed.payload.manufacturer_code == 0x123
+assert parsed.payload.industry_group == 2
+assert parsed.payload.device_class == 4
+
+= ISOBUSAddressClaimed NAME property access
+
+nn = build_isobus_name(
+    identity_number=0x7F001,
+    manufacturer_code=0x5A3,
+    ecu_instance=2,
+    function_instance=5,
+    function=130,
+    reserved_name=0,
+    device_class=71,
+    device_class_instance=3,
+    industry_group=2,
+    self_configurable_address=1,
+)
+acl = ISOBUSAddressClaimed(node_name=nn)
+
+assert acl.identity_number == 0x7F001
+assert acl.manufacturer_code == 0x5A3
+assert acl.ecu_instance == 2
+assert acl.function_instance == 5
+assert acl.function == 130
+assert acl.reserved_name == 0
+assert acl.device_class == 71
+assert acl.device_class_instance == 3
+assert acl.industry_group == 2
+assert acl.self_configurable_address == 1
+
+= ISOBUSAddressClaimed round-trip
+
+nn = build_isobus_name(identity_number=0x12345, manufacturer_code=0x7FF,
+                        industry_group=3, device_class=10)
+pkt = ISOBUS(priority=6, pdu_format=0xEE, pdu_specific=0xFF,
+             source_address=0x80, length=8) / ISOBUSAddressClaimed(node_name=nn)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSAddressClaimed)
+assert parsed.payload.node_name == nn
+assert parsed.payload.identity_number == 0x12345
+assert parsed.payload.manufacturer_code == 0x7FF
+assert parsed.payload.industry_group == 3
+
+############
+############
+
++ ISOBUSRequestForPGN (PGN 0x00EA00)
+
+= Build Request for PGN
+
+pkt = ISOBUS(priority=6, pdu_format=0xEA, pdu_specific=0xFF,
+             source_address=0x80, length=3) / ISOBUSRequestForPGN(requested_pgn=0x00EE00)
+
+raw = bytes(pkt)
+assert raw[1] == 0xEA   # pdu_format
+
+= Dissect Request for PGN
+
+raw = bytes(ISOBUS(priority=6, pdu_format=0xEA, pdu_specific=0xFF,
+                   source_address=0x80, length=3) / ISOBUSRequestForPGN(requested_pgn=0x00EE00))
+parsed = ISOBUS(raw)
+
+assert isinstance(parsed.payload, ISOBUSRequestForPGN)
+assert parsed.payload.requested_pgn == 0x00EE00
+
+= Request for PGN with different PGNs
+
+for pgn in [0x00E800, 0x00EA00, 0x00EC00, 0x00EE00, 0x00FED8]:
+    pkt = ISOBUS(priority=6, pdu_format=0xEA, pdu_specific=0xFF,
+                 source_address=0x80, length=3) / ISOBUSRequestForPGN(requested_pgn=pgn)
+    parsed = ISOBUS(bytes(pkt))
+    assert isinstance(parsed.payload, ISOBUSRequestForPGN)
+    assert parsed.payload.requested_pgn == pgn
+
+############
+############
+
++ ISOBUSAcknowledgment (PGN 0x00E800)
+
+= Build Acknowledgment (Positive ACK)
+
+pkt = ISOBUS(priority=6, pdu_format=0xE8, pdu_specific=0xFF,
+             source_address=0x80, length=8) / \
+      ISOBUSAcknowledgment(control_byte=0, group_function_value=0xFF,
+                           pgn=0x00EE00)
+
+raw = bytes(pkt)
+assert raw[1] == 0xE8   # pdu_format
+
+= Dissect Acknowledgment (Negative ACK)
+
+pkt = ISOBUS(priority=6, pdu_format=0xE8, pdu_specific=0xFF,
+             source_address=0x80, length=8) / \
+      ISOBUSAcknowledgment(control_byte=1, group_function_value=0xFF,
+                           pgn=0x00EE00)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSAcknowledgment)
+assert parsed.payload.control_byte == 1
+assert parsed.payload.pgn == 0x00EE00
+
+############
+############
+
++ ISOBUSTransportProtocolCM (PGN 0x00EC00)
+
+= Build TP.CM BAM (Broadcast Announce Message)
+
+pkt = ISOBUS(priority=7, pdu_format=0xEC, pdu_specific=0xFF,
+             source_address=0x80, length=8) / \
+      ISOBUSTransportProtocolCM(control_byte=32,
+                                total_message_size=20,
+                                total_number_of_packets=3,
+                                pgn=0x00FED8)
+
+raw = bytes(pkt)
+assert raw[1] == 0xEC   # pdu_format
+assert len(raw) == 16   # 8-byte header + 8-byte TP.CM
+
+= Dissect TP.CM BAM
+
+pkt = ISOBUS(priority=7, pdu_format=0xEC, pdu_specific=0xFF,
+             source_address=0x80, length=8) / \
+      ISOBUSTransportProtocolCM(control_byte=32,
+                                total_message_size=20,
+                                total_number_of_packets=3,
+                                pgn=0x00FED8)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSTransportProtocolCM)
+assert parsed.payload.control_byte == 32
+assert parsed.payload.total_message_size == 20
+assert parsed.payload.total_number_of_packets == 3
+assert parsed.payload.pgn == 0x00FED8
+
+= Build and dissect TP.CM RTS (Request to Send)
+
+pkt = ISOBUS(priority=7, pdu_format=0xEC, pdu_specific=0x42,
+             source_address=0x80, length=8) / \
+      ISOBUSTransportProtocolCM(control_byte=16,
+                                total_message_size=20,
+                                total_number_of_packets=3,
+                                max_packets_per_cts=3,
+                                pgn=0x00EE00)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSTransportProtocolCM)
+assert parsed.payload.control_byte == 16
+assert parsed.payload.total_message_size == 20
+assert parsed.payload.total_number_of_packets == 3
+assert parsed.payload.max_packets_per_cts == 3
+assert parsed.payload.pgn == 0x00EE00
+
+= Build and dissect TP.CM CTS (Clear to Send)
+
+pkt = ISOBUS(priority=7, pdu_format=0xEC, pdu_specific=0x80,
+             source_address=0x42, length=8) / \
+      ISOBUSTransportProtocolCM(control_byte=17,
+                                number_of_packets_cts=3,
+                                next_packet_number=1,
+                                pgn=0x00EE00)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSTransportProtocolCM)
+assert parsed.payload.control_byte == 17
+assert parsed.payload.number_of_packets_cts == 3
+assert parsed.payload.next_packet_number == 1
+assert parsed.payload.pgn == 0x00EE00
+
+= Build and dissect TP.CM EOM ACK (End of Message Acknowledgment)
+
+pkt = ISOBUS(priority=7, pdu_format=0xEC, pdu_specific=0x80,
+             source_address=0x42, length=8) / \
+      ISOBUSTransportProtocolCM(control_byte=19,
+                                total_message_size=20,
+                                total_number_of_packets=3,
+                                pgn=0x00EE00)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSTransportProtocolCM)
+assert parsed.payload.control_byte == 19
+assert parsed.payload.total_message_size == 20
+assert parsed.payload.total_number_of_packets == 3
+assert parsed.payload.pgn == 0x00EE00
+
+= Build and dissect TP.CM Connection Abort
+
+pkt = ISOBUS(priority=7, pdu_format=0xEC, pdu_specific=0x42,
+             source_address=0x80, length=8) / \
+      ISOBUSTransportProtocolCM(control_byte=255,
+                                abort_reason=3,
+                                pgn=0x00EE00)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSTransportProtocolCM)
+assert parsed.payload.control_byte == 255
+assert parsed.payload.abort_reason == 3
+assert parsed.payload.pgn == 0x00EE00
+
+############
+############
+
++ ISOBUSTransportProtocolDT (PGN 0x00EB00)
+
+= Build TP.DT (Data Transfer) packet
+
+pkt = ISOBUS(priority=7, pdu_format=0xEB, pdu_specific=0xFF,
+             source_address=0x80, length=8) / \
+      ISOBUSTransportProtocolDT(sequence_number=1,
+                                data=b'\x01\x02\x03\x04\x05\x06\x07')
+
+raw = bytes(pkt)
+assert raw[1] == 0xEB   # pdu_format
+assert len(raw) == 16   # 8-byte header + 8-byte TP.DT
+
+= Dissect TP.DT packet
+
+pkt = ISOBUS(priority=7, pdu_format=0xEB, pdu_specific=0xFF,
+             source_address=0x80, length=8) / \
+      ISOBUSTransportProtocolDT(sequence_number=2,
+                                data=b'\x08\x09\x0A\x0B\x0C\x0D\x0E')
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSTransportProtocolDT)
+assert parsed.payload.sequence_number == 2
+assert parsed.payload.data == b'\x08\x09\x0A\x0B\x0C\x0D\x0E'
+
+############
+############
+
++ ISOBUSCommandedAddress (PGN 0x00FED8)
+
+= Build Commanded Address packet
+
+nn = build_isobus_name(identity_number=0x001, manufacturer_code=0x123)
+pkt = ISOBUS(priority=6, pdu_format=0xFE, pdu_specific=0xD8,
+             source_address=0x26, length=9) / \
+      ISOBUSCommandedAddress(node_name=nn, new_source_address=0x42)
+
+raw = bytes(pkt)
+assert raw[1] == 0xFE   # pdu_format
+assert raw[2] == 0xD8   # pdu_specific
+assert len(raw) == 17   # 8-byte header + 9-byte payload
+
+= Dissect Commanded Address packet
+
+nn = build_isobus_name(identity_number=0x001, manufacturer_code=0x123)
+pkt = ISOBUS(priority=6, pdu_format=0xFE, pdu_specific=0xD8,
+             source_address=0x26, length=9) / \
+      ISOBUSCommandedAddress(node_name=nn, new_source_address=0x42)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSCommandedAddress)
+assert parsed.payload.node_name == nn
+assert parsed.payload.new_source_address == 0x42
+
+############
+############
+
++ ISOBUSWorkingSetMaster (PGN 0x00E600)
+
+= Build and dissect Working Set Master
+
+pkt = ISOBUS(priority=7, pdu_format=0xE6, pdu_specific=0xFF,
+             source_address=0x80, length=8) / \
+      ISOBUSWorkingSetMaster(number_of_members=3)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSWorkingSetMaster)
+assert parsed.payload.number_of_members == 3
+
+= Working Set Master with different member counts
+
+for count in [1, 5, 10, 255]:
+    pkt = ISOBUS(priority=7, pdu_format=0xE6, pdu_specific=0xFF,
+                 source_address=0x80, length=8) / \
+          ISOBUSWorkingSetMaster(number_of_members=count)
+    parsed = ISOBUS(bytes(pkt))
+    assert parsed.payload.number_of_members == count
+
+############
+############
+
++ ISOBUSWorkingSetMember (PGN 0x00E700)
+
+= Build and dissect Working Set Member
+
+nn = build_isobus_name(identity_number=0x002, manufacturer_code=0x123)
+pkt = ISOBUS(priority=7, pdu_format=0xE7, pdu_specific=0x80,
+             source_address=0x81, length=8) / \
+      ISOBUSWorkingSetMember(node_name=nn)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSWorkingSetMember)
+assert parsed.payload.node_name == nn
+
+############
+############
+
++ Layer bindings and automatic dissection
+
+= Automatic dissection by pdu_format (PDU1 messages)
+
+for pdu_fmt, expected_cls in [
+    (0xE6, ISOBUSWorkingSetMaster),
+    (0xE7, ISOBUSWorkingSetMember),
+    (0xE8, ISOBUSAcknowledgment),
+    (0xEA, ISOBUSRequestForPGN),
+    (0xEB, ISOBUSTransportProtocolDT),
+    (0xEC, ISOBUSTransportProtocolCM),
+    (0xEE, ISOBUSAddressClaimed),
+]:
+    pkt = ISOBUS(priority=6, pdu_format=pdu_fmt, pdu_specific=0xFF,
+                 source_address=0x80, length=8) / expected_cls()
+    parsed = ISOBUS(bytes(pkt))
+    assert type(parsed.payload) == expected_cls, \
+        "pdu_format=0x%02X: expected %s, got %s" % (pdu_fmt, expected_cls.__name__, type(parsed.payload).__name__)
+
+= Automatic dissection for PDU2 Commanded Address (pdu_format=0xFE, pdu_specific=0xD8)
+
+nn = build_isobus_name(identity_number=0x001, manufacturer_code=0x123)
+pkt = ISOBUS(priority=6, pdu_format=0xFE, pdu_specific=0xD8,
+             source_address=0x26, length=9) / \
+      ISOBUSCommandedAddress(node_name=nn, new_source_address=0x42)
+parsed = ISOBUS(bytes(pkt))
+
+assert isinstance(parsed.payload, ISOBUSCommandedAddress)

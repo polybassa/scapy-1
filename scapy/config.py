@@ -7,22 +7,34 @@
 Implementation of the configuration object.
 """
 
-
 import atexit
 import copy
 import functools
 import os
+import pathlib
 import re
 import socket
 import sys
 import time
 import warnings
 
+from dataclasses import dataclass
+from enum import Enum
+
+import importlib
+import importlib.abc
+import importlib.util
+
 import scapy
 from scapy import VERSION
 from scapy.base_classes import BasePacket
 from scapy.consts import DARWIN, WINDOWS, LINUX, BSD, SOLARIS
-from scapy.error import log_scapy, warning, ScapyInvalidPlatformException
+from scapy.error import (
+    log_loading,
+    log_scapy,
+    ScapyInvalidPlatformException,
+    warning,
+)
 from scapy.themes import ColorTheme, NoTheme, apply_ipython_style
 
 # Typing imports
@@ -282,6 +294,12 @@ class LayersList(List[Type['scapy.packet.Packet']]):
     def register(self, layer):
         # type: (Type[Packet]) -> None
         self.append(layer)
+
+        # Skip arch* modules
+        if layer.__module__.startswith("scapy.arch."):
+            return
+
+        # Register in module
         if layer.__module__ not in self.ldict:
             self.ldict[layer.__module__] = []
         self.ldict[layer.__module__].append(layer)
@@ -296,7 +314,10 @@ class LayersList(List[Type['scapy.packet.Packet']]):
         except ImportError:
             import __builtin__  # noqa: F401
         for lay in self.ldict:
-            doc = eval(lay).__doc__
+            try:
+                doc = eval(lay).__doc__
+            except AttributeError:
+                continue
             result.append((lay, doc.strip().split("\n")[0] if doc else lay))
         return result
 
@@ -366,12 +387,18 @@ class CacheInstance(Dict[str, Any]):
         # type: (str) -> Any
         if item in self.__slots__:
             return object.__getattribute__(self, item)
-        val = super(CacheInstance, self).__getitem__(item)
+        if not self.__contains__(item):
+            raise KeyError(item)
+        return super(CacheInstance, self).__getitem__(item)
+
+    def __contains__(self, item):
+        if not super(CacheInstance, self).__contains__(item):
+            return False
         if self.timeout is not None:
             t = self._timetable[item]
             if time.time() - t > self.timeout:
-                raise KeyError(item)
-        return val
+                return False
+        return True
 
     def get(self, item, default=None):
         # type: (str, Optional[Any]) -> Any
@@ -513,6 +540,190 @@ class NetCache:
         return "\n".join(c.summary() for c in self._caches_list)
 
 
+class ScapyExt:
+    __slots__ = ["specs", "name", "version", "bash_completions"]
+
+    class MODE(Enum):
+        LAYERS = "layers"
+        CONTRIB = "contrib"
+        MODULES = "modules"
+
+    @dataclass
+    class ScapyExtSpec:
+        fullname: str
+        mode: 'ScapyExt.MODE'
+        spec: Any
+        default: bool
+
+    def __init__(self):
+        self.specs: Dict[str, 'ScapyExt.ScapyExtSpec'] = {}
+        self.bash_completions = {}
+
+    def config(self, name, version):
+        self.name = name
+        self.version = version
+
+    def register(self, name, mode, path, default=None):
+        assert mode in self.MODE, "mode must be one of ScapyExt.MODE !"
+        fullname = f"scapy.{mode.value}.{name}"
+        spec = importlib.util.spec_from_file_location(
+            fullname,
+            str(path),
+        )
+        spec = self.ScapyExtSpec(
+            fullname=fullname,
+            mode=mode,
+            spec=spec,
+            default=default or False,
+        )
+        if default is None:
+            spec.default = bool(importlib.util.find_spec(spec.fullname))
+        self.specs[fullname] = spec
+
+    def register_bashcompletion(self, script: pathlib.Path):
+        self.bash_completions[script.name] = script
+
+    def __repr__(self):
+        return "<ScapyExt %s %s (%s specs)>" % (
+            self.name,
+            self.version,
+            len(self.specs),
+        )
+
+
+class ExtsManager(importlib.abc.MetaPathFinder):
+    __slots__ = ["exts", "all_specs"]
+
+    GPLV2_LICENCES = [
+        "GPL-2.0-only",
+        "GPL-2.0-or-later",
+    ]
+
+    def __init__(self):
+        self.exts: List[ScapyExt] = []
+        self.all_specs: Dict[str, ScapyExt.ScapyExtSpec] = {}
+        self._loaded: List[str] = []
+        # Add to meta_path as we are an import provider
+        if self not in sys.meta_path:
+            sys.meta_path.append(self)
+
+    def find_spec(self, fullname, path, target=None):
+        if fullname in self.all_specs:
+            return self.all_specs[fullname].spec
+
+    def invalidate_caches(self):
+        pass
+
+    def _register_spec(self, spec):
+        # Register to known specs
+        self.all_specs[spec.fullname] = spec
+
+        # If default=True, inject it in the currently loaded modules
+        if spec.default:
+            loader = importlib.util.LazyLoader(spec.spec.loader)
+            spec.spec.loader = loader
+            module = importlib.util.module_from_spec(spec.spec)
+            sys.modules[spec.fullname] = module
+            loader.exec_module(module)
+
+    def load(self, extension: str):
+        """
+        Load a scapy extension.
+
+        :param extension: the name of the extension, as installed.
+        """
+        if extension in self._loaded:
+            return
+
+        try:
+            import importlib.metadata
+        except ImportError:
+            log_loading.warning(
+                "'%s' not loaded. "
+                "Scapy extensions require at least Python 3.8+ !" % extension
+            )
+            return
+
+        # Get extension distribution
+        try:
+            distr = importlib.metadata.distribution(extension)
+        except importlib.metadata.PackageNotFoundError:
+            log_loading.warning("The extension '%s' was not found !" % extension)
+            return
+
+        # Check the classifiers
+        if (
+            distr.metadata.get('License-Expression', None) not in self.GPLV2_LICENCES
+            and distr.metadata.get('License', None) not in self.GPLV2_LICENCES
+        ):
+            log_loading.warning(
+                "'%s' has no GPLv2 classifier therefore cannot be loaded." % extension
+            )
+            return
+
+        # Create the extension
+        ext = ScapyExt()
+
+        # Get the top-level declared "import packages"
+        # HACK: not available nicely in importlib :/
+        packages = distr.read_text("top_level.txt").split()
+
+        for package in packages:
+            scapy_ext = importlib.import_module(package)
+
+            # We initialize the plugin by calling it's 'scapy_ext' function
+            try:
+                scapy_ext_func = scapy_ext.scapy_ext
+            except AttributeError:
+                log_loading.warning(
+                    "'%s' does not look like a Scapy plugin !" % extension
+                )
+                return
+            try:
+                scapy_ext_func(ext)
+            except Exception as ex:
+                log_loading.warning(
+                    "'%s' failed during initialization with %s" % (
+                        extension,
+                        ex
+                    )
+                )
+                return
+
+            # Register all the specs provided by this extension
+            for spec in ext.specs.values():
+                self._register_spec(spec)
+
+        # Add to the extension list
+        self.exts.append(ext)
+        self._loaded.append(extension)
+
+        # If there are bash autocompletions, add them
+        if ext.bash_completions:
+            from scapy.main import _add_bash_autocompletion
+
+            for name, script in ext.bash_completions.items():
+                _add_bash_autocompletion(name, script)
+
+    def loadall(self) -> None:
+        """
+        Load all extensions registered in conf.
+        """
+        for extension in conf.load_extensions:
+            self.load(extension)
+
+    def __repr__(self):
+        from scapy.utils import pretty_list
+        return pretty_list(
+            [
+                (x.name, x.version, [y.fullname for y in x.specs.values()])
+                for x in self.exts
+            ],
+            [("Name", "Version", "Specs")],
+            sortBy=0,
+        )
+
+
 def _version_checker(module, minver):
     # type: (ModuleType, Tuple[int, ...]) -> bool
     """Checks that module has a higher version that minver.
@@ -540,10 +751,13 @@ def isCryptographyValid():
     Check if the cryptography module >= 2.0.0 is present. This is the minimum
     version for most usages in Scapy.
     """
+    # Check import
     try:
         import cryptography
     except ImportError:
         return False
+
+    # Check minimum version
     return _version_checker(cryptography, (2, 0, 0))
 
 
@@ -563,6 +777,23 @@ def isCryptographyAdvanced():
     except Exception:
         return False
     else:
+        return True
+
+
+def isCryptographyBackendCompatible() -> bool:
+    """
+    Check if the cryptography backend is compatible
+    """
+    # Check for LibreSSL
+    try:
+        from cryptography.hazmat.backends import default_backend
+        if "LibreSSL" in default_backend().openssl_version_text():
+            # BUG: LibreSSL - https://marc.info/?l=libressl&m=173846028619304&w=2
+            # It takes 5 whole minutes to import RFC3526's modp parameters. This is
+            # not okay.
+            return False
+        return True
+    except Exception:
         return True
 
 
@@ -612,7 +843,7 @@ def _set_conf_sockets():
             from scapy.arch.libpcap import L2pcapListenSocket, L2pcapSocket, \
                 L3pcapSocket
         except (OSError, ImportError):
-            warning("No libpcap provider available ! pcap won't be used")
+            log_loading.warning("No libpcap provider available ! pcap won't be used")
             Interceptor.set_from_hook(conf, "use_pcap", False)
         else:
             conf.L3socket = L3pcapSocket
@@ -728,6 +959,8 @@ class Conf(ConfClass):
     commands = CommandsList()  # type: CommandsList
     #: Codec used by default for ASN1 objects
     ASN1_default_codec = None  # type: 'scapy.asn1.asn1.ASN1Codec'
+    #: Default size for ASN1 objects
+    ASN1_default_long_size = 0
     #: choose the AS resolver class to use
     AS_resolver = None  # type: scapy.as_resolvers.AS_resolver
     dot15d4_protocol = None  # Used in dot15d4.py
@@ -792,11 +1025,17 @@ class Conf(ConfClass):
     #: holds the Scapy interface list and manager
     ifaces = None  # type: 'scapy.interfaces.NetworkInterfaceDict'
     #: holds the cache of interfaces loaded from Libpcap
-    cache_pcapiflist = {}  # type: Dict[str, Tuple[str, List[str], Any, str]]
+    cache_pcapiflist = {}  # type: Dict[str, Tuple[str, List[str], Any, str, int]]
     # `neighbor` will be filed by scapy.layers.l2
     neighbor = None  # type: 'scapy.layers.l2.Neighbor'
     #: holds the name servers IP/hosts used for custom DNS resolution
     nameservers = None  # type: str
+    #: automatically load IPv4 routes on startup. Disable this if your
+    #: routing table is too big.
+    route_autoload = True
+    #: automatically load IPv6 routes on startup. Disable this if your
+    #: routing table is too big.
+    route6_autoload = True
     #: holds the Scapy IPv4 routing table and provides methods to
     #: manipulate it
     route = None  # type: 'scapy.route.Route'
@@ -805,6 +1044,11 @@ class Conf(ConfClass):
     #: manipulate it
     route6 = None  # type: 'scapy.route6.Route6'
     manufdb = None  # type: 'scapy.data.ManufDA'
+    ethertypes = None  # type: 'scapy.data.EtherDA'
+    protocols = None  # type: 'scapy.dadict.DADict[int, str]'
+    services_udp = None  # type: 'scapy.dadict.DADict[int, str]'
+    services_tcp = None  # type: 'scapy.dadict.DADict[int, str]'
+    services_sctp = None  # type: 'scapy.dadict.DADict[int, str]'
     # 'route6' will be filed by route6.py
     teredoPrefix = ""  # type: str
     teredoServerPort = None  # type: int
@@ -839,6 +1083,8 @@ class Conf(ConfClass):
     #: netcache holds time-based caches for net operations
     netcache: NetCache = NetCache()
     geoip_city = None
+    #: Scapy extensions that are loaded automatically on load
+    load_extensions: List[str] = []
     # can, tls, http and a few others are not loaded by default
     load_layers: List[str] = [
         'bluetooth',
@@ -851,6 +1097,7 @@ class Conf(ConfClass):
         'dot15d4',
         'eap',
         'gprs',
+        'gssapi',
         'hsrp',
         'inet',
         'inet6',
@@ -864,8 +1111,9 @@ class Conf(ConfClass):
         'llmnr',
         'lltd',
         'mgcp',
+        'msrpce.rpcclient',
+        'msrpce.rpcserver',
         'mobileip',
-        'mspac',
         'netbios',
         'netflow',
         'ntlm',
@@ -884,6 +1132,7 @@ class Conf(ConfClass):
         'smbclient',
         'smbserver',
         'snmp',
+        'spnego',
         'tftp',
         'vrrp',
         'vxlan',
@@ -893,6 +1142,7 @@ class Conf(ConfClass):
     #: a dict which can be used by contrib layers to store local
     #: configuration
     contribs = dict()  # type: Dict[str, Any]
+    exts: ExtsManager = ExtsManager()
     crypto_valid = isCryptographyValid()
     crypto_valid_advanced = isCryptographyAdvanced()
     #: controls whether or not to display the fancy banner
@@ -922,6 +1172,19 @@ class Conf(ConfClass):
     )
     #: Dictionary containing parsed NSS Keys
     tls_nss_keys: Dict[str, bytes] = None
+    #: Whether to use NDR64 by default instead of NDR 32
+    ndr64: bool = True
+    #: When TCPSession is used, parse DCE/RPC sessions automatically.
+    #: This should be used for passive sniffing.
+    dcerpc_session_enable = False
+    #: If a capture is missing the first DCE/RPC binding message, we might incorrectly
+    #: assume that header signing isn't used. This forces it on.
+    dcerpc_force_header_signing = False
+    #: Windows SSPs for sniffing. This is used with
+    #: dcerpc_session_enable
+    winssps_passive = []
+    #: Disables auto-stripping of StrFixedLenField for debugging purposes
+    debug_strfixedlenfield = False
 
     def __getattribute__(self, attr):
         # type: (str) -> Any
@@ -962,6 +1225,17 @@ if not Conf.ipv6_enabled:
 conf = Conf()  # type: Conf
 
 
+if not isCryptographyBackendCompatible():
+    conf.crypto_valid = False
+    conf.crypto_valid_advanced = False
+    log_scapy.error(
+        "Scapy does not support LibreSSL as a backend to cryptography ! "
+        "See https://cryptography.io/en/latest/installation/#static-wheels "
+        "for instructions on how to recompile cryptography with another "
+        "backend."
+    )
+
+
 def crypto_validator(func):
     # type: (DecoratorCallable) -> DecoratorCallable
     """
@@ -972,7 +1246,7 @@ def crypto_validator(func):
         # type: (*Any, **Any) -> Any
         if not conf.crypto_valid:
             raise ImportError("Cannot execute crypto-related method! "
-                              "Please install python-cryptography v1.7 or later.")  # noqa: E501
+                              "Please install python-cryptography v2.0 or later.")  # noqa: E501
         return func(*args, **kwargs)
     return func_in
 

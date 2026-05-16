@@ -120,7 +120,7 @@ The generic format for a test campaign is shown in the following table::
     * Comments for unit test 1
     # Python statements follow
     a = 1
-    print a
+    print(a)
     a == 1
 
 
@@ -196,7 +196,7 @@ Table 5 shows a simple test campaign with multiple tests set definitions. Additi
     = Unit Test 1
     ~ test_set_1 simple
     a = 1
-    print a
+    print(a)
     
     = Unit test 2
     ~ test_set_1 simple
@@ -234,7 +234,7 @@ Table 5 shows a simple test campaign with multiple tests set definitions. Additi
     
     = Unit Test 6
     ~ test_set_2 hardest
-    print e
+    print(e)
     e == 1296
 
 To see an example that is targeted to Scapy, go to http://www.secdev.org/projects/UTscapy. Cut and paste the example at the bottom of the page to the file ``demo_campaign.txt`` and run UTScapy against it::
@@ -293,12 +293,17 @@ signing a commit, the maintainer that wishes to create a release must:
 Taking v2.4.3 as an example, the following commands can be used to sign and
 publish the release::
 
- git tag -s v2.4.3 -m "Release 2.4.3"
- git tag v2.4.3 -v
- git push --tags
+ $ git tag -s v2.4.3 -m "Release 2.4.3"
+ $ git tag v2.4.3 -v
+ $ git push --tags
 
 Release Candidates (RC) could also be done. For example, the first RC will be
 tagged v2.4.3rc1 and the message ``2.4.3 Release Candidate #1``.
+
+.. note::
+   To add a signing key, configure to use a SSH one, then register it via::
+        $ git config --global gpg.format ssh
+        $ git config --global user.signingkey ~/.ssh/examplekey.pub
 
 Prior to uploading the release to PyPi, the mail address of the maintainer
 performing the release must be added next to his name in ``pyproject.toml``.
@@ -306,10 +311,10 @@ See `this <https://packaging.python.org/en/latest/specifications/declaring-proje
 
 The following commands can then be used::
 
- pip install --upgrade build
- python -m build
- twine check dist/*
- twine upload dist/*
+ $ pip install --upgrade build
+ $ SCAPY_VERSION=2.6.0rc1 python -m build
+ $ twine check dist/*
+ $ twine upload dist/*
 
 .. warning::
    Make sure that you don't have left-overs in your ``dist/`` folder ! There should only be the source and the wheel for the package.

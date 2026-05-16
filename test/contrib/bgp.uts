@@ -87,6 +87,13 @@ h = BGP(b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00\x
 assert h.type == BGP.OPEN_TYPE
 assert h.len == 19
 
+= BGP - Test TCP reassembly
+pkts = sniff(offline=scapy_path("/test/pcaps/bgp_fragmented.pcap.gz"), session=TCPSession)
+assert len(pkts) == 1
+assert BGPUpdate in pkts[0]
+assert len(pkts[0].nlri) == 512
+assert pkts[0].nlri[511].prefix == '91.0.177.0/24'
+
 ############################### BGPKeepAlive  #################################
 + BGPKeepAlive class tests
 
@@ -595,6 +602,20 @@ raw(BGPPAAS4Aggregator(aggregator_asn = 644566565, speaker_address = "192.0.2.1"
 = BGPPAAS4Aggregator - Dissection
 a = BGPPAAS4Aggregator(b'&kN%\xc0\x00\x02\x01')
 a.aggregator_asn == 644566565 and a.speaker_address == "192.0.2.1"
+
+
+############################# BGPPALargeCommunity ############################
++ BGPPALargeCommunity class tests
+
+= BGPPALargeCommunity - Instantiation
+raw(BGPPALargeCommunity()) == b''
+
+= BGPPALargeCommunity - Instantiation with specific values
+raw(BGPPALargeCommunity(segments=BGPLargeCommunitySegment(global_administrator=161,local_data_part1=0,local_data_part2=0))) == b'\x00\x00\x00\xa1\x00\x00\x00\x00\x00\x00\x00\x00'
+
+= BGPPALargeCommunity - Dissection
+a = BGPPALargeCommunity(b'\x00\x00\x00\xa1\x00\x00\x00\x00\x00\x00\x00\x00')
+a.segments[0].global_administrator == 161 and a.segments[0].local_data_part1 == 0 and a.segments[0].local_data_part2 == 0
 
 
 ################################ BGPPathAttr #################################

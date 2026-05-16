@@ -36,7 +36,7 @@ from scapy.packet import Packet
 FORMAT_LE = "<"
 FORMAT_BE = ">"
 STR_MAX_LEN = 8192
-DEFAULT_ENDIANESS = FORMAT_LE
+DEFAULT_ENDIANNESS = FORMAT_LE
 
 
 def is_le(pkt):
@@ -161,7 +161,8 @@ class SerializedDataField(StrLenField):
 class DataPacketField(EPacketField):
     def m2i(self, pkt, m):
         self.set_endianness(pkt)
-        pl_len = pkt.octetsToNextHeader - 24
+        fld, val = pkt.getfield_and_val("inlineQoS")
+        pl_len = pkt.octetsToNextHeader - 24 - fld.i2len(pkt, val)
         _pkt = self.cls(
             m,
             endianness=self.endianness,
@@ -279,23 +280,27 @@ class ProtocolVersionPacket(Packet):
 
 _rtps_vendor_ids = {
     0x0000: "VENDOR_ID_UNKNOWN (0x0000)",
-    0x0101: "Real-Time Innovations, Inc. - Connext DDS",
-    0x0102: "PrismTech Inc. - OpenSplice DDS",
-    0x0103: "Object Computing Incorporated, Inc. (OCI) - OpenDDS",
-    0x0104: "MilSoft",
-    0x0105: "Gallium Visual Systems Inc. - InterCOM DDS",
-    0x0106: "TwinOaks Computing, Inc. - CoreDX DDS",
+    0x0101: "Real-Time Innovations, Inc. (RTI) - Connext DDS",
+    0x0102: "ADLink Ltd. - OpenSplice DDS",
+    0x0103: "Object Computing Inc. (OCI) - OpenDDS",
+    0x0104: "MilSoft - Mil-DDS",
+    0x0105: "Kongsberg - InterCOM DDS",
+    0x0106: "Twin Oaks Computing, Inc. - CoreDX DDS",
     0x0107: "Lakota Technical Solutions, Inc.",
     0x0108: "ICOUP Consulting",
-    0x0109: "ETRI Electronics and Telecommunication Research Institute",
+    0x0109: "Electronics and Telecommunication Research Institute (ETRI) - Diamond DDS",
     0x010A: "Real-Time Innovations, Inc. (RTI) - Connext DDS Micro",
-    0x010B: "PrismTech - OpenSplice Mobile",
-    0x010C: "PrismTech - OpenSplice Gateway",
-    0x010D: "PrismTech - OpenSplice Lite",
-    0x010E: "Technicolor Inc. - Qeo",
-    0x010F: "eProsima - Fast-RTPS",
-    0x0110: "ADLINK - Cyclone DDS",
-    0x0111: "GurumNetworks - GurumDDS",
+    0x010B: "ADLink Ltd. - VortexCafe",
+    0x010C: "PrismTech Ltd",
+    0x010D: "ADLink Ltd. - Vortex Lite",
+    0x010E: "Technicolor - Qeo",
+    0x010F: "eProsima - FastRTPS, FastDDS",
+    0x0110: "Eclipse Foundation - Cyclone DDS",
+    0x0111: "Gurum Networks, Inc. - GurumDDS",
+    0x0112: "Atostek - RustDDS",
+    0x0113: "Nanjing Zhenrong Software Technology Co. \
+        - Zhenrong Data Distribution Service (ZRDDS)",
+    0x0114: "S2E Software Systems B.V. - Dust DDS",
 }
 
 

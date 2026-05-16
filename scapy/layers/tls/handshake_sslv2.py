@@ -318,7 +318,7 @@ class SSLv2ClientMasterKey(_SSLv2Handshake):
                     else:
                         self.decryptedkey = key
 
-                pubkey = self.tls_session.server_certs[0].pubKey
+                pubkey = self.tls_session.server_certs[0].pubkey
                 self.encryptedkey = pubkey.encrypt(self.decryptedkey)
 
             if self.keyarg == b"" and cs_cls.cipher_alg.type == "block":
@@ -528,7 +528,7 @@ class SSLv2ServerFinished(_SSLv2Handshake):
 
     def build(self, *args, **kargs):
         fval = self.getfieldval("sid")
-        if fval == b"":
+        if fval == b"" and self.tls_session:
             self.sid = self.tls_session.sid
         return super(SSLv2ServerFinished, self).build(*args, **kargs)
 

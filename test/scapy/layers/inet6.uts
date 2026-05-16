@@ -455,7 +455,13 @@ b=IPv6(src="2047::deca", dst="2048::cafe")/ICMPv6EchoReply(id=0x6666, seq=0x7777
 a=IPv6(src="2048::cafe", dst="2047::deca")/ICMPv6EchoRequest(id=0x6666, seq=0x7777, data="somedata")
 (a > b) == True
 
-= ICMPv6EchoRequest and ICMPv6EchoReply - live answers() use Net6
+= ICMPv6EchoRequest and ICMPv6EchoReply - answers() test 7 - IPv6ExtHdrDestOpt
+b = IPv6(b'`\x0f\\\xe3\x00\x08:@\xfe\x80\x00\x00\x00\x00\x00\x00\x02PV\xff\xfe\x84\x1c\x14\xfe\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00&\x81\x00\r\xad\x00\x00\x00\x00')
+a = IPv6(b'`\x00\x00\x00\x00\x10<\xff\xfe\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00&\xfe\x80\x00\x00\x00\x00\x00\x00\x02PV\xff\xfe\x84\x1c\x14:\x00\x00\x00\x00\x00\x00\x00\x80\x00\x0e\xad\x00\x00\x00\x00')
+assert a.hashret() == b.hashret()
+assert b.answers(a)
+
+= ICMPv6EchoRequest and ICMPv6EchoReply - answers() test 8 - (live) use Net6
 ~ netaccess ipv6
 
 a = IPv6(dst="www.google.com")/ICMPv6EchoRequest()
@@ -572,6 +578,25 @@ raw(RouterAlert(optlen=3, value=0xffff)) == b'\x05\x03\xff\xff'
 a=RouterAlert(b'\x05\x03\xff\xff')
 a.otype == 0x05 and a.optlen == 3 and a.value == 0xffff
 
+############
+############
++ Test RPL Option (RFC 6553)
+
+= RplOption - Basic Instantiation
+raw(RplOption()) == b'c\x04\x00\x00\x00\x00'
+
+= RplOption - Basic Dissection
+a=RplOption(b'c\x04\x00\x00\x00\x00')
+a.otype == 0x63 and a.optlen == 4 and a.Down == False and a.RankError == 0 and a.ForwardError == 0 and a.RplInstanceId == 0 and a.SenderRank == 0
+
+= RplOption - Instantiation with specific values
+a=RplOption(RplInstanceId=0x1e, SenderRank=0x800)
+a.otype == 0x63 and a.optlen == 4 and a.Down == False and a.RankError == 0 and a.ForwardError == 0 and a.RplInstanceId == 0x1e and a.SenderRank == 0x800
+
+= RplOption - Instantiation with specific values
+a=RplOption(Down=True, RplInstanceId=0x1e, SenderRank=0x800)
+a.otype == 0x63 and a.optlen == 4 and a.Down == True and a.RankError == 0 and a.ForwardError == 0 and a.RplInstanceId == 0x1e and a.SenderRank == 0x800
+raw(a) == b'c\x04\x80\x1e\x08\x00'
 
 ############
 ############
@@ -628,6 +653,9 @@ raw(IPv6ExtHdrHopByHop(options=[HAO()])) == b';\x02\x01\x02\x00\x00\xc9\x10\x00\
 
 = IPv6ExtHdrHopByHop - Instantiation with RouterAlert option
 raw(IPv6ExtHdrHopByHop(options=[RouterAlert()])) == b';\x00\x05\x02\x00\x00\x01\x00'
+
+= IPv6ExtHdrHopByHop - Instantiation with RPL option
+raw(IPv6ExtHdrHopByHop(options=[RplOption()])) == b';\x00c\x04\x00\x00\x00\x00'
  
 = IPv6ExtHdrHopByHop - Instantiation with Jumbo option
 raw(IPv6ExtHdrHopByHop(options=[Jumbo()])) == b';\x00\xc2\x04\x00\x00\x00\x00'
@@ -780,19 +808,43 @@ b.answers(a)
 + ICMPv6NDOptUnknown Class Test
 
 = ICMPv6NDOptUnknown - Basic Instantiation
-raw(ICMPv6NDOptUnknown()) == b'\x00\x02'
+b = b'\x00\x01\x00\x00\x00\x00\x00\x00'
+
+raw(ICMPv6NDOptUnknown()) == b
 
 = ICMPv6NDOptUnknown - Instantiation with specific values
-raw(ICMPv6NDOptUnknown(len=4, data="somestring")) == b'\x00\x04somestring'
+raw(ICMPv6NDOptUnknown(data="somestring")) == b'\x00\x02somestring\x00\x00\x00\x00'
 
 = ICMPv6NDOptUnknown - Basic Dissection
-a=ICMPv6NDOptUnknown(b'\x00\x02')
-a.type == 0 and a.len == 2
+b = b'\x00\x01\x00\x00\x00\x00\x00\x00'
+
+p = ICMPv6NDOptUnknown(b)
+p.type == 0 and p.len == 1 and p.data == b'\x00' * 6
+
+p = ICMPv6NDOptUnknown(b + b'\x00')
+assert Raw in p and raw(p[Raw]) == b'\x00'
+
+p = ICMPv6NDOptUnknown(b + b'\x00\x00')
+assert raw(p[ICMPv6NDOptUnknown:2]) == b'\x00\x00'
 
 = ICMPv6NDOptUnknown - Dissection with specific values 
-a=ICMPv6NDOptUnknown(b'\x00\x04somerawing')
-a.type == 0 and a.len==4 and a.data == b"so" and isinstance(a.payload, Raw) and a.payload.load == b"merawing"
+p = ICMPv6NDOptUnknown(b'\x00\x01string')
+assert p.type == 0 and p.len == 1 and p.data == b'string'
 
+p = ICMPv6NDOptUnknown(b'\x00\x04somestring')
+assert p.type == 0 and p.len == 4 and p.data == b'somestring'
+
+= ICMPv6NDOptUnknown - Instantiation/Dissection with unknown option in the middle
+b = b'\x01\x01\x00\x00\x00\x00\x00\x00\x00\x02somestring\x00\x00\x00\x00%\x01\x00\x00\x00\x00\x00\x00'
+
+p = ICMPv6NDOptSrcLLAddr()/ICMPv6NDOptUnknown(data='somestring')/ICMPv6NDOptCaptivePortal()
+assert raw(p) == b
+
+p = ICMPv6NDOptSrcLLAddr(b)[ICMPv6NDOptUnknown]
+assert p.type == 0 and p.len == 2 and p.data == b'somestring\x00\x00\x00\x00'
+
+= ICMPv6NDOptUnknown - fuzz
+assert isinstance(fuzz(ICMPv6NDOptUnknown()).type, RandByte)
 
 ############
 ############
@@ -1231,8 +1283,10 @@ p = ICMPv6NDOptCaptivePortal(b"\x25\x03https://example.com\x00\x00\x00")
 p.type == 37 and p.len == 3 and p.URI == b"https://example.com"
 
 = ICMPv6NDOptCaptivePortal - Dissection with zero length
-p = ICMPv6NDOptCaptivePortal(b"\x25\x00abcdefgh")
-p.type == 37 and p.len == 0 and p.URI == b"abcdef" and Raw in p and len(p[Raw]) == 2
+p = ICMPv6NDOptCaptivePortal(b"\x25\x00abcdef\x00\x01")
+p.type == 37 and p.len == 0 and p.URI == b"abcdef"
+pay = p.payload
+assert pay.type == 0 and pay.len == 1 and pay.data == b""
 
 = ICMPv6NDOptCaptivePortal - Summary Output
 ICMPv6NDOptCaptivePortal(URI="https://example.com").mysummary() == "ICMPv6 Neighbor Discovery Option - Captive-Portal Option b'https://example.com'"
@@ -1269,7 +1323,7 @@ p = ICMPv6NDOptPREF64(raw(p))
 assert p.type == 38 and p.len == 2 and p.scaledlifetime == 225 and p.plc == 1 and p.prefix == '2003:da8:1::'
 
 p = ICMPv6NDOptPREF64(raw(p) + b'\x00\x00\x00\x00')
-assert Raw in p and len(p[Raw]) == 4
+assert ICMPv6NDOptUnknown in p and len(p[ICMPv6NDOptUnknown]) == 4
 
 = ICMPv6NDOptPREF64 - Summary Output
 ICMPv6NDOptPREF64(prefix='12:34:56::', plc='/32').mysummary() == "ICMPv6 Neighbor Discovery Option - PREF64 Option 12:34:56::/32"
@@ -1850,6 +1904,11 @@ pkts = fragment6(IPv6()/IPv6ExtHdrFragment()/UDP(dport=42, sport=42)/Raw(load="A
 pkts = [IPv6(raw(p)) for p in pkts]
 assert defragment6(pkts).plen == 1508
 
+= defragment6 - discard payload
+pkt = Ether() / IPv6() / ICMPv6EchoRequest(data='b'*100)
+frags = fragment6(pkt, 100)
+pkt = defragment6(Ether(raw(frag / Padding(b'a' * 8))) for frag in frags)
+assert b'a' not in pkt.data
 
 ############
 ############
@@ -1916,7 +1975,7 @@ r6.ifdel("scapy0")
 
 = IPv6 - utils
 
-import mock
+from unittest import mock
 @mock.patch("scapy.layers.inet6.get_if_hwaddr")
 @mock.patch("scapy.layers.inet6.srp1")
 def test_neighsol(mock_srp1, mock_get_if_hwaddr):
@@ -1937,7 +1996,7 @@ def test_getmacbyip6(mock_route6, mock_neighsol):
 
 test_getmacbyip6() == "05:04:03:02:01:00"
 
-= IPv6 - IPerror6 & UDPerror & _ICMPv6Error
+= IPv6 - IPerror6 & UDPerror & _ICMPv6Error & TCPerror
 
 query = IPv6(dst="2001:db8::1", src="2001:db8::2", hlim=1)/UDP()/DNS()
 answer = IPv6(dst="2001:db8::2", src="2001:db8::1", hlim=1)/ICMPv6TimeExceeded()/IPerror6(dst="2001:db8::1", src="2001:db8::2", hlim=0)/UDPerror()/DNS()
@@ -1948,7 +2007,16 @@ from scapy.layers.inet6 import _ICMPv6Error
 assert _ICMPv6Error().guess_payload_class(None) == IPerror6
 assert _ICMPv6Error().hashret() == b''
 
-= Windows: reset routes properly
+# Test with extension header
+# From:
+# pkt = IPv6() / ICMPv6DestUnreach() / IPerror6 () / IPv6ExtHdrFragment(nh=6) / TCPerror()
+raw_pkt = b'`\x00\x00\x00\x00L:@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01\x00l5\x00\x00\x00\x00`\x00\x00\x00\x00\x1c,@\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x06\x00\x00\x00\x00\x00\x00\x00\x00\x14\x00P\x00\x00\x00\x00\x00\x00\x00\x00P\x02 \x00\x8f}\x00\x00'
+IPv6(raw_pkt).summary()
+assert TCPerror in IPv6(raw_pkt)
+
+= reset routes properly
+
+conf.ifaces.reload()
 
 if WINDOWS:
     from scapy.arch.windows import _route_add_loopback
@@ -2015,7 +2083,7 @@ assert a.answers(q)
 
 = Define test utilities
 
-import mock
+from unittest import mock
 
 @mock.patch("scapy.layers.inet6.sniff")
 @mock.patch("scapy.layers.inet6.sendp")

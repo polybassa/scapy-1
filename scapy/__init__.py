@@ -15,6 +15,11 @@ import os
 import re
 import subprocess
 
+__all__ = [
+    "VERSION",
+    "__version__",
+]
+
 _SCAPY_PKG_DIR = os.path.dirname(__file__)
 
 
@@ -25,14 +30,19 @@ def _parse_tag(tag):
 
     Example::
 
-        v2.3.2-346-g164a52c075c8 -> '2.3.2.dev346'
+        v2.3.2-346-g164a52c075c8 -> '2.3.2.post346'
     """
     match = re.match('^v?(.+?)-(\\d+)-g[a-f0-9]+$', tag)
     if match:
-        # remove the 'v' prefix and add a '.devN' suffix
-        return '%s.dev%s' % (match.group(1), match.group(2))
+        # remove the 'v' prefix and add a '.postN' suffix
+        return '%s.post%s' % (match.group(1), match.group(2))
     else:
-        raise ValueError('tag has invalid format')
+        match = re.match('^v?([\\d\\.]+(rc\\d+)?)$', tag)
+        if match:
+            # tagged release version
+            return '%s' % (match.group(1))
+        else:
+            raise ValueError('tag has invalid format')
 
 
 def _version_from_git_archive():
@@ -63,7 +73,7 @@ def _version_from_git_archive():
         return _parse_tag(tag)
     elif tstamp:
         # archived revision is not tagged, use the commit date
-        d = datetime.datetime.utcfromtimestamp(int(tstamp))
+        d = datetime.datetime.fromtimestamp(int(tstamp), datetime.timezone.utc)
         return d.strftime('%Y.%m.%d')
 
     raise ValueError("invalid git archive format")
@@ -83,13 +93,13 @@ def _version_from_git_describe():
     The tag prefix (``v``) and the git commit sha1 (``-g164a52c075c8``) are
     removed if present.
 
-    If the current directory is not exactly on the tag, a ``.devN`` suffix is
+    If the current directory is not exactly on the tag, a ``.postN`` suffix is
     appended where N is the number of commits made after the last tag.
 
     Example::
 
         >>> _version_from_git_describe()
-        '2.3.2.dev346'
+        '2.3.2.post346'
 
     :raises CalledProcessError: if git is unavailable
     :return: Scapy's latest tag
@@ -139,7 +149,7 @@ def _version():
         with open(version_file, 'r') as fdsec:
             tag = fdsec.read()
         return tag
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         pass
 
     # Method 2: from the archive tag, exported when using git archives
@@ -157,7 +167,9 @@ def _version():
     # Fallback
     try:
         # last resort, use the modification date of __init__.py
-        d = datetime.datetime.utcfromtimestamp(os.path.getmtime(__file__))
+        d = datetime.datetime.fromtimestamp(
+            os.path.getmtime(__file__), datetime.timezone.utc
+        )
         return d.strftime('%Y.%m.%d')
     except Exception:
         pass

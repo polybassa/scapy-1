@@ -17,11 +17,30 @@ if conf.crypto_valid:
     from cryptography.utils import (
         CryptographyDeprecationWarning,
     )
-    from cryptography.hazmat.primitives.ciphers import (Cipher, algorithms, modes,  # noqa: E501
-                                                        BlockCipherAlgorithm,
-                                                        CipherAlgorithm)
-    from cryptography.hazmat.backends.openssl.backend import (backend,
-                                                              GetCipherByName)
+    from cryptography.hazmat.primitives.ciphers import (
+        BlockCipherAlgorithm,
+        Cipher,
+        CipherAlgorithm,
+        algorithms,
+        modes,
+    )
+    from cryptography.hazmat.backends.openssl.backend import backend
+    try:
+        # cryptography > 43.0
+        from cryptography.hazmat.decrepit.ciphers import (
+            algorithms as decrepit_algorithms,
+        )
+    except ImportError:
+        decrepit_algorithms = algorithms
+
+    # cryptography's TripleDES can be used to simulate DES behavior
+    DES = lambda key: decrepit_algorithms.TripleDES(key * 3)
+
+    try:
+        # cryptography > 47.0
+        Camellia = decrepit_algorithms.Camellia
+    except AttributeError:
+        Camellia = algorithms.Camellia
 
 
 _tls_block_cipher_algs = {}
@@ -54,17 +73,22 @@ class _BlockCipher(metaclass=_BlockCipherMetaclass):
             else:
                 key_len = self.key_len
             key = b"\0" * key_len
-        if not iv:
-            self.ready["iv"] = False
-            iv = b"\0" * self.block_size
 
         # we use super() in order to avoid any deadlock with __setattr__
         super(_BlockCipher, self).__setattr__("key", key)
-        super(_BlockCipher, self).__setattr__("iv", iv)
+        if self.pc_cls_mode == modes.ECB:
+            self._cipher = Cipher(self.pc_cls(key),
+                                  self.pc_cls_mode(),
+                                  backend=backend)
+        else:
+            if not iv:
+                self.ready["iv"] = False
+                iv = b"\0" * self.block_size
+            super(_BlockCipher, self).__setattr__("iv", iv)
 
-        self._cipher = Cipher(self.pc_cls(key),
-                              self.pc_cls_mode(iv),
-                              backend=backend)
+            self._cipher = Cipher(self.pc_cls(key),
+                                  self.pc_cls_mode(iv),
+                                  backend=backend)
 
     def __setattr__(self, name, val):
         if name == "key":
@@ -119,7 +143,7 @@ if conf.crypto_valid:
         key_len = 32
 
     class Cipher_CAMELLIA_128_CBC(_BlockCipher):
-        pc_cls = algorithms.Camellia
+        pc_cls = Camellia
         pc_cls_mode = modes.CBC
         block_size = 16
         key_len = 16
@@ -133,8 +157,14 @@ if conf.crypto_valid:
 _sslv2_block_cipher_algs = {}
 
 if conf.crypto_valid:
+    class Cipher_DES_ECB(_BlockCipher):
+        pc_cls = staticmethod(DES)
+        pc_cls_mode = modes.ECB
+        block_size = 8
+        key_len = 8
+
     class Cipher_DES_CBC(_BlockCipher):
-        pc_cls = algorithms.TripleDES
+        pc_cls = staticmethod(DES)
         pc_cls_mode = modes.CBC
         block_size = 8
         key_len = 8
@@ -152,7 +182,7 @@ if conf.crypto_valid:
         key_len = 5
 
     class Cipher_3DES_EDE_CBC(_BlockCipher):
-        pc_cls = algorithms.TripleDES
+        pc_cls = decrepit_algorithms.TripleDES
         pc_cls_mode = modes.CBC
         block_size = 8
         key_len = 24
@@ -166,13 +196,13 @@ if conf.crypto_valid:
                                     category=CryptographyDeprecationWarning)
 
             class Cipher_IDEA_CBC(_BlockCipher):
-                pc_cls = algorithms.IDEA
+                pc_cls = decrepit_algorithms.IDEA
                 pc_cls_mode = modes.CBC
                 block_size = 8
                 key_len = 16
 
             class Cipher_SEED_CBC(_BlockCipher):
-                pc_cls = algorithms.SEED
+                pc_cls = decrepit_algorithms.SEED
                 pc_cls_mode = modes.CBC
                 block_size = 16
                 key_len = 16
@@ -191,24 +221,41 @@ if conf.crypto_valid:
 # silently not declared, and the corresponding suites will have 'usable' False.
 
 if conf.crypto_valid:
-    class _ARC2(BlockCipherAlgorithm, CipherAlgorithm):
-        name = "RC2"
-        block_size = 64
-        key_sizes = frozenset([128])
+    try:
+        from cryptography.hazmat.decrepit.ciphers.algorithms import RC2
+        rc2_available = backend.cipher_supported(
+            RC2(b"0" * 16), modes.CBC(b"0" * 8)
+        )
+    except ImportError:
+        # Legacy path for cryptography < 43.0.0
+        from cryptography.hazmat.backends.openssl.backend import (
+            GetCipherByName
+        )
+        _gcbn_format = "{cipher.name}-{mode.name}"
 
-        def __init__(self, key):
-            self.key = algorithms._verify_key_size(self, key)
+        class RC2(BlockCipherAlgorithm, CipherAlgorithm):
+            name = "RC2"
+            block_size = 64
+            key_sizes = frozenset([128])
 
-        @property
-        def key_size(self):
-            return len(self.key) * 8
+            def __init__(self, key):
+                self.key = algorithms._verify_key_size(self, key)
 
-    _gcbn_format = "{cipher.name}-{mode.name}"
-    if GetCipherByName(_gcbn_format)(backend, _ARC2, modes.CBC) != \
-            backend._ffi.NULL:
+            @property
+            def key_size(self):
+                return len(self.key) * 8
+        if GetCipherByName(_gcbn_format)(backend, RC2, modes.CBC) != \
+                backend._ffi.NULL:
+            rc2_available = True
+            backend.register_cipher_adapter(RC2,
+                                            modes.CBC,
+                                            GetCipherByName(_gcbn_format))
+        else:
+            rc2_available = False
 
+    if rc2_available:
         class Cipher_RC2_CBC(_BlockCipher):
-            pc_cls = _ARC2
+            pc_cls = RC2
             pc_cls_mode = modes.CBC
             block_size = 8
             key_len = 16
@@ -216,10 +263,6 @@ if conf.crypto_valid:
         class Cipher_RC2_CBC_40(Cipher_RC2_CBC):
             expanded_key_len = 16
             key_len = 5
-
-        backend.register_cipher_adapter(Cipher_RC2_CBC.pc_cls,
-                                        Cipher_RC2_CBC.pc_cls_mode,
-                                        GetCipherByName(_gcbn_format))
 
         _sslv2_block_cipher_algs["RC2_128_CBC"] = Cipher_RC2_CBC
 

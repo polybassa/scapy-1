@@ -4,10 +4,16 @@
 # Copyright (C) Philippe Biondi <phil@secdev.org>
 
 """
-DNS: Domain Name System.
+DNS: Domain Name System
+
+This implements:
+- RFC1035: Domain Names
+- RFC6762: Multicast DNS
+- RFC6763: DNS-Based Service Discovery
 """
 
 import abc
+import collections
 import operator
 import itertools
 import socket
@@ -21,9 +27,9 @@ from scapy.arch import (
     read_nameservers,
 )
 from scapy.ansmachine import AnsweringMachine
-from scapy.base_classes import Net
+from scapy.base_classes import Net, ScopedIP
 from scapy.config import conf
-from scapy.compat import orb, raw, chb, bytes_encode, plain_str
+from scapy.compat import raw, chb, bytes_encode, plain_str
 from scapy.error import log_runtime, warning, Scapy_Exception
 from scapy.packet import Packet, bind_layers, Raw
 from scapy.fields import (
@@ -34,10 +40,12 @@ from scapy.fields import (
     ConditionalField,
     Field,
     FieldLenField,
+    FieldListField,
     FlagsField,
     I,
     IP6Field,
     IntField,
+    MACField,
     MultipleTypeField,
     PacketListField,
     ShortEnumField,
@@ -45,13 +53,20 @@ from scapy.fields import (
     StrField,
     StrLenField,
     UTCTimeField,
+    XStrFixedLenField,
+    XStrLenField,
 )
-from scapy.sendrecv import sr1
+from scapy.interfaces import resolve_iface
+from scapy.sendrecv import sr1, sr
 from scapy.supersocket import StreamSocket
+from scapy.plist import SndRcvList, _PacketList, QueryAnswer
 from scapy.pton_ntop import inet_ntop, inet_pton
+from scapy.utils import pretty_list
 from scapy.volatile import RandShort
 
+from scapy.layers.l2 import Ether
 from scapy.layers.inet import IP, DestIPField, IPField, UDP, TCP
+from scapy.layers.inet6 import IPv6
 
 from typing import (
     Any,
@@ -65,7 +80,7 @@ from typing import (
 
 # https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4
 dnstypes = {
-    0: "ANY",
+    0: "RESERVED",
     1: "A", 2: "NS", 3: "MD", 4: "MF", 5: "CNAME", 6: "SOA", 7: "MB", 8: "MG",
     9: "MR", 10: "NULL", 11: "WKS", 12: "PTR", 13: "HINFO", 14: "MINFO",
     15: "MX", 16: "TXT", 17: "RP", 18: "AFSDB", 19: "X25", 20: "ISDN",
@@ -87,6 +102,23 @@ dnstypes = {
 dnsqtypes = {251: "IXFR", 252: "AXFR", 253: "MAILB", 254: "MAILA", 255: "ALL"}
 dnsqtypes.update(dnstypes)
 dnsclasses = {1: 'IN', 2: 'CS', 3: 'CH', 4: 'HS', 255: 'ANY'}
+
+
+# 12/2023 from https://www.iana.org/assignments/dns-sec-alg-numbers/dns-sec-alg-numbers.xhtml  # noqa: E501
+dnssecalgotypes = {0: "Reserved", 1: "RSA/MD5", 2: "Diffie-Hellman", 3: "DSA/SHA-1",  # noqa: E501
+                   4: "Reserved", 5: "RSA/SHA-1", 6: "DSA-NSEC3-SHA1",
+                   7: "RSASHA1-NSEC3-SHA1", 8: "RSA/SHA-256", 9: "Reserved",
+                   10: "RSA/SHA-512", 11: "Reserved", 12: "GOST R 34.10-2001",
+                   13: "ECDSA Curve P-256 with SHA-256", 14: "ECDSA Curve P-384 with SHA-384",  # noqa: E501
+                   15: "Ed25519", 16: "Ed448",
+                   252: "Reserved for Indirect Keys", 253: "Private algorithms - domain name",  # noqa: E501
+                   254: "Private algorithms - OID", 255: "Reserved"}
+
+# 12/2023 from https://www.iana.org/assignments/ds-rr-types/ds-rr-types.xhtml
+dnssecdigesttypes = {0: "Reserved", 1: "SHA-1", 2: "SHA-256", 3: "GOST R 34.11-94", 4: "SHA-384"}  # noqa: E501
+
+# 12/2023 from https://www.iana.org/assignments/dnssec-nsec3-parameters/dnssec-nsec3-parameters.xhtml  # noqa: E501
+dnssecnsec3algotypes = {0: "Reserved", 1: "SHA-1"}
 
 
 def dns_get_str(s, full=None, _ignore_compression=False):
@@ -167,9 +199,12 @@ def dns_get_str(s, full=None, _ignore_compression=False):
 
 
 def _is_ptr(x):
-    return b"." not in x and (
-        (x and orb(x[-1]) == 0) or
-        (len(x) >= 2 and (orb(x[-2]) & 0xc0) == 0xc0)
+    """
+    Heuristic to guess if bytes are an encoded DNS pointer.
+    """
+    return (
+        (x and x[-1] == 0) or
+        (len(x) >= 2 and (x[-2] & 0xc0) == 0xc0)
     )
 
 
@@ -222,7 +257,7 @@ def dns_compress(pkt):
                 for field in current.fields_desc:
                     if isinstance(field, DNSStrField) or \
                         (isinstance(field, MultipleTypeField) and
-                         current.type in [2, 3, 4, 5, 12, 15]):
+                         current.type in [2, 3, 4, 5, 12, 15, 39, 47]):
                         # Get the associated data and store it accordingly  # noqa: E501
                         dat = current.getfieldval(field.name)
                         yield current, field.name, dat
@@ -303,8 +338,19 @@ class DNSStrField(StrLenField):
     It will also handle DNS decompression.
     (may be StrLenField if a length_from is passed),
     """
+    def any2i(self, pkt, x):
+        if x and isinstance(x, list):
+            return [self.h2i(pkt, y) for y in x]
+        return super(DNSStrField, self).any2i(pkt, x)
 
     def h2i(self, pkt, x):
+        # Setting a DNSStrField manually (h2i) means any current compression will break
+        if (
+            pkt and
+            isinstance(pkt.parent, DNSCompressedPacket) and
+            pkt.parent.raw_packet_cache
+        ):
+            pkt.parent.clear_cache()
         if not x:
             return b"."
         x = bytes_encode(x)
@@ -342,13 +388,18 @@ class DNSTextField(StrLenField):
 
     islist = 1
 
+    def i2h(self, pkt, x):
+        if not x:
+            return []
+        return x
+
     def m2i(self, pkt, s):
         ret_s = list()
         tmp_s = s
         # RDATA contains a list of strings, each are prepended with
         # a byte containing the size of the following string.
         while tmp_s:
-            tmp_len = orb(tmp_s[0]) + 1
+            tmp_len = tmp_s[0] + 1
             if tmp_len > len(tmp_s):
                 log_runtime.info(
                     "DNS RR TXT prematured end of character-string "
@@ -386,21 +437,25 @@ class DNSTextField(StrLenField):
 
 # RFC 2671 - Extension Mechanisms for DNS (EDNS0)
 
-edns0types = {0: "Reserved", 1: "LLQ", 2: "UL", 3: "NSID", 4: "Reserved",
-              5: "PING", 8: "edns-client-subnet", 10: "COOKIE",
+edns0types = {0: "Reserved", 1: "LLQ", 2: "UL", 3: "NSID", 4: "Owner",
+              5: "DAU", 6: "DHU", 7: "N3U", 8: "edns-client-subnet", 10: "COOKIE",
               15: "Extended DNS Error"}
 
 
-class EDNS0TLV(Packet):
+class _EDNS0Dummy(Packet):
+    name = "Dummy class that implements extract_padding()"
+
+    def extract_padding(self, p):
+        # type: (bytes) -> Tuple[bytes, Optional[bytes]]
+        return "", p
+
+
+class EDNS0TLV(_EDNS0Dummy):
     name = "DNS EDNS0 TLV"
     fields_desc = [ShortEnumField("optcode", 0, edns0types),
                    FieldLenField("optlen", None, "optdata", fmt="H"),
                    StrLenField("optdata", "",
                                length_from=lambda pkt: pkt.optlen)]
-
-    def extract_padding(self, p):
-        # type: (bytes) -> Tuple[bytes, Optional[bytes]]
-        return "", p
 
     @classmethod
     def dispatch_hook(cls, _pkt=None, *args, **kargs):
@@ -410,18 +465,14 @@ class EDNS0TLV(Packet):
         if len(_pkt) < 2:
             return Raw
         edns0type = struct.unpack("!H", _pkt[:2])[0]
-        if edns0type == 8:
-            return EDNS0ClientSubnet
-        if edns0type == 15:
-            return EDNS0ExtendedDNSError
-        return EDNS0TLV
+        return EDNS0OPT_DISPATCHER.get(edns0type, EDNS0TLV)
 
 
 class DNSRROPT(Packet):
     name = "DNS OPT Resource Record"
     fields_desc = [DNSStrField("rrname", ""),
                    ShortEnumField("type", 41, dnstypes),
-                   ShortField("rclass", 4096),
+                   ShortEnumField("rclass", 4096, dnsclasses),
                    ByteField("extrcode", 0),
                    ByteField("version", 0),
                    # version 0 means EDNS0
@@ -430,6 +481,60 @@ class DNSRROPT(Packet):
                    FieldLenField("rdlen", None, length_of="rdata", fmt="H"),
                    PacketListField("rdata", [], EDNS0TLV,
                                    length_from=lambda pkt: pkt.rdlen)]
+
+
+# draft-cheshire-edns0-owner-option-01 - EDNS0 OWNER Option
+
+class EDNS0OWN(_EDNS0Dummy):
+    name = "EDNS0 Owner (OWN)"
+    fields_desc = [ShortEnumField("optcode", 4, edns0types),
+                   FieldLenField("optlen", None, count_of="primary_mac", fmt="H"),
+                   ByteField("v", 0),
+                   ByteField("s", 0),
+                   MACField("primary_mac", "00:00:00:00:00:00"),
+                   ConditionalField(
+                       MACField("wakeup_mac", "00:00:00:00:00:00"),
+                       lambda pkt: (pkt.optlen or 0) >= 14),
+                   ConditionalField(
+                       StrLenField("password", "",
+                                   length_from=lambda pkt: pkt.optlen - 14),
+                       lambda pkt: (pkt.optlen or 0) >= 18)]
+
+    def post_build(self, pkt, pay):
+        pkt += pay
+        if self.optlen is None:
+            pkt = pkt[:2] + struct.pack("!H", len(pkt) - 4) + pkt[4:]
+        return pkt
+
+
+# RFC 6975 - Signaling Cryptographic Algorithm Understanding in
+# DNS Security Extensions (DNSSEC)
+
+class EDNS0DAU(_EDNS0Dummy):
+    name = "DNSSEC Algorithm Understood (DAU)"
+    fields_desc = [ShortEnumField("optcode", 5, edns0types),
+                   FieldLenField("optlen", None, count_of="alg_code", fmt="H"),
+                   FieldListField("alg_code", None,
+                                  ByteEnumField("", 0, dnssecalgotypes),
+                                  count_from=lambda pkt:pkt.optlen)]
+
+
+class EDNS0DHU(_EDNS0Dummy):
+    name = "DS Hash Understood (DHU)"
+    fields_desc = [ShortEnumField("optcode", 6, edns0types),
+                   FieldLenField("optlen", None, count_of="alg_code", fmt="H"),
+                   FieldListField("alg_code", None,
+                                  ByteEnumField("", 0, dnssecdigesttypes),
+                                  count_from=lambda pkt:pkt.optlen)]
+
+
+class EDNS0N3U(_EDNS0Dummy):
+    name = "NSEC3 Hash Understood (N3U)"
+    fields_desc = [ShortEnumField("optcode", 7, edns0types),
+                   FieldLenField("optlen", None, count_of="alg_code", fmt="H"),
+                   FieldListField("alg_code", None,
+                                  ByteEnumField("", 0, dnssecnsec3algotypes),
+                                  count_from=lambda pkt:pkt.optlen)]
 
 
 # RFC 7871 - Client Subnet in DNS Queries
@@ -441,7 +546,7 @@ class ClientSubnetv4(StrLenField):
 
     def getfield(self, pkt, s):
         # type: (Packet, bytes) -> Tuple[bytes, I]
-        sz = operator.floordiv(self.length_from(pkt), 8)
+        sz = operator.floordiv(self.length_from(pkt) + 7, 8)
         sz = min(sz, operator.floordiv(self.af_length, 8))
         return s[sz:], self.m2i(pkt, s[:sz])
 
@@ -457,7 +562,7 @@ class ClientSubnetv4(StrLenField):
         # type: (bytes) -> bytes
         packed_subnet = inet_pton(self.af_familly, plain_str(subnet))
         for i in list(range(operator.floordiv(self.af_length, 8)))[::-1]:
-            if orb(packed_subnet[i]) != 0:
+            if packed_subnet[i] != 0:
                 i += 1
                 break
         return packed_subnet[:i]
@@ -489,7 +594,7 @@ class ClientSubnetv6(ClientSubnetv4):
     af_default = b"\x20"  # 2000::
 
 
-class EDNS0ClientSubnet(Packet):
+class EDNS0ClientSubnet(_EDNS0Dummy):
     name = "DNS EDNS0 Client Subnet"
     fields_desc = [ShortEnumField("optcode", 8, edns0types),
                    FieldLenField("optlen", None, "address", fmt="H",
@@ -509,6 +614,16 @@ class EDNS0ClientSubnet(Packet):
                          lambda pkt: pkt.family == 2)],
                        ClientSubnetv4("address", "192.168.0.0",
                                       length_from=lambda p: p.source_plen))]
+
+
+class EDNS0COOKIE(_EDNS0Dummy):
+    name = "DNS EDNS0 COOKIE"
+    fields_desc = [ShortEnumField("optcode", 10, edns0types),
+                   FieldLenField("optlen", None, length_of="server_cookie", fmt="!H",
+                                 adjust=lambda pkt, x: x + 8),
+                   XStrFixedLenField("client_cookie", b"\x00" * 8, length=8),
+                   XStrLenField("server_cookie", "",
+                                length_from=lambda pkt: max(0, pkt.optlen - 8))]
 
 
 # RFC 8914 - Extended DNS Errors
@@ -549,7 +664,7 @@ extended_dns_error_codes = {
 
 
 # https://www.rfc-editor.org/rfc/rfc8914.html
-class EDNS0ExtendedDNSError(Packet):
+class EDNS0ExtendedDNSError(_EDNS0Dummy):
     name = "DNS EDNS0 Extended DNS Error"
     fields_desc = [ShortEnumField("optcode", 15, edns0types),
                    FieldLenField("optlen", None, length_of="extra_text", fmt="!H",
@@ -559,21 +674,18 @@ class EDNS0ExtendedDNSError(Packet):
                                length_from=lambda pkt: pkt.optlen - 2)]
 
 
+EDNS0OPT_DISPATCHER = {
+    4: EDNS0OWN,
+    5: EDNS0DAU,
+    6: EDNS0DHU,
+    7: EDNS0N3U,
+    8: EDNS0ClientSubnet,
+    10: EDNS0COOKIE,
+    15: EDNS0ExtendedDNSError,
+}
+
+
 # RFC 4034 - Resource Records for the DNS Security Extensions
-
-
-# 09/2013 from http://www.iana.org/assignments/dns-sec-alg-numbers/dns-sec-alg-numbers.xhtml  # noqa: E501
-dnssecalgotypes = {0: "Reserved", 1: "RSA/MD5", 2: "Diffie-Hellman", 3: "DSA/SHA-1",  # noqa: E501
-                   4: "Reserved", 5: "RSA/SHA-1", 6: "DSA-NSEC3-SHA1",
-                   7: "RSASHA1-NSEC3-SHA1", 8: "RSA/SHA-256", 9: "Reserved",
-                   10: "RSA/SHA-512", 11: "Reserved", 12: "GOST R 34.10-2001",
-                   13: "ECDSA Curve P-256 with SHA-256", 14: "ECDSA Curve P-384 with SHA-384",  # noqa: E501
-                   252: "Reserved for Indirect Keys", 253: "Private algorithms - domain name",  # noqa: E501
-                   254: "Private algorithms - OID", 255: "Reserved"}
-
-# 09/2013 from http://www.iana.org/assignments/ds-rr-types/ds-rr-types.xhtml
-dnssecdigesttypes = {0: "Reserved", 1: "SHA-1", 2: "SHA-256", 3: "GOST R 34.11-94", 4: "SHA-384"}  # noqa: E501
-
 
 def bitmap2RRlist(bitmap):
     """
@@ -590,9 +702,9 @@ def bitmap2RRlist(bitmap):
             log_runtime.info("bitmap too short (%i)", len(bitmap))
             return
 
-        window_block = orb(bitmap[0])  # window number
+        window_block = bitmap[0]  # window number
         offset = 256 * window_block  # offset of the Resource Record
-        bitmap_len = orb(bitmap[1])  # length of the bitmap in bytes
+        bitmap_len = bitmap[1]  # length of the bitmap in bytes
 
         if bitmap_len <= 0 or bitmap_len > 32:
             log_runtime.info("bitmap length is no valid (%i)", bitmap_len)
@@ -604,7 +716,7 @@ def bitmap2RRlist(bitmap):
         for b in range(len(tmp_bitmap)):
             v = 128
             for i in range(8):
-                if orb(tmp_bitmap[b]) & v:
+                if tmp_bitmap[b] & v:
                     # each of the RR is encoded as a bit
                     RRlist += [offset + b * 8 + i]
                 v = v >> 1
@@ -668,12 +780,16 @@ def RRlist2bitmap(lst):
 
 
 class RRlistField(StrField):
+    islist = 1
+
     def h2i(self, pkt, x):
-        if isinstance(x, list):
+        if x and isinstance(x, list):
             return RRlist2bitmap(x)
         return x
 
     def i2repr(self, pkt, x):
+        if not x:
+            return "[]"
         x = self.i2h(pkt, x)
         rrlist = bitmap2RRlist(x)
         return [dnstypes.get(rr, rr) for rr in rrlist] if rrlist else repr(x)
@@ -697,11 +813,26 @@ class _DNSRRdummy(Packet):
         return conf.padding_layer
 
 
+class DNSRRHINFO(_DNSRRdummy):
+    name = "DNS HINFO Resource Record"
+    fields_desc = [DNSStrField("rrname", ""),
+                   ShortEnumField("type", 13, dnstypes),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
+                   IntField("ttl", 0),
+                   ShortField("rdlen", None),
+                   FieldLenField("cpulen", None, fmt="!B", length_of="cpu"),
+                   StrLenField("cpu", "", length_from=lambda x: x.cpulen),
+                   FieldLenField("oslen", None, fmt="!B", length_of="os"),
+                   StrLenField("os", "", length_from=lambda x: x.oslen)]
+
+
 class DNSRRMX(_DNSRRdummy):
     name = "DNS MX Resource Record"
     fields_desc = [DNSStrField("rrname", ""),
-                   ShortEnumField("type", 6, dnstypes),
-                   ShortEnumField("rclass", 1, dnsclasses),
+                   ShortEnumField("type", 15, dnstypes),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
                    IntField("ttl", 0),
                    ShortField("rdlen", None),
                    ShortField("preference", 0),
@@ -730,7 +861,8 @@ class DNSRRRSIG(_DNSRRdummy):
     name = "DNS RRSIG Resource Record"
     fields_desc = [DNSStrField("rrname", ""),
                    ShortEnumField("type", 46, dnstypes),
-                   ShortEnumField("rclass", 1, dnsclasses),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
                    IntField("ttl", 0),
                    ShortField("rdlen", None),
                    ShortEnumField("typecovered", 1, dnstypes),
@@ -749,11 +881,12 @@ class DNSRRNSEC(_DNSRRdummy):
     name = "DNS NSEC Resource Record"
     fields_desc = [DNSStrField("rrname", ""),
                    ShortEnumField("type", 47, dnstypes),
-                   ShortEnumField("rclass", 1, dnsclasses),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
                    IntField("ttl", 0),
                    ShortField("rdlen", None),
                    DNSStrField("nextname", ""),
-                   RRlistField("typebitmaps", "")
+                   RRlistField("typebitmaps", [])
                    ]
 
 
@@ -761,7 +894,8 @@ class DNSRRDNSKEY(_DNSRRdummy):
     name = "DNS DNSKEY Resource Record"
     fields_desc = [DNSStrField("rrname", ""),
                    ShortEnumField("type", 48, dnstypes),
-                   ShortEnumField("rclass", 1, dnsclasses),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
                    IntField("ttl", 0),
                    ShortField("rdlen", None),
                    FlagsField("flags", 256, 16, "S???????Z???????"),
@@ -777,7 +911,8 @@ class DNSRRDS(_DNSRRdummy):
     name = "DNS DS Resource Record"
     fields_desc = [DNSStrField("rrname", ""),
                    ShortEnumField("type", 43, dnstypes),
-                   ShortEnumField("rclass", 1, dnsclasses),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
                    IntField("ttl", 0),
                    ShortField("rdlen", None),
                    ShortField("keytag", 0),
@@ -803,7 +938,8 @@ class DNSRRNSEC3(_DNSRRdummy):
     name = "DNS NSEC3 Resource Record"
     fields_desc = [DNSStrField("rrname", ""),
                    ShortEnumField("type", 50, dnstypes),
-                   ShortEnumField("rclass", 1, dnsclasses),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
                    IntField("ttl", 0),
                    ShortField("rdlen", None),
                    ByteField("hashalg", 0),
@@ -813,7 +949,7 @@ class DNSRRNSEC3(_DNSRRdummy):
                    StrLenField("salt", "", length_from=lambda x: x.saltlength),
                    FieldLenField("hashlength", 0, fmt="!B", length_of="nexthashedownername"),  # noqa: E501
                    StrLenField("nexthashedownername", "", length_from=lambda x: x.hashlength),  # noqa: E501
-                   RRlistField("typebitmaps", "")
+                   RRlistField("typebitmaps", [])
                    ]
 
 
@@ -821,7 +957,8 @@ class DNSRRNSEC3PARAM(_DNSRRdummy):
     name = "DNS NSEC3PARAM Resource Record"
     fields_desc = [DNSStrField("rrname", ""),
                    ShortEnumField("type", 51, dnstypes),
-                   ShortEnumField("rclass", 1, dnsclasses),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
                    IntField("ttl", 0),
                    ShortField("rdlen", None),
                    ByteField("hashalg", 0),
@@ -831,6 +968,81 @@ class DNSRRNSEC3PARAM(_DNSRRdummy):
                    StrLenField("salt", "", length_from=lambda pkt: pkt.saltlength)  # noqa: E501
                    ]
 
+
+# RFC 9460 Service Binding and Parameter Specification via the DNS
+# https://www.rfc-editor.org/rfc/rfc9460.html
+
+
+# https://www.iana.org/assignments/dns-svcb/dns-svcb.xhtml
+svc_param_keys = {
+    0: "mandatory",
+    1: "alpn",
+    2: "no-default-alpn",
+    3: "port",
+    4: "ipv4hint",
+    5: "ech",
+    6: "ipv6hint",
+    7: "dohpath",
+    8: "ohttp",
+}
+
+
+class SvcParam(Packet):
+    name = "SvcParam"
+    fields_desc = [ShortEnumField("key", 0, svc_param_keys),
+                   FieldLenField("len", None, length_of="value", fmt="H"),
+                   MultipleTypeField(
+                       [
+                           # mandatory
+                           (FieldListField("value", [],
+                                           ShortEnumField("", 0, svc_param_keys),
+                                           length_from=lambda pkt: pkt.len),
+                               lambda pkt: pkt.key == 0),
+                           # alpn, no-default-alpn
+                           (DNSTextField("value", [],
+                                         length_from=lambda pkt: pkt.len),
+                               lambda pkt: pkt.key in (1, 2)),
+                           # port
+                           (ShortField("value", 0),
+                               lambda pkt: pkt.key == 3),
+                           # ipv4hint
+                           (FieldListField("value", [],
+                                           IPField("", "0.0.0.0"),
+                                           length_from=lambda pkt: pkt.len),
+                               lambda pkt: pkt.key == 4),
+                           # ipv6hint
+                           (FieldListField("value", [],
+                                           IP6Field("", "::"),
+                                           length_from=lambda pkt: pkt.len),
+                               lambda pkt: pkt.key == 6),
+                       ],
+                       StrLenField("value", "",
+                                   length_from=lambda pkt:pkt.len))]
+
+    def extract_padding(self, p):
+        return "", p
+
+
+class DNSRRSVCB(_DNSRRdummy):
+    name = "DNS SVCB Resource Record"
+    fields_desc = [DNSStrField("rrname", ""),
+                   ShortEnumField("type", 64, dnstypes),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
+                   IntField("ttl", 0),
+                   ShortField("rdlen", None),
+                   ShortField("svc_priority", 0),
+                   DNSStrField("target_name", ""),
+                   PacketListField("svc_params", [], SvcParam)]
+
+
+class DNSRRHTTPS(_DNSRRdummy):
+    name = "DNS HTTPS Resource Record"
+    fields_desc = [DNSStrField("rrname", ""),
+                   ShortEnumField("type", 65, dnstypes)
+                   ] + DNSRRSVCB.fields_desc[2:]
+
+
 # RFC 2782 - A DNS RR for specifying the location of services (DNS SRV)
 
 
@@ -838,7 +1050,8 @@ class DNSRRSRV(_DNSRRdummy):
     name = "DNS SRV Resource Record"
     fields_desc = [DNSStrField("rrname", ""),
                    ShortEnumField("type", 33, dnstypes),
-                   ShortEnumField("rclass", 1, dnsclasses),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
                    IntField("ttl", 0),
                    ShortField("rdlen", None),
                    ShortField("priority", 0),
@@ -909,10 +1122,33 @@ class DNSRRTSIG(_DNSRRdummy):
                    ]
 
 
+class DNSRRNAPTR(_DNSRRdummy):
+    name = "DNS NAPTR Resource Record"
+    fields_desc = [DNSStrField("rrname", ""),
+                   ShortEnumField("type", 35, dnstypes),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
+                   IntField("ttl", 0),
+                   ShortField("rdlen", None),
+                   ShortField("order", 0),
+                   ShortField("preference", 0),
+                   FieldLenField("flags_len", None, fmt="!B", length_of="flags"),
+                   StrLenField("flags", "", length_from=lambda pkt: pkt.flags_len),
+                   FieldLenField("services_len", None, fmt="!B", length_of="services"),
+                   StrLenField("services", "",
+                               length_from=lambda pkt: pkt.services_len),
+                   FieldLenField("regexp_len", None, fmt="!B", length_of="regexp"),
+                   StrLenField("regexp", "", length_from=lambda pkt: pkt.regexp_len),
+                   DNSStrField("replacement", ""),
+                   ]
+
+
 DNSRR_DISPATCHER = {
     6: DNSRRSOA,         # RFC 1035
+    13: DNSRRHINFO,      # RFC 1035
     15: DNSRRMX,         # RFC 1035
     33: DNSRRSRV,        # RFC 2782
+    35: DNSRRNAPTR,      # RFC 2915
     41: DNSRROPT,        # RFC 1671
     43: DNSRRDS,         # RFC 4034
     46: DNSRRRSIG,       # RFC 4034
@@ -920,6 +1156,8 @@ DNSRR_DISPATCHER = {
     48: DNSRRDNSKEY,     # RFC 4034
     50: DNSRRNSEC3,      # RFC 5155
     51: DNSRRNSEC3PARAM,  # RFC 5155
+    64: DNSRRSVCB,       # RFC 9460
+    65: DNSRRHTTPS,      # RFC 9460
     250: DNSRRTSIG,      # RFC 2845
     32769: DNSRRDLV,     # RFC 4431
 }
@@ -930,7 +1168,8 @@ class DNSRR(Packet):
     show_indent = 0
     fields_desc = [DNSStrField("rrname", ""),
                    ShortEnumField("type", 1, dnstypes),
-                   ShortEnumField("rclass", 1, dnsclasses),
+                   BitField("cacheflush", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("rclass", 1, 15, dnsclasses),
                    IntField("ttl", 0),
                    FieldLenField("rdlen", None, length_of="rdata", fmt="H"),
                    MultipleTypeField(
@@ -941,10 +1180,10 @@ class DNSRR(Packet):
                            # AAAA
                            (IP6Field("rdata", "::"),
                                lambda pkt: pkt.type == 28),
-                           # NS, MD, MF, CNAME, PTR
+                           # NS, MD, MF, CNAME, PTR, DNAME
                            (DNSStrField("rdata", "",
                                         length_from=lambda pkt: pkt.rdlen),
-                               lambda pkt: pkt.type in [2, 3, 4, 5, 12]),
+                               lambda pkt: pkt.type in [2, 3, 4, 5, 12, 39]),
                            # TEXT
                            (DNSTextField("rdata", [""],
                                          length_from=lambda pkt: pkt.rdlen),
@@ -987,7 +1226,8 @@ class DNSQR(Packet):
     show_indent = 0
     fields_desc = [DNSStrField("qname", "www.example.com"),
                    ShortEnumField("qtype", 1, dnsqtypes),
-                   ShortEnumField("qclass", 1, dnsclasses)]
+                   BitField("unicastresponse", 0, 1),  # mDNS RFC 6762
+                   BitEnumField("qclass", 1, 15, dnsclasses)]
 
     def default_payload_class(self, payload):
         return conf.padding_layer
@@ -1031,9 +1271,10 @@ class _DNSPacketListField(PacketListField):
 
 class DNS(DNSCompressedPacket):
     name = "DNS"
+    FORCE_TCP = False
     fields_desc = [
         ConditionalField(ShortField("length", None),
-                         lambda p: isinstance(p.underlayer, TCP)),
+                         lambda p: p.FORCE_TCP or isinstance(p.underlayer, TCP)),
         ShortField("id", 0),
         BitField("qr", 0, 1),
         BitEnumField("opcode", 0, 4, {0: "QUERY", 1: "IQUERY", 2: "STATUS"}),
@@ -1060,7 +1301,7 @@ class DNS(DNSCompressedPacket):
 
     def get_full(self):
         # Required for DNSCompressedPacket
-        if isinstance(self.underlayer, TCP):
+        if isinstance(self.underlayer, TCP) or self.FORCE_TCP:
             return self.original[2:]
         else:
             return self.original
@@ -1077,14 +1318,25 @@ class DNS(DNSCompressedPacket):
             type = "Ans"
             if self.an and isinstance(self.an[0], DNSRR):
                 name = ' %s' % self.an[0].rdata
+            elif self.rcode != 0:
+                name = self.sprintf(' %rcode%')
         else:
             type = "Qry"
             if self.qd and isinstance(self.qd[0], DNSQR):
                 name = ' %s' % self.qd[0].qname
-        return 'DNS %s%s' % (type, name)
+        return "%sDNS %s%s" % (
+            "m"
+            if isinstance(self.underlayer, UDP) and self.underlayer.dport == 5353
+            else "",
+            type,
+            name,
+        )
 
     def post_build(self, pkt, pay):
-        if isinstance(self.underlayer, TCP) and self.length is None:
+        if (
+            (isinstance(self.underlayer, TCP) or self.FORCE_TCP) and
+            self.length is None
+        ):
             pkt = struct.pack("!H", len(pkt) - 2) + pkt[2:]
         return pkt + pay
 
@@ -1115,6 +1367,14 @@ class DNS(DNSCompressedPacket):
         return s
 
 
+class DNSTCP(DNS):
+    """
+    A DNS packet that is always under TCP
+    """
+    FORCE_TCP = True
+    match_subclass = True
+
+
 bind_layers(UDP, DNS, dport=5353)
 bind_layers(UDP, DNS, sport=5353)
 bind_layers(UDP, DNS, dport=53)
@@ -1132,18 +1392,20 @@ _dns_cache = conf.netcache.new_cache("dns_cache", 300)
 
 
 @conf.commands.register
-def dns_resolve(qname, qtype="A", raw=False, verbose=1, timeout=3, **kwargs):
+def dns_resolve(qname, qtype="A", raw=False, tcp=False, verbose=1, timeout=3, **kwargs):
     """
     Perform a simple DNS resolution using conf.nameservers with caching
 
     :param qname: the name to query
     :param qtype: the type to query (default A)
     :param raw: return the whole DNS packet (default False)
+    :param tcp: whether to use directly TCP instead of UDP. If truncated is received,
+        UDP automatically retries in TCP. (default: False)
     :param verbose: show verbose errors
     :param timeout: seconds until timeout (per server)
     :raise TimeoutError: if no DNS servers were reached in time.
     """
-    # Unify types
+    # Unify types (for caching)
     qtype = DNSQR.qtype.any2i_one(None, qtype)
     qname = DNSQR.qname.any2i(None, qname)
     # Check cache
@@ -1151,25 +1413,30 @@ def dns_resolve(qname, qtype="A", raw=False, verbose=1, timeout=3, **kwargs):
         [qname, struct.pack("!B", qtype)] +
         ([b"raw"] if raw else [])
     )
-    answer = _dns_cache.get(cache_ident)
-    if answer:
-        return answer
+    result = _dns_cache.get(cache_ident)
+    if result:
+        return result
 
     kwargs.setdefault("timeout", timeout)
-    kwargs.setdefault("verbose", 0)
+    kwargs.setdefault("verbose", 0)  # hide sr1() output
     res = None
     for nameserver in conf.nameservers:
         # Try all nameservers
         try:
-            # Spawn a UDP socket, connect to the nameserver on port 53
-            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Spawn a socket, connect to the nameserver on port 53
+            if tcp:
+                cls = DNSTCP
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            else:
+                cls = DNS
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             sock.settimeout(kwargs["timeout"])
             sock.connect((nameserver, 53))
             # Connected. Wrap it with DNS
-            sock = StreamSocket(sock, DNS)
+            sock = StreamSocket(sock, cls)
             # I/O
             res = sock.sr1(
-                DNS(qd=[DNSQR(qname=qname, qtype=qtype)], id=RandShort()),
+                cls(qd=[DNSQR(qname=qname, qtype=qtype)], id=RandShort()),
                 **kwargs,
             )
         except IOError as ex:
@@ -1180,6 +1447,19 @@ def dns_resolve(qname, qtype="A", raw=False, verbose=1, timeout=3, **kwargs):
             sock.close()
         if res:
             # We have a response ! Check for failure
+            if res[DNS].tc == 1:  # truncated !
+                if not tcp:
+                    # Retry using TCP
+                    return dns_resolve(
+                        qname=qname,
+                        qtype=qtype,
+                        raw=raw,
+                        tcp=True,
+                        **kwargs,
+                    )
+                elif verbose:
+                    log_runtime.info("DNS answer is truncated !")
+
             if res[DNS].rcode == 2:  # server failure
                 res = None
                 if verbose:
@@ -1194,21 +1474,18 @@ def dns_resolve(qname, qtype="A", raw=False, verbose=1, timeout=3, **kwargs):
     if res is not None:
         if raw:
             # Raw
-            answer = res
+            result = res
         else:
-            try:
-                # Find answer
-                answer = next(
-                    x
-                    for x in itertools.chain(res.an, res.ns, res.ar)
-                    if x.type == qtype
-                )
-            except StopIteration:
-                # No answer
-                return None
-        # Cache it
-        _dns_cache[cache_ident] = answer
-        return answer
+            # Find answers
+            result = [
+                x
+                for x in itertools.chain(res.an, res.ns, res.ar)
+                if x.type == qtype
+            ]
+        if result:
+            # Cache it
+            _dns_cache[cache_ident] = result
+        return result
     else:
         raise TimeoutError
 
@@ -1256,48 +1533,113 @@ RFC2136
 class DNS_am(AnsweringMachine):
     function_name = "dnsd"
     filter = "udp port 53"
-    cls = DNS  # We also use this automaton for llmnrd
+    cls = DNS  # We also use this automaton for llmnrd / mdnsd
 
     def parse_options(self, joker=None,
                       match=None,
                       srvmatch=None,
                       joker6=False,
+                      send_error=False,
                       relay=False,
-                      from_ip=None,
-                      from_ip6=None,
+                      from_ip=True,
+                      from_ip6=False,
                       src_ip=None,
                       src_ip6=None,
-                      ttl=10):
+                      ttl=10,
+                      jokerarpa=False):
         """
-        :param joker: default IPv4 for unresolved domains. (Default: None)
+        Simple DNS answering machine.
+
+        :param joker: default IPv4 for unresolved domains.
                       Set to False to disable, None to mirror the interface's IP.
-        :param joker6: default IPv6 for unresolved domains (Default: False)
-                       set to False to disable, None to mirror the interface's IPv6.
+                      Defaults to None, unless 'match' is used, then it defaults to
+                      False.
+        :param joker6: default IPv6 for unresolved domains.
+                       Set to False to disable, None to mirror the interface's IPv6.
+                       Defaults to False.
+        :param match: queries to match.
+                      This can be a dictionary of {name: val} where name is a string
+                      representing a domain name (A, AAAA) and val is a tuple of 2
+                      elements, each representing an IP or a list of IPs. If val is
+                      a single element, (A, None) is assumed.
+                      This can also be a list or names, in which case joker(6) are
+                      used as a response.
+        :param jokerarpa: answer for .in-addr.arpa PTR requests. (Default: False)
         :param relay: relay unresolved domains to conf.nameservers (Default: False).
-        :param match: a dictionary of {name: val} where name is a string representing
-                      a domain name (A, AAAA) and val is a tuple of 2 elements, each
-                      representing an IP or a list of IPs. If val is a single element,
-                      (A, None) is assumed.
+        :param send_error: send an error message when this server can't answer
+                           (Default: False)
         :param srvmatch: a dictionary of {name: (port, target)} used for SRV
-        :param from_ip: an source IP to filter. Can contain a netmask
-        :param from_ip6: an source IPv6 to filter. Can contain a netmask
+        :param from_ip: an source IP to filter. Can contain a netmask. True for all,
+                        False for none. Default True
+        :param from_ip6: an source IPv6 to filter. Can contain a netmask. True for all,
+                        False for none. Default False
         :param ttl: the DNS time to live (in seconds)
         :param src_ip: override the source IP
         :param src_ip6:
 
-        Example:
+        Examples:
+
+        - Answer all 'A' and 'AAAA' requests::
 
             $ sudo iptables -I OUTPUT -p icmp --icmp-type 3/3 -j DROP
-            >>> dnsd(match={"google.com": "1.1.1.1"}, joker="192.168.0.2", iface="eth0")
-            >>> dnsd(srvmatch={
-            ...     "_ldap._tcp.dc._msdcs.DOMAIN.LOCAL.": (389, "srv1.domain.local")
-            ... })
+            >>> dnsd(joker="192.168.0.2", joker6="fe80::260:8ff:fe52:f9d8",
+            ...      iface="eth0")
+
+        - Answer only 'A' query for google.com with 192.168.0.2::
+
+            >>> dnsd(match={"google.com": "192.168.0.2"}, iface="eth0")
+
+        - Answer DNS for a Windows domain controller ('SRV', 'A' and 'AAAA')::
+
+            >>> dnsd(
+            ...     srvmatch={
+            ...         "_ldap._tcp.dc._msdcs.DOMAIN.LOCAL.": (389,
+            ...                                                "srv1.domain.local"),
+            ...     },
+            ...     match={"src1.domain.local": ("192.168.0.102",
+            ...                                  "fe80::260:8ff:fe52:f9d8")},
+            ... )
+
+        - Relay all queries to another DNS server, except some::
+
+            >>> conf.nameservers = ["1.1.1.1"]  # server to relay to
+            >>> dnsd(
+            ...     match={"test.com": "1.1.1.1"},
+            ...     relay=True,
+            ... )
         """
+        from scapy.layers.inet6 import Net6
+
+        self.mDNS = isinstance(self, mDNS_am)
+        self.llmnr = self.cls != DNS
+
+        # Add some checks (to help)
+        if not isinstance(joker, (str, bool)) and joker is not None:
+            raise ValueError("Bad 'joker': should be an IPv4 (str) or False !")
+        if not isinstance(joker6, (str, bool)) and joker6 is not None:
+            raise ValueError("Bad 'joker6': should be an IPv6 (str) or False !")
+        if not isinstance(jokerarpa, (str, bool)):
+            raise ValueError("Bad 'jokerarpa': should be a hostname or False !")
+        if not isinstance(from_ip, (str, Net, bool)):
+            raise ValueError("Bad 'from_ip': should be an IPv4 (str), Net or False !")
+        if not isinstance(from_ip6, (str, Net6, bool)):
+            raise ValueError("Bad 'from_ip6': should be an IPv6 (str), Net or False !")
+        if self.mDNS and src_ip:
+            raise ValueError("Cannot use 'src_ip' in mDNS !")
+        if self.mDNS and src_ip6:
+            raise ValueError("Cannot use 'src_ip6' in mDNS !")
+
+        if joker is None and match is not None:
+            joker = False
+        self.joker = joker
+        self.joker6 = joker6
+        self.jokerarpa = jokerarpa
+
         def normv(v):
             if isinstance(v, (tuple, list)) and len(v) == 2:
-                return v
+                return tuple(v)
             elif isinstance(v, str):
-                return (v, None)
+                return (v, joker6)
             else:
                 raise ValueError("Bad match value: '%s'" % repr(v))
 
@@ -1306,23 +1648,26 @@ class DNS_am(AnsweringMachine):
             if not k.endswith(b"."):
                 k += b"."
             return k
-        if match is None:
-            self.match = {}
-        else:
-            self.match = {normk(k): normv(v) for k, v in match.items()}
+
+        self.match = collections.defaultdict(lambda: (joker, joker6))
+        if match:
+            if isinstance(match, (list, set)):
+                self.match.update({normk(k): (None, None) for k in match})
+            else:
+                self.match.update({normk(k): normv(v) for k, v in match.items()})
         if srvmatch is None:
             self.srvmatch = {}
         else:
             self.srvmatch = {normk(k): normv(v) for k, v in srvmatch.items()}
-        self.joker = joker
-        self.joker6 = joker6
+
+        self.send_error = send_error
         self.relay = relay
         if isinstance(from_ip, str):
             self.from_ip = Net(from_ip)
         else:
             self.from_ip = from_ip
         if isinstance(from_ip6, str):
-            self.from_ip6 = Net(from_ip6)
+            self.from_ip6 = Net6(from_ip6)
         else:
             self.from_ip6 = from_ip6
         self.src_ip = src_ip
@@ -1335,62 +1680,158 @@ class DNS_am(AnsweringMachine):
             req.haslayer(self.cls) and
             req.getlayer(self.cls).qr == 0 and (
                 (
-                    not self.from_ip6 or req[IPv6].src in self.from_ip6
+                    self.from_ip6 is True or
+                    (self.from_ip6 and req[IPv6].src in self.from_ip6)
                 )
                 if IPv6 in req else
                 (
-                    not self.from_ip or req[IP].src in self.from_ip
+                    self.from_ip is True or
+                    (self.from_ip and req[IP].src in self.from_ip)
                 )
             )
         )
 
     def make_reply(self, req):
+        # Build reply from the request
+        resp = req.copy()
+        if Ether in req:
+            if self.mDNS:
+                resp[Ether].src, resp[Ether].dst = None, None
+            elif self.llmnr:
+                resp[Ether].src, resp[Ether].dst = None, req[Ether].src
+            else:
+                resp[Ether].src, resp[Ether].dst = (
+                    None if req[Ether].dst == "ff:ff:ff:ff:ff:ff" else req[Ether].dst,
+                    req[Ether].src,
+                )
         from scapy.layers.inet6 import IPv6
         if IPv6 in req:
-            resp = IPv6(dst=req[IPv6].src, src=self.src_ip6)
+            resp[IPv6].underlayer.remove_payload()
+            if self.mDNS:
+                # "All Multicast DNS responses (including responses sent via unicast)
+                # SHOULD be sent with IP TTL set to 255."
+                resp /= IPv6(dst="ff02::fb", src=self.src_ip6,
+                             fl=req[IPv6].fl, hlim=255)
+            elif self.llmnr:
+                resp /= IPv6(dst=req[IPv6].src, src=self.src_ip6,
+                             fl=req[IPv6].fl, hlim=req[IPv6].hlim)
+            else:
+                resp /= IPv6(dst=req[IPv6].src, src=self.src_ip6 or req[IPv6].dst,
+                             fl=req[IPv6].fl, hlim=req[IPv6].hlim)
+        elif IP in req:
+            resp[IP].underlayer.remove_payload()
+            if self.mDNS:
+                # "All Multicast DNS responses (including responses sent via unicast)
+                # SHOULD be sent with IP TTL set to 255."
+                resp /= IP(dst="224.0.0.251", src=self.src_ip,
+                           id=req[IP].id, ttl=255)
+            elif self.llmnr:
+                resp /= IP(dst=req[IP].src, src=self.src_ip,
+                           id=req[IP].id, ttl=req[IP].ttl)
+            else:
+                resp /= IP(dst=req[IP].src, src=self.src_ip or req[IP].dst,
+                           id=req[IP].id, ttl=req[IP].ttl)
         else:
-            resp = IP(dst=req[IP].src, src=self.src_ip)
-        resp /= UDP(sport=req.dport, dport=req.sport)
+            warning("No IP or IPv6 layer in %s", req.command())
+            return
+        try:
+            resp /= UDP(sport=req[UDP].dport, dport=req[UDP].sport)
+        except IndexError:
+            warning("No UDP layer in %s", req.command(), exc_info=True)
+            return
+        try:
+            req = req[self.cls]
+        except IndexError:
+            warning(
+                "No %s layer in %s",
+                self.cls.__name__,
+                req.command(),
+                exc_info=True,
+            )
+            return
+        try:
+            queries = req.qd
+        except AttributeError:
+            warning("No qd attribute in %s", req.command(), exc_info=True)
+            return
+        # Special case: alias 'ALL' query as 'A' + 'AAAA'
+        try:
+            allquery = next(
+                (x for x in queries if getattr(x, "qtype", None) == 255)
+            )
+            queries.remove(allquery)
+            queries.extend([
+                DNSQR(
+                    qtype=x,
+                    qname=allquery.qname,
+                    unicastresponse=allquery.unicastresponse,
+                    qclass=allquery.qclass,
+                )
+                for x in [1, 28]
+            ])
+        except StopIteration:
+            pass
+        # Process each query
         ans = []
-        req = req.getlayer(self.cls)
-        for rq in req.qd:
+        ars = []
+        for rq in queries:
+            if isinstance(rq, Raw):
+                warning("Cannot parse qd element %s", rq.command(), exc_info=True)
+                continue
+            rqname = rq.qname.lower()
             if rq.qtype in [1, 28]:
                 # A or AAAA
                 if rq.qtype == 28:
                     # AAAA
-                    try:
-                        rdata = self.match[rq.qname.lower()][1]
-                    except KeyError:
-                        if self.relay or self.joker6 is False:
-                            rdata = None
+                    rdata = self.match[rqname][1]
+                    if rdata is None and not self.relay:
+                        # 'None' resolves to the default IPv6
+                        iface = resolve_iface(self.optsniff.get("iface", conf.iface))
+                        if self.mDNS:
+                            # All IPs, as per mDNS.
+                            rdata = iface.ips[6]
                         else:
-                            rdata = self.joker6 or get_if_addr6(
-                                self.optsniff.get("iface", conf.iface)
+                            rdata = get_if_addr6(
+                                iface
                             )
+                    if self.mDNS and rdata and IPv6 in resp:
+                        # For mDNS, we must replace the IPv6 src
+                        resp[IPv6].src = rdata
                 elif rq.qtype == 1:
                     # A
-                    try:
-                        rdata = self.match[rq.qname.lower()][0]
-                    except KeyError:
-                        if self.relay or self.joker is False:
-                            rdata = None
+                    rdata = self.match[rqname][0]
+                    if rdata is None and not self.relay:
+                        # 'None' resolves to the default IPv4
+                        iface = resolve_iface(self.optsniff.get("iface", conf.iface))
+                        if self.mDNS:
+                            # All IPs, as per mDNS.
+                            rdata = iface.ips[4]
                         else:
-                            rdata = self.joker or get_if_addr(
-                                self.optsniff.get("iface", conf.iface)
+                            rdata = get_if_addr(
+                                iface
                             )
-                if rdata is not None:
+                    if self.mDNS and rdata and IP in resp:
+                        # For mDNS, we must replace the IP src
+                        resp[IP].src = rdata
+                if rdata:
                     # Common A and AAAA
                     if not isinstance(rdata, list):
                         rdata = [rdata]
                     ans.extend([
-                        DNSRR(rrname=rq.qname, ttl=self.ttl, rdata=x, type=rq.qtype)
+                        DNSRR(
+                            rrname=rq.qname,
+                            ttl=self.ttl,
+                            rdata=x,
+                            type=rq.qtype,
+                            cacheflush=self.mDNS and rq.qtype == rq.qtype,
+                        )
                         for x in rdata
                     ])
                     continue  # next
             elif rq.qtype == 33:
                 # SRV
                 try:
-                    port, target = self.srvmatch[rq.qname.lower()]
+                    port, target = self.srvmatch[rqname]
                     ans.append(DNSRRSRV(
                         rrname=rq.qname,
                         port=port,
@@ -1402,22 +1843,186 @@ class DNS_am(AnsweringMachine):
                 except KeyError:
                     # No result
                     pass
+            elif rq.qtype == 12:
+                # PTR
+                if rq.qname[-14:] == b".in-addr.arpa." and self.jokerarpa:
+                    ans.append(DNSRR(
+                        rrname=rq.qname,
+                        type=rq.qtype,
+                        ttl=self.ttl,
+                        rdata=self.jokerarpa,
+                    ))
+                    continue
             # It it arrives here, there is currently no answer
             if self.relay:
                 # Relay mode ?
                 try:
-                    _rslv = dns_resolve(rq.qname, qtype=rq.qtype)
-                    if _rslv is not None:
-                        ans.append(_rslv)
+                    _rslv = dns_resolve(rq.qname, qtype=rq.qtype, raw=True)
+                    if _rslv:
+                        ans.extend(_rslv.an)
+                        ars.extend(_rslv.ar)
                         continue  # next
                 except TimeoutError:
                     pass
-            # Error
-            break
+            # Still no answer.
+            if self.mDNS:
+                # "Any time a responder receives a query for a name for which it
+                # has verified exclusive ownership, for a type for which that name
+                # has no records, the responder MUST respond asserting the
+                # nonexistence of that record using a DNS NSEC record [RFC4034]."
+                ans.append(DNSRRNSEC(
+                    # RFC6762 sect 6.1 - Negative Response
+                    ttl=self.ttl,
+                    rrname=rq.qname,
+                    nextname=rq.qname,
+                    typebitmaps=RRlist2bitmap([rq.qtype]),
+                ))
+        if self.mDNS and all(x.type == 47 for x in ans):
+            # If mDNS answers with only NSEC, discard.
+            return
+        if not ans:
+            # No answer is available.
+            if self.send_error:
+                resp /= self.cls(id=req.id, qr=1, qd=req.qd, rcode=3)
+                return resp
+            log_runtime.info("No answer could be provided to: %s" % req.summary())
+            return
+        # Handle Additional Records
+        if self.mDNS:
+            # Windows specific extension
+            ars.append(DNSRROPT(
+                z=0x1194,
+                rdata=[
+                    EDNS0OWN(
+                        primary_mac=resp[Ether].src,
+                    ),
+                ],
+            ))
+        # All rq were answered
+        if self.mDNS:
+            # in mDNS mode, don't repeat the question, set aa=1, rd=0
+            dns = self.cls(id=req.id, aa=1, rd=0, qr=1, qd=[], ar=ars, an=ans)
         else:
-            # All rq were answered
-            resp /= self.cls(id=req.id, qr=1, qd=req.qd, an=ans)
-            return resp
-        # An error happened
-        resp /= self.cls(id=req.id, qr=1, qd=req.qd, rcode=3)
+            dns = self.cls(id=req.id, qr=1, qd=req.qd, ar=ars, an=ans)
+        # Compress DNS and mDNS
+        if not self.llmnr:
+            resp /= dns_compress(dns)
+        else:
+            resp /= dns
         return resp
+
+
+class mDNS_am(DNS_am):
+    """
+    mDNS answering machine.
+
+    This has the same arguments as DNS_am. See help(DNS_am)
+
+    Example::
+
+        - Answer for 'TEST.local' with local IPv4::
+
+            >>> mdnsd(match=["TEST.local"])
+
+        - Answer all requests with other IP::
+
+            >>> mdnsd(joker="192.168.0.2", joker6="fe80::260:8ff:fe52:f9d8",
+            ...       iface="eth0")
+
+        - Answer for multiple different mDNS names::
+
+            >>> mdnsd(match={"TEST.local": "192.168.0.100",
+            ...              "BOB.local": "192.168.0.101"})
+
+        - Answer with both A and AAAA records::
+
+            >>> mdnsd(match={"TEST.local": ("192.168.0.100",
+            ...                             "fe80::260:8ff:fe52:f9d8")})
+    """
+    function_name = "mdnsd"
+    filter = "udp port 5353"
+
+
+# DNS-SD (RFC 6763)
+
+
+class DNSSDResult(SndRcvList):
+    def __init__(self,
+                 res=None,  # type: Optional[Union[_PacketList[QueryAnswer], List[QueryAnswer]]]  # noqa: E501
+                 name="DNS-SD",  # type: str
+                 stats=None  # type: Optional[List[Type[Packet]]]
+                 ):
+        SndRcvList.__init__(self, res, name, stats)
+
+    def show(self, types=['PTR', 'SRV'], alltypes=False):
+        # type: (List[str], bool) -> None
+        """
+        Print the list of discovered services.
+
+        :param types: types to show. Default ['PTR', 'SRV']
+        :param alltypes: show all types. Default False
+        """
+        if alltypes:
+            types = None
+        data = list()  # type: List[Tuple[str | List[str], ...]]
+
+        resolve_mac = (
+            self.res and isinstance(self.res[0][1].underlayer, Ether) and
+            conf.manufdb
+        )
+
+        header = ("IP", "Service")
+        if resolve_mac:
+            header = ("Mac",) + header
+
+        for _, r in self.res:
+            attrs = []
+            for attr in itertools.chain(r[DNS].an, r[DNS].ar):
+                if types and dnstypes.get(attr.type) not in types:
+                    continue
+                if isinstance(attr, DNSRRNSEC):
+                    attrs.append(attr.sprintf("%type%=%nextname%"))
+                elif isinstance(attr, DNSRRSRV):
+                    attrs.append(attr.sprintf("%type%=(%target%,%port%)"))
+                else:
+                    attrs.append(attr.sprintf("%type%=%rdata%"))
+            ans = (r.src, attrs)
+            if resolve_mac:
+                mac = conf.manufdb._resolve_MAC(r.underlayer.src)
+                data.append((mac,) + ans)
+            else:
+                data.append(ans)
+
+        print(
+            pretty_list(
+                data,
+                [header],
+            )
+        )
+
+
+@conf.commands.register
+def dnssd(service="_services._dns-sd._udp.local",
+          af=socket.AF_INET,
+          qtype="PTR",
+          iface=None,
+          verbose=2,
+          timeout=3):
+    """
+    Performs a DNS-SD (RFC6763) request
+
+    :param service: the service name to query (e.g. _spotify-connect._tcp.local)
+    :param af: the transport to use. socket.AF_INET or socket.AF_INET6
+    :param qtype: the type to use in the mDNS. Either TXT, PTR or SRV.
+    :param iface: the interface to do this discovery on.
+    """
+    if af == socket.AF_INET:
+        pkt = IP(dst=ScopedIP("224.0.0.251", iface), ttl=255)
+    elif af == socket.AF_INET6:
+        pkt = IPv6(dst=ScopedIP("ff02::fb", iface))
+    else:
+        return
+    pkt /= UDP(sport=5353, dport=5353)
+    pkt /= DNS(rd=0, qd=[DNSQR(qname=service, qtype=qtype)])
+    ans, _ = sr(pkt, multi=True, timeout=timeout, verbose=verbose)
+    return DNSSDResult(ans.res)

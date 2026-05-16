@@ -22,38 +22,10 @@ if conf.crypto_valid:
     from cryptography.hazmat.backends import default_backend
     from cryptography.hazmat.primitives.asymmetric import dh, ec
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.dh import DHParameterNumbers
 if conf.crypto_valid_advanced:
     from cryptography.hazmat.primitives.asymmetric import x25519
     from cryptography.hazmat.primitives.asymmetric import x448
-
-# We have to start by a dirty hack in order to allow long generators,
-# which some versions of openssl love to use...
-
-if conf.crypto_valid:
-    from cryptography.hazmat.primitives.asymmetric.dh import DHParameterNumbers
-
-    try:
-        # We test with dummy values whether the size limitation has been removed.  # noqa: E501
-        pn_test = DHParameterNumbers(2, 7)
-    except ValueError:
-        # We get rid of the limitation through the cryptography v1.9 __init__.
-
-        def DHParameterNumbers__init__hack(self, p, g, q=None):
-            if (
-                not isinstance(p, int) or
-                not isinstance(g, int)
-            ):
-                raise TypeError("p and g must be integers")
-            if q is not None and not isinstance(q, int):
-                raise TypeError("q must be integer or None")
-
-            self._p = p
-            self._g = g
-            self._q = q
-
-        DHParameterNumbers.__init__ = DHParameterNumbers__init__hack
-
-    # End of hack.
 
 
 _ffdh_groups = {}
@@ -436,9 +408,19 @@ _tls_named_curves = {1: "sect163k1", 2: "sect163r1", 3: "sect163r2",
                      0xff01: "arbitrary_explicit_prime_curves",
                      0xff02: "arbitrary_explicit_char2_curves"}
 
+_tls_post_quantum_hybrid = {
+    # https://www.ietf.org/archive/id/draft-kwiatkowski-tls-ecdhe-mlkem-02.html#name-secp256r1mlkem768
+    0x11EB: "SecP256r1MLKEM768",
+    # https://www.ietf.org/archive/id/draft-kwiatkowski-tls-ecdhe-mlkem-02.html#name-x25519mlkem768
+    0x11EC: "X25519MLKEM768",
+    # https://www.ietf.org/archive/id/draft-tls-westerbaan-xyber768d00-03.html#name-iana-considerations
+    0x6399: "X25519Kyber768Draft00",
+}
+
 _tls_named_groups = {}
 _tls_named_groups.update(_tls_named_ffdh_groups)
 _tls_named_groups.update(_tls_named_curves)
+_tls_named_groups.update(_tls_post_quantum_hybrid)
 
 
 def _tls_named_groups_import(group, pubbytes):
@@ -459,7 +441,12 @@ def _tls_named_groups_import(group, pubbytes):
                     import_point = x448.X448PublicKey.from_public_bytes
                 return import_point(pubbytes)
         else:
-            curve = ec._CURVE_TYPES[_tls_named_curves[group]]()
+            curve = ec._CURVE_TYPES[_tls_named_curves[group]]
+            try:
+                # cryptography < 42
+                curve = curve()
+            except TypeError:
+                pass
             try:  # cryptography >= 2.5
                 return ec.EllipticCurvePublicKey.from_encoded_point(
                     curve,
@@ -516,7 +503,12 @@ def _tls_named_groups_generate(group):
                     "Your cryptography version doesn't support " + group_name
                 )
         else:
-            curve = ec._CURVE_TYPES[_tls_named_curves[group]]()
+            curve = ec._CURVE_TYPES[_tls_named_curves[group]]
+            try:
+                # cryptography < 42
+                curve = curve()
+            except TypeError:
+                pass
             return ec.generate_private_key(curve, default_backend())
 
 # Below lies ghost code since the shift from 'ecdsa' to 'cryptography' lib.

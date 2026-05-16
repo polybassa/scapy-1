@@ -157,6 +157,7 @@ pkt.decode_payload_as()   changes the way the payload is decoded
 pkt.psdump()              draws a PostScript diagram with explained dissection 
 pkt.pdfdump()             draws a PDF with explained dissection 
 pkt.command()             return a Scapy command that can generate the packet 
+pkt.json()                return a JSON string representing the packet
 =======================   ====================================================
 
 
@@ -251,6 +252,31 @@ Now that we know how to manipulate packets. Let's see how to send them. The send
     Sent 1 packets.
     <PacketList: TCP:0 UDP:0 ICMP:0 Other:1>
 
+.. _multicast:
+
+Multicast on layer 3: Scope Identifiers
+---------------------------------------
+
+.. index::
+   single: Multicast
+
+.. note:: This feature is only available since Scapy 2.6.0.
+
+If you try to use multicast addresses (IPv4) or link-local addresses (IPv6), you'll notice that Scapy follows the routing table and takes the first entry. In order to specify which interface to use when looking through the routing table, Scapy supports scope identifiers (similar to RFC6874 but for both IPv6 and IPv4).
+
+.. code:: python
+
+    >>> conf.checkIPaddr = False  # answer IP will be != from the one we requested
+    # send on interface 'eth0'
+    >>> sr(IP(dst="224.0.0.1%eth0")/ICMP(), multi=True)
+    >>> sr(IPv6(dst="ff02::1%eth0")/ICMPv6EchoRequest(), multi=True)
+
+You can use both ``%eth0`` format or ``%15`` (the interface id) format. You can query those using ``conf.ifaces``.
+
+.. note::
+
+   Behind the scene, calling ``IP(dst="224.0.0.1%eth0")`` creates a ``ScopedIP`` object that contains ``224.0.0.1`` on the scope of the interface ``eth0``. If you are using an interface object (for instance ``conf.iface``), you can also craft that object. For instance::
+        >>> pkt = IP(dst=ScopedIP("224.0.0.1", scope=conf.iface))/ICMP()
 
 Fuzzing
 -------
@@ -391,7 +417,7 @@ The above will send a single SYN packet to Google's port 80 and will quit after 
 
 From the above output, we can see Google returned “SA” or SYN-ACK flags indicating an open port.
 
-Use either notations to scan ports 400 through 443 on the system:
+Use either notations to scan ports 440 through 443 on the system:
 
     >>> sr(IP(dst="192.168.1.1")/TCP(sport=666,dport=(440,443),flags="S"))
 
@@ -476,8 +502,8 @@ A TCP traceroute::
     ***......
     Received 33 packets, got 21 answers, remaining 1 packets
     >>> for snd,rcv in ans:
-    ...     print snd.ttl, rcv.src, isinstance(rcv.payload, TCP)
-    ... 
+    ...     print(snd.ttl, rcv.src, isinstance(rcv.payload, TCP))
+    ...
     5 194.51.159.65 0
     6 194.51.159.49 0
     4 194.250.107.181 0
@@ -533,7 +559,7 @@ In this example, we used the `traceroute_map()` function to print the graphic. T
 It could have been done differently:
 
     >>> conf.geoip_city = "path/to/GeoLite2-City.mmdb"
-    >>> a = traceroute(["www.google.co.uk", "www.secdev.org"], verbose=0)
+    >>> a, _ = traceroute(["www.google.co.uk", "www.secdev.org"], verbose=0)
     >>> a.world_trace()
 
 or such as above:
@@ -771,7 +797,13 @@ Available by default:
 - :py:class:`~scapy.sessions.TCPSession` -> *defragment certain TCP protocols*. Currently supports:
    - HTTP 1.0
    - TLS
-   - Kerberos / DCERPC
+   - Kerberos
+   - LDAP
+   - SMB
+   - DCE/RPC
+   - Postgres
+   - DOIP
+   - and maybe other protocols if this page isn't up to date.
 - :py:class:`~scapy.sessions.TLSSession` -> *matches TLS sessions* on the flow.
 - :py:class:`~scapy.sessions.NetflowSession` -> *resolve Netflow V9 packets* from their NetflowFlowset information objects
 
@@ -784,6 +816,10 @@ Those sessions can be used using the ``session=`` parameter of ``sniff()``. Exam
 .. note::
    To implement your own Session class, in order to support another flow-based protocol, start by copying a sample from `scapy/sessions.py <https://github.com/secdev/scapy/blob/master/scapy/sessions.py>`_
    Your custom ``Session`` class only needs to extend the :py:class:`~scapy.sessions.DefaultSession` class, and implement a ``process`` or a ``recv`` function, such as in the examples.
+
+
+.. warning::
+    The inner workings of ``Session`` is currently UNSTABLE: custom Sessions may break in the future.
 
 
 How to use TCPSession to defragment TCP packets
@@ -810,6 +846,8 @@ The ``data`` argument is bytes and the ``metadata`` argument is a dictionary whi
 - ``metadata["pay_class"]``: the TCP payload class (here TLS)
 - ``metadata.get("tcp_psh", False)``: will be present if the PUSH flag is set
 - ``metadata.get("tcp_end", False)``: will be present if the END or RESET flag is set
+
+If ``tcp_reassemble`` **returns any padding**, it will be kept for the next payload.
 
 Filters
 -------
@@ -953,59 +991,6 @@ We can reimport the produced binary string by selecting the appropriate first la
     \x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e
     \x1f !"#$%&\'()*+,-./01234567' |>>>>
 
-Base64
-^^^^^^
-
-Using the ``export_object()`` function, Scapy can export a base64 encoded Python data structure representing a packet::
-
-    >>> pkt
-    <Ether  dst=00:50:56:fc:ce:50 src=00:0c:29:2b:53:19 type=0x800 |<IP  version=4L 
-    ihl=5L tos=0x0 len=84 id=0 flags=DF frag=0L ttl=64 proto=icmp chksum=0x5a7c 
-    src=192.168.25.130 dst=4.2.2.1 options='' |<ICMP  type=echo-request code=0 
-    chksum=0x9c90 id=0x5a61 seq=0x1 |<Raw  load='\xe6\xdapI\xb6\xe5\x08\x00\x08\t\n
-    \x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f 
-    !"#$%&\'()*+,-./01234567' |>>>>
-    >>> export_object(pkt)
-    eNplVwd4FNcRPt2dTqdTQ0JUUYwN+CgS0gkJONFEs5WxFDB+CdiI8+pupVl0d7uzRUiYtcEGG4ST
-    OD1OnB6nN6c4cXrvwQmk2U5xA9tgO70XMm+1rA78qdzbfTP/lDfzz7tD4WwmU1C0YiaT2Gqjaiao
-    bMlhCrsUSYrYoKbmcxZFXSpPiohlZikm6ltb063ZdGpNOjWQ7mhPt62hChHJWTbFvb0O/u1MD2bT
-    WZXXVCmi9pihUqI3FHdEQslriiVfWFTVT9VYpog6Q7fsjG0qRWtQNwsW1fRTrUg4xZxq5pUx1aS6
-    ...
-
-The output above can be reimported back into Scapy using ``import_object()``::
-
-    >>> new_pkt = import_object()
-    eNplVwd4FNcRPt2dTqdTQ0JUUYwN+CgS0gkJONFEs5WxFDB+CdiI8+pupVl0d7uzRUiYtcEGG4ST
-    OD1OnB6nN6c4cXrvwQmk2U5xA9tgO70XMm+1rA78qdzbfTP/lDfzz7tD4WwmU1C0YiaT2Gqjaiao
-    bMlhCrsUSYrYoKbmcxZFXSpPiohlZikm6ltb063ZdGpNOjWQ7mhPt62hChHJWTbFvb0O/u1MD2bT
-    WZXXVCmi9pihUqI3FHdEQslriiVfWFTVT9VYpog6Q7fsjG0qRWtQNwsW1fRTrUg4xZxq5pUx1aS6
-    ...
-    >>> new_pkt
-    <Ether  dst=00:50:56:fc:ce:50 src=00:0c:29:2b:53:19 type=0x800 |<IP  version=4L 
-    ihl=5L tos=0x0 len=84 id=0 flags=DF frag=0L ttl=64 proto=icmp chksum=0x5a7c 
-    src=192.168.25.130 dst=4.2.2.1 options='' |<ICMP  type=echo-request code=0 
-    chksum=0x9c90 id=0x5a61 seq=0x1 |<Raw  load='\xe6\xdapI\xb6\xe5\x08\x00\x08\t\n
-    \x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f 
-    !"#$%&\'()*+,-./01234567' |>>>>
-
-Sessions
-^^^^^^^^
-
-At last Scapy is capable of saving all session variables using the ``save_session()`` function:
-
->>> dir()
-['__builtins__', 'conf', 'new_pkt', 'pkt', 'pkt_export', 'pkt_hex', 'pkt_raw', 'pkts']
->>> save_session("session.scapy")
-
-Next time you start Scapy you can load the previous saved session using the ``load_session()`` command::
-
-    >>> dir()
-    ['__builtins__', 'conf']
-    >>> load_session("session.scapy")
-    >>> dir()
-    ['__builtins__', 'conf', 'new_pkt', 'pkt', 'pkt_export', 'pkt_hex', 'pkt_raw', 'pkts']
-
-
 Making tables
 -------------
 
@@ -1083,7 +1068,7 @@ We can easily plot some harvested values using Matplotlib. (Make sure that you h
 For example, we can observe the IP ID patterns to know how many distinct IP stacks are used behind a load balancer::
 
     >>> a, b = sr(IP(dst="www.target.com")/TCP(sport=[RandShort()]*1000))
-    >>> a.plot(lambda x:x[1].id)
+    >>> a.plot(lambda q,r: r.id)
     [<matplotlib.lines.Line2D at 0x2367b80d6a0>]
 
 .. image:: graphics/ipid.png
@@ -1443,6 +1428,15 @@ By default, ``dnsd`` uses a joker (IPv4 only): it answers to all unknown servers
 
 You can also use ``relay=True`` to replace the joker behavior with a forward to a server included in ``conf.nameservers``.
 
+mDNS server
+------------
+
+See :class:`~scapy.layers.dns.mDNS_am`::
+
+    >>> mdnsd(iface="eth0", joker="192.168.1.1")
+
+Note that ``mdnsd`` extends the ``dnsd`` API.
+
 LLMNR server
 ------------
 
@@ -1467,6 +1461,29 @@ Node status request (get NetbiosName from IP)
 .. code::
 
     >>> sr1(IP(dst="192.168.122.17")/UDP()/NBNSHeader()/NBNSNodeStatusRequest())
+
+NBNS Query Request (find by NetbiosName)
+----------------------------------------
+
+.. code::
+
+    >>> conf.checkIPaddr = False  # Mandatory because we are using a broadcast destination and receiving unicast
+    >>> sr1(IP(dst="192.168.0.255")/UDP()/NBNSHeader()/NBNSQueryRequest(QUESTION_NAME="DC1"))
+
+mDNS Query Request
+------------------
+
+For instance, find all spotify connect devices.
+
+.. code::
+
+    >>> # For interface 'eth0'
+    >>> ans, _ = sr(IPv6(dst="ff02::fb%eth0")/UDP(sport=5353, dport=5353)/DNS(rd=0, qd=[DNSQR(qname='_spotify-connect._tcp.local', qtype="PTR")]), multi=True, timeout=2)
+    >>> ans.show()
+
+.. note::
+
+    As you can see, we used a scope identifier (``%eth0``) to specify on which interface we want to use the above multicast IP.
 
 Advanced traceroute
 -------------------
@@ -1611,7 +1628,7 @@ Solution
 Use Scapy to send a DHCP discover request and analyze the replies::
 
     >>> conf.checkIPaddr = False
-    >>> fam,hw = get_if_raw_hwaddr(conf.iface)
+    >>> hw = get_if_hwaddr(conf.iface)
     >>> dhcp_discover = Ether(dst="ff:ff:ff:ff:ff:ff")/IP(src="0.0.0.0",dst="255.255.255.255")/UDP(sport=68,dport=67)/BOOTP(chaddr=hw)/DHCP(options=[("message-type","discover"),"end"])
     >>> ans, unans = srp(dhcp_discover, multi=True)      # Press CTRL-C after several seconds
     Begin emission:
@@ -1627,7 +1644,7 @@ In this case we got 2 replies, so there were two active DHCP servers on the test
 
 We are only interested in the MAC and IP addresses of the replies: 
 
-    >>> for p in ans: print p[1][Ether].src, p[1][IP].src
+    >>> for p in ans: print(p[1][Ether].src, p[1][IP].src)
     ...
     00:de:ad:be:ef:00 192.168.1.1
     00:11:11:22:22:33 192.168.1.11
@@ -1653,16 +1670,16 @@ Firewalking
 TTL decrementation after a filtering operation 
 only not filtered packets generate an ICMP TTL exceeded 
 
-    >>> ans, unans = sr(IP(dst="172.16.4.27", ttl=16)/TCP(dport=(1,1024))) 
-    >>> for s,r in ans: 
-            if r.haslayer(ICMP) and r.payload.type == 11: 
-                print s.dport 
+    >>> ans, unans = sr(IP(dst="172.16.4.27", ttl=16)/TCP(dport=(1,1024)))
+    >>> for s,r in ans:
+    ...     if r.haslayer(ICMP) and r.payload.type == 11:
+    ...         print(s.dport)
 
 Find subnets on a multi-NIC firewall 
 only his own NIC’s IP are reachable with this TTL:: 
 
-    >>> ans, unans = sr(IP(dst="172.16.5/24", ttl=15)/TCP()) 
-    >>> for i in unans: print i.dst
+    >>> ans, unans = sr(IP(dst="172.16.5/24", ttl=15)/TCP())
+    >>> for i in unans: print(i.dst)
 
 
 TCP Timestamp Filtering
@@ -1788,6 +1805,39 @@ There are quite a few ways of speeding up scapy's dissection. You can use all of
     conf.layers.filter([Ether, IP, ICMP])
     # Disable filtering: restore everything to normal
     conf.layers.unfilter()
+
+Very slow start because of big routes
+-------------------------------------
+
+Problem
+^^^^^^^
+
+Scapy takes ages to start because you have very big routing tables.
+
+Solution
+^^^^^^^^
+
+Disable the auto-loading of the routing tables:
+
+**CLI:** in ``~/.config/scapy/prestart.py`` add:
+
+.. code:: python
+
+    conf.route_autoload = False
+    conf.route6_autoload = False
+
+**Programmatically:**
+
+.. code:: python
+
+    # Before any other Scapy import
+    from scapy.config import conf
+    conf.route_autoload = False
+    conf.route6_autoload = False
+    # Import Scapy here
+    from scapy.all import *
+
+At anytime, you can trigger the routes loading using ``conf.route.resync()`` or ``conf.route6.resync()``, or add the routes yourself `as shown here <#routing>`_.
 
 
 OS Fingerprinting

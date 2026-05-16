@@ -54,6 +54,8 @@ Unit tests:
 
     - Test our TLS client against our TLS server (s_server is unscriptable).
 
+    - Test our TLS client against python's SSL Socket wrapper (for TLS 1.3)
+
 
 TODO list (may it be carved away by good souls):
 
@@ -76,15 +78,10 @@ TODO list (may it be carved away by good souls):
         - Allow the server to store both one RSA key and one ECDSA key, and
           select the right one to use according to the ClientHello suites.
 
-        - Find a way to shutdown the automatons sockets properly without
-          simultaneously breaking the unit tests.
-
 
     - Miscellaneous:
 
         - Define several Certificate Transparency objects.
-
-        - Add the extended master secret and encrypt-then-mac logic.
 
         - Mostly unused features : DSS, fixed DH, SRP, char2 curves...
 """
@@ -94,5 +91,5 @@ from scapy.config import conf
 if not conf.crypto_valid:
     import logging
     log_loading = logging.getLogger("scapy.loading")
-    log_loading.info("Can't import python-cryptography v1.7+. "
+    log_loading.info("Can't import python-cryptography v2.0+. "
                      "Disabled PKI & TLS crypto-related features.")

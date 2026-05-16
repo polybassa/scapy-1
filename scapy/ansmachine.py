@@ -19,7 +19,7 @@ import warnings
 
 from scapy.arch import get_if_addr
 from scapy.config import conf
-from scapy.sendrecv import send, sniff, AsyncSniffer
+from scapy.sendrecv import sendp, sniff, AsyncSniffer
 from scapy.packet import Packet
 from scapy.plist import PacketList
 
@@ -75,7 +75,7 @@ class AnsweringMachine(Generic[_T], metaclass=ReferenceAM):
                           "type", "prn", "stop_filter", "opened_socket"]
     send_options = {"verbose": 0}  # type: Dict[str, Any]
     send_options_list = ["iface", "inter", "loop", "verbose", "socket"]
-    send_function = staticmethod(send)
+    send_function = staticmethod(sendp)
 
     def __init__(self, **kargs):
         # type: (Any) -> None
@@ -243,6 +243,10 @@ class AnsweringMachineTCP(AnsweringMachine[Packet]):
         # type: () -> None
         from scapy.supersocket import StreamSocket
         ssock = socket.socket(socket.AF_INET, self.TYPE)
+        try:
+            ssock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        except OSError:
+            pass
         ssock.bind(
             (get_if_addr(self.optsniff.get("iface", conf.iface)), self.port))
         ssock.listen()

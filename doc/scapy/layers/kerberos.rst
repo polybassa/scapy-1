@@ -1,21 +1,432 @@
 Kerberos
 ========
 
-.. note:: Kerberos per `RFC4120 <https://datatracker.ietf.org/doc/html/rfc6113.html>`_ + `RFC6113 <https://datatracker.ietf.org/doc/html/rfc6113.html>`_ (FAST)
+.. note:: Kerberos per `RFC4120 <https://datatracker.ietf.org/doc/html/rfc6113.html>`_ + `RFC6113 <https://datatracker.ietf.org/doc/html/rfc6113.html>`_ (FAST) + `[MS-KILE] <https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kile/2a32282e-dd48-4ad9-a542-609804b02cc9>`_ (Windows)
 
-High-Level
-__________
+Scapy's Kerberos implementation is accessed through two main components:
 
-Scapy includes a (tiny) kerberos client, that has basic functionalities such as:
+- :class:`~scapy.modules.ticketer.Ticketer`: a module that allows manipulating Kerberos tickets;
+- :class:`~scapy.layers.kerberos.KerberosSSP`: an implementation of a GSSAPI SSP for Kerberos, usable in any of Scapy's client that support GSSAPI, for both authentication and encryption.
+
+The general idea is that the first one allows to request tickets and perform almost all Kerberos related operations (S4U2Self, S4U2Proxy, FAST armoring, U2U, DMSA, etc.). The latter is used once a final Service Ticket is obtained, by other parts of Scapy, for instance `SMB <smb.html>`_, `LDAP <ldap.html>`_ or `DCE/RPC <dcerpc.html>`_.
+
+Ticketer module
+~~~~~~~~~~~~~~~
+
+The :class:`~scapy.modules.ticketer.Ticketer` module can be used both from the CLI or programmatically to perform operations on Kerberos tickets. To use it, you must first create an instance of a :class:`~scapy.modules.ticketer.Ticketer`, which acts as both a **ccache** (holds tickets) and a **keytab** (holds secrets).
+
+This section tries to give many usage examples, but isn't exhaustive. For more details regarding the parameters of each functions, it is encouraged to have a look at the docstrings of :class:`~scapy.layers.kerberos.KerberosClient`.
+
+- **Request TGT**: see the docstring of :func:`~scapy.layers.kerberos.krb_as_req`
+
+.. code:: pycon
+
+    >>> load_module("ticketer")
+    >>> t = Ticketer()
+    >>> t.request_tgt("Administrator@DOMAIN.LOCAL")
+    Enter password: ************
+    >>> t.show()
+    Tickets:
+    0. Administrator@DOMAIN.LOCAL -> krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+    Start time         End time           Renew until        Auth time        
+    31/08/23 11:38:34  31/08/23 21:38:34  31/08/23 21:38:35  31/08/23 01:38:34
+
+
+- **Then request a ST, using the TGT**: see the docstring of :func:`~scapy.layers.kerberos.krb_tgs_req`
+
+.. code:: pycon
+
+    >>> # The TGT we just got has an ID of 0
+    >>> t.request_st(0, "host/dc1.domain.local")
+    >>> t.show()
+    Tickets:
+    0. Administrator@DOMAIN.LOCAL -> krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+    Start time         End time           Renew until        Auth time
+    31/08/23 11:38:34  31/08/23 21:38:34  31/08/23 21:38:35  31/08/23 01:38:34
+
+    1. Administrator@DOMAIN.LOCAL -> host/dc1.domain.local@DOMAIN.LOCAL
+    Start time         End time           Renew until        Auth time
+    31/08/23 11:39:07  31/08/23 21:38:34  31/08/23 21:38:35  31/08/23 01:38:34
+
+
+- **Use ticket as SSP**: the :func:`~scapy.modules.ticketer.Ticketer.ssp` function.
+
+.. code:: pycon
+
+   >>> # We use ticket 1 from the above store.
+   >>> smbclient("dc1.domain.local", ssp=t.ssp(1))
+
+- **Request a TGT using a hash**: see the docstring of :func:`~scapy.layers.kerberos.krb_as_req`
+
+.. code:: pycon
+
+    >>> from scapy.libs.rfc3961 import EncryptionType
+    >>> load_module("ticketer")
+    >>> t = Ticketer()
+    >>> # Using the HashNT
+    >>> t.request_tgt("Administrator@DOMAIN.LOCAL", key=Key(EncryptionType.RC4_HMAC, bytes.fromhex("2b576acbe6bcfda7294d6bd18041b8fe")))
+    >>> # Using the AES-256-SHA1-96 Kerberos Key
+   >>> t.request_tgt("Administrator@domain.local", key=Key(EncryptionType.AES256_CTS_HMAC_SHA1_96, bytes.fromhex("63a2577d8bf6abeba0847cded36b9aed202c23750eb9c56b6155be1cc946bb1d")))
+
+- **Request a TGT using PKINIT**:
+
+.. code:: pycon
+
+    >>> from scapy.libs.rfc3961 import EncryptionType
+    >>> load_module("ticketer")
+    >>> t = Ticketer()
+    >>> # If P12:
+    >>> t.request_tgt(p12="admin.pfx", realm="DOMAIN.LOCAL", ca="ca.pem")
+    >>> # One could also have used a different cert and key file:
+    >>> t.request_tgt(x509="admin.cert", x509key="admin.key", realm="DOMAIN.LOCAL", ca="ca.pem")
+
+- **Request a user TGT with Kerberos armoring (FAST)**
+
+The ``armor_with`` keyword allows to select a ticket to armor the request with.
+
+.. code:: pycon
+
+    >>> load_module("ticketer")
+    >>> t = Ticketer()
+    >>> t.request_tgt("Machine01$@DOMAIN.LOCAL", key=Key(EncryptionType.RC4_HMAC, bytes.fromhex("2b576acbe6bcfda7294d6bd18041b8fe")))
+    >>> t.show()
+    Tickets:
+    0. Machine01$@DOMAIN.LOCAL -> krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+    Start time         End time           Renew until        Auth time
+    31/08/23 11:38:34  31/08/23 21:38:34  31/08/23 21:38:35  31/08/23 01:38:34
+    >>> t.request_tgt("Administrator@domain.local", armor_with=0)  # Armor with ticket n°0
+
+- **Renew a TGT or ST**:
+
+.. code::
+
+    >>> t.renew(0)  # renew TGT
+    >>> t.renew(1)  # renew ST. Works only with 'host/' SPNs
+    >>> t.renew(1, armor_with=0)  # renew something with armoring
+
+- **Import tickets from a ccache**:
+
+.. note:: We first added a realm ``DOMAIN.LOCAL`` with a kdc to ``/etc/krb5.conf``
+
+.. code:: pycon
+
+    $ kinit Administrator@DOMAIN.LOCAL
+    Password for Administrator@DOMAIN.LOCAL:
+    $ scapy
+    >>> load_module("ticketer")
+    >>> t = Ticketer()
+    >>> t.open_ccache("/tmp/krb5cc_1000")
+    >>> t.show()
+    Tickets:
+    1. Administrator@DOMAIN.LOCAL -> krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+    Start time         End time           Renew until        Auth time
+    31/08/23 12:08:15  31/08/23 22:08:15  01/09/23 12:08:12  31/08/23 12:08:15
+
+- **Export tickets into a ccache**:
+
+.. code:: pycon
+
+    >>> load_module("ticketer")
+    >>> t = Ticketer()
+    >>> t.request_tgt("Administrator@domain.local", password="ScapyScapy1")
+    >>> t.save_ccache("/tmp/krb5cc_1000")
+    >>> exit()
+    $ klist
+    Ticket cache: FILE:/tmp/krb5cc_1000
+    Default principal: Administrator@DOMAIN.LOCAL
+
+    Valid starting       Expires              Service principal
+    08/31/2023 12:08:15  08/31/2023 23:08:15  krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+            renew until 09/01/2023 12:08:12
+
+- **Perform S4U2Self**
+
+.. code:: pycon
+
+   >>> load_module("ticketer")
+   >>> t = Ticketer()
+   >>> t.request_tgt("SERVER1$@domain.local", key=Key(EncryptionType.AES256_CTS_HMAC_SHA1_96, bytes.fromhex("63a2577d8bf6abeba0847cded36b9aed202c23750eb9c56b6155be1cc946bb1d")))
+   >>> t.request_st(0, "host/SERVER1", for_user="Administrator@domain.local")
+   >>> t.show()
+   CCache tickets:
+   0. SERVER1$@DOMAIN.LOCAL -> krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+      canonicalize+pre-authent+initial+renewable+forwardable
+   Start time         End time           Renew until        Auth time
+   15/04/25 20:15:17  16/04/25 06:10:22  16/04/25 06:10:22  15/04/25 20:15:17
+   
+   1. Administrator@domain.local -> host/SERVER1@DOMAIN.LOCAL
+      canonicalize+pre-authent+renewable+forwardable
+   Start time         End time           Renew until        Auth time
+   15/04/25 20:15:20  16/04/25 06:10:22  16/04/25 06:10:22  15/04/25 20:15:17
+
+- **Request a ticket for a DMSA**
+
+For more information about DMSAs and how to create them, consult the `relevant Microsoft documentation <https://learn.microsoft.com/en-us/windows-server/identity/ad-ds/manage/delegated-managed-service-accounts/delegated-managed-service-accounts-set-up-dmsa>`_. In this example we allowed ``SERVER1$`` to retrieve the managed password of ``dmsa_user$``.
+
+.. code:: pycon
+
+   >>> load_module("ticketer")
+   >>> t = Ticketer()
+   >>> t.request_tgt("SERVER1$@domain.local", key=Key(EncryptionType.AES256_CTS_HMAC_SHA1_96, bytes.fromhex("63a2577d8bf6abeba0847cded36b9aed202c23750eb9c56b6155be1cc946bb1d")))
+   >>> t.request_st(0, "krbtgt/domain.local", for_user="dmsa_user$@domain.local", dmsa=True)
+   INFO: 3 DMSA keys found and imported !
+   >>> t.show()
+   Keytab name: UNSAVED
+   Principal                Timestamp          KVNO  Keytype
+   dmsa_user$@domain.local  22/05/25 22:03:58  1     AES256-CTS-HMAC-SHA1-96
+   dmsa_user$@domain.local  22/05/25 22:03:58  2     AES128-CTS-HMAC-SHA1-96
+   dmsa_user$@domain.local  22/05/25 22:03:58  3     RC4-HMAC
+   
+   CCache tickets:
+   0. SERVER1$@DOMAIN.LOCAL -> krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+      canonicalize+pre-authent+initial+renewable+forwardable
+   Start time         End time           Renew until        Auth time
+   22/05/25 22:06:32  23/05/25 08:03:53  23/05/25 08:03:53  22/05/25 22:06:32
+   
+   1. dmsa_user$@domain.local -> krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+      canonicalize+pre-authent+renewable+forwardable
+   Start time         End time           Renew until        Auth time
+   22/05/25 22:06:37  23/05/25 08:03:53  23/05/25 08:03:53  22/05/25 22:06:32
+
+As you can see, DMSA keys were imported in the keytab. You can use those as detailed in some of the following sections.
+
+- **Load and use keytab for client**
+
+.. code:: pycon
+
+    >>> load_module("ticketer")
+    >>> t = Ticketer()
+    >>> t.open_keytab("test.keytab")
+    >>> t.show()
+    Keytab name: test.keytab
+    Principal                   Timestamp          KVNO  Keytype
+    Administrator@domain.local  14/04/25 21:47:59  0     AES128-CTS-HMAC-SHA1-96
+    Administrator@domain.local  14/04/25 21:47:59  0     AES256-CTS-HMAC-SHA1-96
+    Administrator@domain.local  14/04/25 21:47:59  0     RC4-HMAC
+    
+    No tickets in CCache.
+    >>> t.request_tgt("Administrator@domain.local")
+
+- **Load and use keytab for server:**
+
+.. code:: pycon
+
+    >>> t.open_keytab("server1.keytab")
+    >>> t.show()
+    Keytab name: server1.keytab
+    Principal                             Timestamp          KVNO  Keytype
+    host/Server1.domain.local@DOMAIN.LOCAL  01/01/70 01:00:00  10    RC4-HMAC
+    
+    No tickets in CCache.
+    >>> ssp = t.ssp("host/Server11.domain.local@DOMAIN.LOCAL")
+    >>> # Example: start a SMB server
+    >>> smbserver(ssp=ssp)
+
+- **Create client keytab:**
+
+.. code:: pycon
+
+    >>> t = Ticketer()
+    >>> t.add_cred("Administrator@domain.local", etypes="all")
+    Enter password: ************
+    >>> t.show()
+    Keytab name: UNSAVED
+    Principal                   Timestamp          KVNO  Keytype
+    Administrator@domain.local  15/04/25 20:24:13  1     AES128-CTS-HMAC-SHA1-96
+    Administrator@domain.local  15/04/25 20:24:13  2     AES256-CTS-HMAC-SHA1-96
+    Administrator@domain.local  15/04/25 20:24:13  3     RC4-HMAC
+    
+    No tickets in CCache.
+
+- **Create server keytab:**
+
+The following is equivalent to Windows' ``ktpass.exe /out kt.keytab /mapuser WKS02$@domain.local /princ host/WKS02.domain.local@domain.local /pass ScapyIsNice``.
+
+.. code:: pycon
+
+    >>> t = Ticketer()
+    >>> t.add_cred("host/WKS02.domain.local@domain.local", etypes="all", mapupn="WKS02$@domain.local", password="ScapyIsNice")
+    Enter password: ************
+    >>> t.show()
+    Keytab name: UNSAVED
+    Principal                              Timestamp          KVNO  Keytype
+    host/WKS02$.domain.local@domain.local  25/02/26 15:40:27  1     AES256-CTS-HMAC-SHA1-96
+
+    No tickets in CCache.
+    >>> t.save_keytab("kt.keytab")
+
+- **Change password using kpasswd in 'set' mode:**
+
+.. code:: pycon
+
+    >>> t = Ticketer()
+    >>> t.request_tgt("Administrator@domain.local")
+    Enter password: ************
+    >>> t.kpasswdset(0, "SERVER1$@domain.local")
+    INFO: Using 'Set Password' mode. This only works with admin privileges.
+    Enter NEW password: ***********
+
+- **Craft tickets**: We can start by showing how to craft a **golden ticket**:
+
+.. code:: pycon
+
+    >>> load_module("ticketer")
+    >>> t = Ticketer()
+    >>> t.create_ticket()
+    User [User]: Administrator
+    Domain [DOM.LOCAL]: DOMAIN.LOCAL
+    Domain SID [S-1-5-21-1-2-3]: S-1-5-21-4239584752-1119503303-314831486
+    Group IDs [513, 512, 520, 518, 519]: 512, 520, 513, 519, 518
+    User ID [500]: 500
+    Primary Group ID [513]:
+    Extra SIDs [] :S-1-18-1
+    Expires in (h) [10]:
+    What key should we use (AES128-CTS-HMAC-SHA1-96/AES256-CTS-HMAC-SHA1-96/RC4-HMAC) ? [AES256-CTS-HMAC-SHA1-96]:
+    Enter the NT hash (AES-256) for this ticket (as hex): 6df5a9a90cb076f4d232a123d9c24f46ae11590a5430710bc1881dca337989ce
+    >>> t.show()
+    Tickets:
+    0. Administrator@DOMAIN.LOCAL -> krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+    >>> t.save_ccache(fname="blob.ccache")
+
+- **Edit tickets with the GUI**
+  
+Let's assume you've acquired the KRBTGT of a KDC, plus you've used ``kinit`` to get a ticket.
+This ticket was saved to a ``.ccache`` file, that we'll know try to open.
+
+.. note::
+
+    You can get the demo ccache file using the following
+
+    .. code::
+
+        cat <<EOF | base64 -d > krb.ccache
+        BQQADAABAAj/////AAAAAAAAAAEAAAABAAAADERPTUFJTi5MT0NBTAAAAA1BZG1pbmlzdHJhdG9y
+        AAAAAQAAAAEAAAAMRE9NQUlOLkxPQ0FMAAAADUFkbWluaXN0cmF0b3IAAAACAAAAAgAAAAxET01B
+        SU4uTE9DQUwAAAAGa3JidGd0AAAADERPTUFJTi5MT0NBTAASAAAAIItCJqGQhmy+NFrl5miCPt1T
+        WcsAvUeaZCi8j+sbpVdSYzMy+mMzMvpjM7+aYzSEdwBQ4QAAAAAAAAAAAAAAAARIYYIERDCCBECg
+        AwIBBaEOGwxET01BSU4uTE9DQUyiITAfoAMCAQKhGDAWGwZrcmJ0Z3QbDERPTUFJTi5MT0NBTKOC
+        BAQwggQAoAMCARKhAwIBAqKCA/IEggPuZiwq78yj+MeN444a8dY7GN4BHYZNm+wS88EeILC73Ebm
+        9cgxGzMbHMJ7Ixk+kPpHunqmpn+6WCah9HVOpQUO6rLgfQej7BApsqEeBYzjHkj03ivOAX6cKRXu
+        QP+g9xCVlwiChvopD+bKd3RlFixXV6Z8xTqOMgSEakypz/MMgHPR6ec1tesicX+Xd8Lzj7E9IElS
+        2xXk8WDiZTX1lvPOZPmo2WARcY0EBWUNf3xyj4fdLQ4iDkYQNH+qikUJm2OjUfWtz8z2adm2ES4x
+        iBr4aVYSlKIetuKxZLjObGx7AyfsbHHCN4SwbBkDCj+BEZ83fLbwOVtUd7/7xcGiJk7Er3b0s5pO
+        L3Aw1IyOu8ryEgNuoKWr3V2pH83D+5cA1TefA/vJ/jpHB42uMLBaQY9G7p6iX1IOt+Z7U9lvf0hu
+        WHiyLqj0IVE3p9z39Lb1BGNxXZ08VE8pRCDtD3QmlV+gpSfvzoYmT3wpvfws7iw+sifrS3ZR64AI
+        4OsmlEakVIgpawQn+CuVmtBwFGzYqa7Z7yNoFb0hSfP4bXMidYTylNyGz0p35O6r+Y9PNC2/xL60
+        bYNLDDED2MWWTK1IUu7TZcqOUJN+IZdhItXN4Yxatt1VKMOmgMCiGXEXZt1bajwQOuZa1fVzoxVD
+        oOvO/eF0kGKVEDD2OQfN4JIBDCLJB2MkjJ9s0DpvCny5p7dEG8feTEDB10k3Ov7ll6Usnb51M9e6
+        JKOibfKUdLk2Q+7Zf2uP/ROXaGmESEG902TyRU1uPOGuZ37AHFksJbUOEgMDJA3arILfqdY7HELC
+        ObeKbE67orZFi5JJMcUrIjucnP1s8PCD5iOeMHR/EwLei96U/odWteARj17WHczDhi3byT8QPDFg
+        rBWFjL4zBCDW4H4snyQsLK+PBNg/PNcfQEwdVoFMniqnh3Y6vClTNCmUh/RU5LTrXw58PPXjdzdK
+        z4J8n+JV4cfNsTEp7wfHMRZO5O7VA/c1gpqLfMLjcY2yPYWDj796Q4YaHI+JDkwzQ3tldJlGtG9s
+        /xdnFY9WhLA18uoIb3tWT2pXBQcUtMrVFltyvm96aCCy6fiTZQYUfmSnei+c+cE/5P1ZuDGRiYEB
+        BooAPm9/kYAGYWIE/0sYqb9JVJe6DfDfy7iaXmQ8YGN2ZzV/zx2XtCQkDqdfzw0muxWQVRB/gNG8
+        aCyQV/IqPvX7D1CtswupdbJQadOTv36yUi8jCRKsHmS7qTyRqnYKuxIJuxMT443d68rDJdJ775nW
+        YEXAl5m3ECCkT2S7tZxAVEkwT9lbjWvcbRfkdsuhiPMK0Eu2yR2RsCiwlTmGkpqftCsh9zAoyLof
+        QWxwYwAAAAAAAAABAAAAAQAAAAxET01BSU4uTE9DQUwAAAANQWRtaW5pc3RyYXRvcgAAAAAAAAAD
+        AAAADFgtQ0FDSEVDT05GOgAAABVrcmI1X2NjYWNoZV9jb25mX2RhdGEAAAAHcGFfdHlwZQAAACBr
+        cmJ0Z3QvRE9NQUlOLkxPQ0FMQERPTUFJTi5MT0NBTAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+        AAAAAAAAAAAAAAAAATIAAAAA
+        EOF
+
+.. code:: pycon
+
+    >>> load_module("ticketer")
+    >>> t = Ticketer()
+    >>> t.open_ccache("krb.ccache")
+    >>> t.show()
+    Tickets:
+    1. Administrator@DOMAIN.LOCAL -> krbtgt/DOMAIN.LOCAL@DOMAIN.LOCAL
+    >>> t.edit_ticket(0)
+    Enter the NT hash (AES-256) for this ticket (as hex): 6df5a9a90cb076f4d232a123d9c24f46ae11590a5430710bc1881dca337989ce
+    >>> t.resign_ticket(0)
+    >>> t.save_ccache()
+    1660
+    >>> # Other stuff you can do
+    >>> tkt = t.dec_ticket(0)
+    >>> tkt
+    <EncTicketPart  flags=forwardable, proxiable, renewable, .........>
+    >>> t.update_ticket(0, tkt)
+
+.. figure:: ../graphics/kerberos/ticketer.png
+   :align: center
+
+
+.. note:: Remember to call ``resign_ticket`` to update the Server and KDC checksums in the PAC.
+
+
+Cheat sheet
+-----------
+
++---------------------------------------+--------------------------------+
+| Command                               | Description                    |
++=======================================+================================+
+| ``load_module("ticketer")``           | Load ticketer++                |
++---------------------------------------+--------------------------------+
+| ``t = Ticketer()``                    | Create a Ticketer object       |
++---------------------------------------+--------------------------------+
+| ``t.open_ccache("/tmp/krb5cc_1000")`` | Open a ccache file             |
++---------------------------------------+--------------------------------+
+| ``t.save_ccache()``                   | Save a ccache file             |
++---------------------------------------+--------------------------------+
+| ``t.show()``                          | List the tickets               |
++---------------------------------------+--------------------------------+
+| ``t.create_ticket()``                 | Forge a ticket                 |
++---------------------------------------+--------------------------------+
+| ``dTkt = t.dec_ticket(<index>)``      | Decipher a ticket              |
++---------------------------------------+--------------------------------+
+| ``t.update_ticket(<index>, dTkt)``    | Re-inject a deciphered ticket  |
++---------------------------------------+--------------------------------+
+| ``t.edit_ticket(<index>)``            | Edit a ticket (GUI)            |
++---------------------------------------+--------------------------------+
+| ``t.resign_ticket(<index>)``          | Resign a ticket                |
++---------------------------------------+--------------------------------+
+| ``t.request_tgt(upn, [...])``         | Request a TGT                  |
++---------------------------------------+--------------------------------+
+| ``t.request_st(i, spn, [...])``       | Request a ST using ticket i    |
++---------------------------------------+--------------------------------+
+| ``t.renew(i, [...])``                 | Renew a TGT/ST                 |
++---------------------------------------+--------------------------------+
+| ``t.remove_krb(i)``                   | Remove a TGT/ST                |
++---------------------------------------+--------------------------------+
+| ``t.set_primary(i)``                  | Set the primary ticket         |
++---------------------------------------+--------------------------------+
+
+Other useful commands
+---------------------
+
+To change your own password, you can use the plain ``kpasswd`` command from ``scapy.layers.kerberos``.
+
+.. code:: pycon
+
+    >>> kpasswd("User1@domain.local")
+    Enter password: **********
+    Enter NEW password: *********
+
+To change the password of someone else, you can also the following. You need to have the rights to do so. You can also use the method from Scapy's Ticketer.
+
+.. code:: pycon
+
+    >>> kpasswd("Administrator@domain.local", "User1@domain.local")
+    Enter password: **********
+    Enter NEW password: *********
+
+Inner-workings
+~~~~~~~~~~~~~~
+
+Behind the scenes, Scapy includes a (tiny) kerberos client, that has basic functionalities such as:
 
 AS-REQ
 ------
 
-.. note:: Full doc at :func:`~scapy.layers.kerberos.krb_as_req`. ``krb_as_req`` actually calls a Scapy automaton.
+.. note:: Full doc at :func:`~scapy.layers.kerberos.krb_as_req`. ``krb_as_req`` actually calls a Scapy automaton that has the following behavior:
+
+    .. image:: ../graphics/kerberos/kerberos_atmt.png
+        :align: center
 
 .. code:: pycon
 
-    >>> res = krb_as_req("user1@DOMAIN.LOCAL", "192.168.122.17", password="Password1")
+    >>> res = krb_as_req("user1@DOMAIN.LOCAL", password="Password1")
 
 This is what it looks like with wireshark:
 
@@ -45,12 +456,73 @@ The result is a named tuple with both the full AP-REP and the decrypted session 
     >>> res.sessionkey.toKey()
     <Key 18 (32 octets)>
 
+Some more examples:
 
-Low-level
-_________
+**Enforce RC4:**
 
-Decrypt kerberos packets
-------------------------
+.. code:: pycon
+
+    >>> from scapy.libs.rfc3961 import EncryptionType
+    >>> res = krb_as_req("user1@DOMAIN.LOCAL", etypes=[EncryptionType.RC4_HMAC])
+
+**Ask for a DES_CBC_MD5 sessionkey:**
+
+.. code:: pycon
+
+    >>> from scapy.libs.rfc3961 import EncryptionType
+    >>> res = krb_as_req("user1@DOMAIN.LOCAL", etypes=[EncryptionType.DES_CBC_MD5, EncryptionType.RC4_HMAC])
+
+TGS-REQ
+-------
+
+.. note:: Full doc at :func:`~scapy.layers.kerberos.krb_tgs_req`. ``krb_tgs_req`` actually calls a Scapy automaton.
+
+**Ask for a ST:**
+
+Let's reuse the TGT and session key we got in the AS-REQ:
+
+.. code:: pycon
+
+    >>> krb_tgs_req("user1@DOMAIN.LOCAL", "host/DC1", sessionkey=res.sessionkey, ticket=res.asrep.ticket)
+
+.. note::
+
+    There is also a :func:`~scapy.layers.kerberos.krb_as_and_tgs` function that does an AS-REQ then a TGS-REQ::
+
+        >>> krb_as_and_tgs("user1@DOMAIN.LOCAL", "host/DC1", password="Password1")
+
+Other things you can do:
+
+**Renew a TGT:**
+
+.. code:: pycon
+
+    >>> krb_tgs_req("user1@DOMAIN.LOCAL", "krbtgt/DOMAIN.LOCAL", sessionkey=res.sessionkey, ticket=res.asrep.ticket, renew=True)
+
+**Renew a ST:**
+
+.. note:: For some mysterious reason, this is rarely implemented in other tools.
+
+.. code:: pycon
+
+    >>> res2 = krb_tgs_req("user1@DOMAIN.LOCAL", "host/DC1", sessionkey=res.sessionkey, ticket=res.asrep.ticket)
+    >>> krb_tgs_req("user1@DOMAIN.LOCAL", "host/DC1", sessionkey=res2.sessionkey, ticket=res2.tgsrep.ticket, renew=True)
+
+
+KerberosSSP
+~~~~~~~~~~~
+
+For Kerberos, the Scapy SSP is implemented in :class:`~scapy.layers.kerberos.KerberosSSP`.
+You can typically use it in :class:`~scapy.layers.smbclient.SMB_Client`, :class:`~scapy.layers.smbserver.SMB_Server`, :class:`~scapy.layers.msrpce.rpcclient.DCERPC_Client` or :class:`~scapy.layers.msrpce.rpcserver.DCERPC_Server`.
+
+.. note:: Remember that you can wrap it in a :class:`~scapy.layers.spnego.SPNEGOSSP`
+
+See `GSSAPI <gssapi.html>`_ for usage examples.
+
+Decrypt kerberos packets manually
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. note:: This section is useful to understand the inner workings of Kerberos, but isn't necessary to use Scapy's implementation.
 
 Kerberos packets contain encrypted content, let's take the following packet:
 
@@ -108,9 +580,9 @@ You likely want to decrypt ``pkt.root.padata[0].padataValue`` which is an :class
 
     >>> from scapy.libs.rfc3961 import Key, EncryptionType
     >>> enc = pkt[Kerberos].root.padata[0].padataValue
-    >>> k = Key(EncryptionType.AES256, key=hex_bytes("7fada4e566ae4fb270e2800a23ae87127a819d42e69b5e22de0ddc63da80096d"))
+    >>> k = Key(EncryptionType.AES256_CTS_HMAC_SHA1_96, key=bytes.fromhex("7fada4e566ae4fb270e2800a23ae87127a819d42e69b5e22de0ddc63da80096d"))
 
-The first parameter of the :class:`~scapy.libs.rfc3961.Key` constructor is a value from :class:`~scapy.libs.rfc3961.EncryptionType`, in this case ``EncryptionType.AES256``. This is the same value than ``enc.etype.val``, which allows to know which key to use.
+The first parameter of the :class:`~scapy.libs.rfc3961.Key` constructor is a value from :class:`~scapy.libs.rfc3961.EncryptionType`, in this case ``EncryptionType.AES256_CTS_HMAC_SHA1_96``. This is the same value than ``enc.etype.val``, which allows to know which key to use.
 
 We can then proceed to perform the decryption:
 
@@ -120,7 +592,7 @@ We can then proceed to perform the decryption:
     <PA_ENC_TS_ENC  patimestamp=2022-07-15 17:18:47 UTC <ASN1_GENERALIZED_TIME['20220715171847Z']> pausec=0x9a4db <ASN1_INTEGER[632027]> |>
 
 Compute Kerberos keys
----------------------
+~~~~~~~~~~~~~~~~~~~~~
 
 .. note:: Encryption for Kerberos 5 is defined in `RFC3961 <https://datatracker.ietf.org/doc/html/rfc3961.html>`_
 
@@ -141,7 +613,7 @@ Let's run a few examples:
 
     >>> # Get the AES256 key for User1@DOMAIN.LOCAL with "Password1"
     >>> from scapy.libs.rfc3961 import Key, EncryptionType
-    >>> Key.string_to_key(EncryptionType.AES256, b"Password1", b"DOMAIN.LOCALUser1")
+    >>> Key.string_to_key(EncryptionType.AES256_CTS_HMAC_SHA1_96, b"Password1", b"DOMAIN.LOCALUser1")
     >>> print(_.key)
     b'm\x07H\xc5F\xf4\xe9\x92\x05\xe7\x8f\x8d\xa7h\x1dN\xc5R\n\xe4\x81UCr\x0c*d|\x1a\xe8\x14\xc9'
 
@@ -150,26 +622,26 @@ Let's run a few examples:
 .. code:: pycon
 
     >>> # Get the AES128 key for raeburn@ATHENA.MIT.EDU with "password", with an iteration count of 1200
-    >>> k = Key.string_to_key(EncryptionType.AES128, b"password", b"ATHENA.MIT.EDUraeburn", struct.pack(">L", 1200))
-    >>> print(bytes_hex(k.key))
-    b'4c01cd46d632d01e6dbe230a01ed642a'
+    >>> k = Key.string_to_key(EncryptionType.AES128_CTS_HMAC_SHA1_96, b"password", b"ATHENA.MIT.EDUraeburn", struct.pack(">L", 1200))
+    >>> print(k.key.hex())
+    '4c01cd46d632d01e6dbe230a01ed642a'
 
 
-Decrypt FAST
-------------
+Decrypt FAST manually
+~~~~~~~~~~~~~~~~~~~~~
 
-.. note:: Have a look at `RFC6113 <https://datatracker.ietf.org/doc/html/rfc6113.html>`_ for Kerberos FAST
+.. note:: This section is useful to understand the inner workings of Kerberos FAST, but FAST can simply be used in :class:`~scapy.modules.ticketer.Ticketer` through the ``armor_with`` parameter when performing either a ASREQ or TGSREQ. For more details related to how FAST works, have a look at `RFC6113 <https://datatracker.ietf.org/doc/html/rfc6113.html>`_.
 
 Let's take a Kerberos AS-REQ packet with FAST armoring (RFC6113):
 
 .. figure:: ../graphics/kerberos/as_req_fast.png
    :align: center
 
-   FAST armoring in AS-REQ. Courtesy of Aurélien Bordes
+   FAST armoring in AS-REQ. Credit to `this paper by A. Bordes <https://www.sstic.org/media/SSTIC2017/SSTIC-actes/administration_en_silo/SSTIC2017-Article-administration_en_silo-bordes.pdf>`_.
 
 .. code:: pycon
 
-    >>> pkt = Ether(hex_bytes(b'52540013d0835254003ea3be08004502089636a1400080063ad3c0a87fd2c0a87fc8fecc0058eea93069573b278e50180402897400000000086a6a82086630820862a103020105a20302010aa38207a23082079e3082079aa10402020088a28207900482078ca082078830820784a082064a30820646a003020101a182063d048206396e82063530820631a003020105a10302010ea20703050000000000a38205796182057530820571a003020105a10c1b0a444f4d312e4c4f43414ca21f301da003020102a11630141b066b72627467741b0a444f4d312e4c4f43414ca382053930820535a003020112a103020102a282052704820523acc8b7671c0d50522f1a8d8452ce450aceb40fff0229e8ee546bccf1512e4877ef93dde465595260a6a5a8e85ea38600ce8dff7d510f3c744e2c43eb9d3187d638f716c29b6e7aa9eb407de28d0161f49013966eda0a161ff174dad42e7aa500cfe298541215448013ffe4883b6b1166f908f50de129487fe77fff874fd4102cdcce8db8dbeb8da02f08cc88b3790cdad5ec499959c7e79d6fef107d1e17ce80cc3df050b7e7a1c31f278e4fd4ea9523c950876f174be363234f8495b9550de1560ba17daeafbf133f78991053d929ad3fd668327d42288e6581671daaef908682ee282e17c31d8f8bb55d27fce155ee2e84a2ff8bc9600891be15e6ede3e1bbd2742a7af8b0a32c48973c9e3776a69647bab11592756c5a15b9101c392efa35d000abb3dabccd97e64426e3fd8d47e0e369c83b5391f38947d536d351c061081d654eef1a3861cdb2ea2bc48222b450d1b7d09c0670493bccc60dfcaa5cfe46fd50adf8e388204a4691dc5f0c3dbae0b4da6ac2dd781f149a444840aaa3a3c3befb5a5c04ee0405baed66afcf9b988d10ea14a955f43df79465e6fc02a12bce3870988950f1ab48e1a4f876f351671c5061e6399a63cb0479f7bd017dfd9bc5be192faf6d4f11e6ee6003933eeaf632f0056c4c1ccd183d7977cfca85419fe5b039674419d802068e792c9576ae2a88bfbeb1f59273226782c6efb288717d8f7a4bc3bf4c697fcac1adc1829f0a914f2559b278ccadd108eb87a11dacc88e4302e9af627474e57171192b94c6b358f8f98e308596215d2fb9d9c2b49c4cbedcb43fc231b86f0493d56b82962cf3383a84f8922c2b99f8fa8fdd85797b09a6e60f72007c0379988be2ff1cfc16f21300c1b4b784174005a9185f760e68ef94b9384eb24decee31b63d1b92278cd75b85d4d80c4e83306533a9d95aa6207cbfbeb0970a41c44aba59839f007923ecd8ff0de8314990a435dbea4dedbee16faf5ab2be9f96d691cfa983a6c843bd183f84c1b4998a3eaa907cae6b82b0ae8363f3edd8cb03d3c9c60ff55a84d8a292ea20555fbd6ce5ad4ad7a6b4bc5bff2e02c477a7a8a98d5a387d389caa172c400b151d95871b2aa16a040dc71a9be5f0774b06a5ca87674ccb4109a2c41db9e3160704218ad495d0751194fbef4becae4d7be24b9d968da592256a2b22cf724e989e71a60d0603b59bebd475285f793794b7a18af49a2b68670e3a6247c453274e35c863a16b5023c6c94659e25abb27c760f989ac0bbf9a5b125d0ea34fb03225cc93d5b8b6829e906883ee76cf8ee61dfacc488e8dc5cbc8ba9705a9e915a68f838232394f97fb1aac4a2a90fe17d46f9c51946a2bf9598df7f5b5e7ee692a78860eea3cef748a5be36529228e40b4aec83ebc8bb14176a4c565b06500e9517229b8340c55812101dbbc6bee693c35873082a5a1a53b35cf3509193d4dc5175c9360a00da71692ba205b3264aecc9ecc8bca31fec43efc8701423bb484f6f21699439dd30f71228f16eaab96b7de3547721d1635bbfe50678900ac378a4958b6c34964f3e0dc843880dbde57fb4a76ab85eba2b190bfdaefc7ba17e109f839493b0f2d6fc7ea17403bebe06f2809314ca514606f54668082364ed6752019f27e1df74f93fcf1c25630a29713a89d4a998c444bc91279c6fc66e0aa5dec72be316e1160cf9f90d5915c464b6bfec5216e901be4726db596a15745511c63736a69ac9ecb9e86601c631b4992653c320e6983562fa613134560cb606621e9661ac5961313ee70868ab48d6010173d8a96fffdb2baf4afe18c846d3fed6f30b9a809d72e647735fc536edec543abc232480d28660395a4819e30819ba003020112a281930481901273d5af61ad426d51d0757e897917caeb6fc1b6950554e8d750f95d27f444e3aaf7ae0bf4595b5e906d9682dbdeedcf6eb42a84ab8092997b783f57710127228165deeb2ce5e09e2ddc71555dc31970a8312d888b8ae766382098276d62b4bd76f34cbc889e24ad5405ec037ceb724fdb71fe247fe2a414a037ed33c796f4475fcfb5993eed147b6d63d740d58da5b0a1173015a003020110a10e040ca75f26db2301c6970feba452a282011930820115a003020112a282010c048201083caf34ecefd84c786703c20039de61bc01ebed9be7e51c90a582fec852696bf92fd165cd5b5ef0f9b8edb666c9cca5690d364e5c6ad69e7d5bc7e055757aaa6206428a302524144d5d97cc0b64db13335045039171ed1f0d111ca1bd4651ebca3d74db029e5c6d3c7f8600c44e55b14cd3c7f6a15c9133400e4255d71f237bf288c186137cd04a5f2cabba3166de5bf11190a2e5962e4dbbfb9801e3be73ede5a536eb27a086b644f12245198459c063b8ecba228e1f9209e05a5bcbb39a12651e103438ee7998e666d8628812fa34bc07f4c4d0a4d86fe207128de37e1ffd169a4cb879cb5b9db8f9c3e86143bfd43409ca47e90f3bc848a1838fce7209f57296e44963a2d1e3d4a481af3081aca00703050040810010a11a3018a003020101a111300f1b0d61646d2d722d786d617274696ea2061b04444f4d31a3193017a003020102a110300e1b066b72627467741b04444f4d31a511180f32303337303931333032343830355aa611180f32303337303931333032343830355aa70602043f58a7a0a81530130201120201110201170201180202ff79020103a91d301b3019a003020114a112041053525620202020202020202020202020'))
+    >>> pkt = Ether(bytes.fromhex(b'52540013d0835254003ea3be08004502089636a1400080063ad3c0a87fd2c0a87fc8fecc0058eea93069573b278e50180402897400000000086a6a82086630820862a103020105a20302010aa38207a23082079e3082079aa10402020088a28207900482078ca082078830820784a082064a30820646a003020101a182063d048206396e82063530820631a003020105a10302010ea20703050000000000a38205796182057530820571a003020105a10c1b0a444f4d312e4c4f43414ca21f301da003020102a11630141b066b72627467741b0a444f4d312e4c4f43414ca382053930820535a003020112a103020102a282052704820523acc8b7671c0d50522f1a8d8452ce450aceb40fff0229e8ee546bccf1512e4877ef93dde465595260a6a5a8e85ea38600ce8dff7d510f3c744e2c43eb9d3187d638f716c29b6e7aa9eb407de28d0161f49013966eda0a161ff174dad42e7aa500cfe298541215448013ffe4883b6b1166f908f50de129487fe77fff874fd4102cdcce8db8dbeb8da02f08cc88b3790cdad5ec499959c7e79d6fef107d1e17ce80cc3df050b7e7a1c31f278e4fd4ea9523c950876f174be363234f8495b9550de1560ba17daeafbf133f78991053d929ad3fd668327d42288e6581671daaef908682ee282e17c31d8f8bb55d27fce155ee2e84a2ff8bc9600891be15e6ede3e1bbd2742a7af8b0a32c48973c9e3776a69647bab11592756c5a15b9101c392efa35d000abb3dabccd97e64426e3fd8d47e0e369c83b5391f38947d536d351c061081d654eef1a3861cdb2ea2bc48222b450d1b7d09c0670493bccc60dfcaa5cfe46fd50adf8e388204a4691dc5f0c3dbae0b4da6ac2dd781f149a444840aaa3a3c3befb5a5c04ee0405baed66afcf9b988d10ea14a955f43df79465e6fc02a12bce3870988950f1ab48e1a4f876f351671c5061e6399a63cb0479f7bd017dfd9bc5be192faf6d4f11e6ee6003933eeaf632f0056c4c1ccd183d7977cfca85419fe5b039674419d802068e792c9576ae2a88bfbeb1f59273226782c6efb288717d8f7a4bc3bf4c697fcac1adc1829f0a914f2559b278ccadd108eb87a11dacc88e4302e9af627474e57171192b94c6b358f8f98e308596215d2fb9d9c2b49c4cbedcb43fc231b86f0493d56b82962cf3383a84f8922c2b99f8fa8fdd85797b09a6e60f72007c0379988be2ff1cfc16f21300c1b4b784174005a9185f760e68ef94b9384eb24decee31b63d1b92278cd75b85d4d80c4e83306533a9d95aa6207cbfbeb0970a41c44aba59839f007923ecd8ff0de8314990a435dbea4dedbee16faf5ab2be9f96d691cfa983a6c843bd183f84c1b4998a3eaa907cae6b82b0ae8363f3edd8cb03d3c9c60ff55a84d8a292ea20555fbd6ce5ad4ad7a6b4bc5bff2e02c477a7a8a98d5a387d389caa172c400b151d95871b2aa16a040dc71a9be5f0774b06a5ca87674ccb4109a2c41db9e3160704218ad495d0751194fbef4becae4d7be24b9d968da592256a2b22cf724e989e71a60d0603b59bebd475285f793794b7a18af49a2b68670e3a6247c453274e35c863a16b5023c6c94659e25abb27c760f989ac0bbf9a5b125d0ea34fb03225cc93d5b8b6829e906883ee76cf8ee61dfacc488e8dc5cbc8ba9705a9e915a68f838232394f97fb1aac4a2a90fe17d46f9c51946a2bf9598df7f5b5e7ee692a78860eea3cef748a5be36529228e40b4aec83ebc8bb14176a4c565b06500e9517229b8340c55812101dbbc6bee693c35873082a5a1a53b35cf3509193d4dc5175c9360a00da71692ba205b3264aecc9ecc8bca31fec43efc8701423bb484f6f21699439dd30f71228f16eaab96b7de3547721d1635bbfe50678900ac378a4958b6c34964f3e0dc843880dbde57fb4a76ab85eba2b190bfdaefc7ba17e109f839493b0f2d6fc7ea17403bebe06f2809314ca514606f54668082364ed6752019f27e1df74f93fcf1c25630a29713a89d4a998c444bc91279c6fc66e0aa5dec72be316e1160cf9f90d5915c464b6bfec5216e901be4726db596a15745511c63736a69ac9ecb9e86601c631b4992653c320e6983562fa613134560cb606621e9661ac5961313ee70868ab48d6010173d8a96fffdb2baf4afe18c846d3fed6f30b9a809d72e647735fc536edec543abc232480d28660395a4819e30819ba003020112a281930481901273d5af61ad426d51d0757e897917caeb6fc1b6950554e8d750f95d27f444e3aaf7ae0bf4595b5e906d9682dbdeedcf6eb42a84ab8092997b783f57710127228165deeb2ce5e09e2ddc71555dc31970a8312d888b8ae766382098276d62b4bd76f34cbc889e24ad5405ec037ceb724fdb71fe247fe2a414a037ed33c796f4475fcfb5993eed147b6d63d740d58da5b0a1173015a003020110a10e040c75f02d8d2954e0ae1a9e0653a282011930820115a003020112a282010c04820108ae9bbc4629c80f4a383a69c4583824295c75f34b000b3fdbdaab073a042935e32c29e0ee2b2b446e4a6a2592362d0d593cddd74dacc24f16353776e1b5d192ad1cf5e63f66f40a134ecb87c077c30922bc0cab00ae23d187d56090d9098f843c54fabe7c012ff87e317dfe339c40911264609d489b041a4e9b52c0eb03ee88a393d17da92786bd1716b92eb0d7a5a24a64ade0870dea8a7e138acdf209ee277cb3fadeedab173fd64cc10a1004010774658b94852639bda10a5e8aff29174e3d2c7032c32631b074afdac0e6832bae74de9be19e522f63bc8499753a209291fee1861c29096cc8ee3cfda5be235b0aa95635916edcfcdaf90b896e2eaa5a57d5e4da0b00408f4201a481af3081aca00703050040810010a11a3018a003020101a111300f1b0d61646d2d302d66617374656e62a2061b04444f4d31a3193017a003020102a110300e1b066b72627467741b04444f4d31a511180f32303337303931333032343830355aa611180f32303337303931333032343830355aa70602043f58a7a0a81530130201120201110201170201180202ff79020103a91d301b3019a003020114a112041053525620202020202020202020202020'))
     >>> pkt[TCP].payload.show()
     ###[ KerberosTCPHeader ]### 
         len       = 2154
@@ -212,7 +684,7 @@ Let's take a Kerberos AS-REQ packet with FAST armoring (RFC6113):
         |   |   |   |   |   |   |  kvno      = None
         |   |   |   |   |   |   |  cipher    = <ASN1_STRING[b'\x12s\xd5\xafa\xadBmQ\xd0u~\x89y\x17\xca\xebo\xc1\xb6\x95\x05T\xe8\xd7P\xf9]\'\xf4D\xe3\xaa\xf7\xae\x0b\xf4Y[^\x90m\x96\x82\xdb\xde\xed\xcfn\xb4*\x84\xab\x80\x92\x99{x?Wq\x01\'"\x81e\xde\xeb,\xe5\xe0\x9e-\xdcqU]\xc3\x19p\xa81-\x88\x8b\x8a\xe7f8 \x98\'mb\xb4\xbdv\xf3L\xbc\x88\x9e$\xadT\x05\xec\x03|\xebrO\xdbq\xfe$\x7f\xe2\xa4\x14\xa07\xed3\xc7\x96\xf4G_\xcf\xb5\x99>\xed\x14{mc\xd7@\xd5\x8d\xa5\xb0']>
         |   |   |   |  checksumtype= 'HMAC-SHA1-96-AES256' 0x10 <ASN1_INTEGER[16]>
-        |   |   |   |  checksum  = <ASN1_STRING[b'\xa7_&\xdb#\x01\xc6\x97\x0f\xeb\xa4R']>
+        |   |   |   |  checksum  = <ASN1_STRING[b'u\xf0-\x8d)T\xe0\xae\x1a\x9e\x06S']>
         |   |   |   |  \encFastReq\
         |   |   |   |   |###[ EncryptedData ]### 
         |   |   |   |   |  etype     = 'AES-256' 0x12 <ASN1_INTEGER[18]>
@@ -224,7 +696,7 @@ Let's take a Kerberos AS-REQ packet with FAST armoring (RFC6113):
         |   |  \cname     \
         |   |   |###[ PrincipalName ]### 
         |   |   |  nameType  = 'NT-PRINCIPAL' 0x1 <ASN1_INTEGER[1]>
-        |   |   |  nameString= [<ASN1_GENERAL_STRING[b'adm-r-xmartin']>]
+        |   |   |  nameString= [<ASN1_GENERAL_STRING[b'adm-0-fastenb']>]
         |   |  realm     = <ASN1_GENERAL_STRING[b'DOM1']>
         |   |  \sname     \
         |   |   |###[ PrincipalName ]### 
@@ -254,7 +726,7 @@ We have the krbtgt for this demo:
 
     >>> from scapy.libs.rfc3961 import Key, EncryptionType
     >>> krbtgt_hex = "ac67a63d7155791fe31dace230ab516e818c453dfdbd44cbe691b240725c4907"
-    >>> krbtgt = Key(EncryptionType.AES256, key=hex_bytes(krbtgt_hex))
+    >>> krbtgt = Key(EncryptionType.AES256_CTS_HMAC_SHA1_96, key=bytes.fromhex(krbtgt_hex))
 
 We can therefore decrypt the first payload:
 
@@ -285,7 +757,7 @@ We can therefore decrypt the first payload:
         addresses = None
     [...]
 
-We can see the ticket session key in there, let's retrieve it and build a ``Key`` object:
+We can see the ticket session key in there, let's retrieve it and build a :class:`~scapy.libs.rfc3961.Key` object:
 
 .. note:: We use the ``.toKey()`` function in the ``EncryptedKey`` type which is a shorthand for ``Key(<keytype>, key=<keyvalue>)``
 
@@ -363,7 +835,7 @@ That we can now use to decrypt the last payload:
         |  \cname     \
         |   |###[ PrincipalName ]### 
         |   |  nameType  = 'NT-PRINCIPAL' 0x1 <ASN1_INTEGER[1]>
-        |   |  nameString= [<ASN1_GENERAL_STRING[b'adm-r-xmartin']>]
+        |   |  nameString= [<ASN1_GENERAL_STRING[b'adm-0-fastenb']>]
         |  realm     = <ASN1_GENERAL_STRING[b'DOM1']>
         |  \sname     \
         |   |###[ PrincipalName ]### 
@@ -381,8 +853,8 @@ That we can now use to decrypt the last payload:
         |  encAuthorizationData= None
         |  additionalTickets= None
 
-Encryption
-----------
+Manually using Kerberos encryption
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A  :func:`~scapy.libs.rfc3961.Key.encrypt` function exists in the :class:`~scapy.libs.rfc3961.Key` object in order to do the opposite of :func:`~scapy.libs.rfc3961.Key.decrypt`.
 
@@ -396,7 +868,7 @@ For instance, during pre-authentication, encode ``PA-ENC-TIMESTAMP``:
     >>> # Create the PADATA layer with its EncryptedValue
     >>> pkt = PADATA(padataType=0x2, padataValue=EncryptedData())
     >>> # Compute the key
-    >>> key = Key.string_to_key(EncryptionType.AES256, b"Password1", b"DOMAIN.LOCALUser1")
+    >>> key = Key.string_to_key(EncryptionType.AES256_CTS_HMAC_SHA1_96, b"Password1", b"DOMAIN.LOCALUser1")
     >>> now_time = datetime.now(timezone.utc).replace(microsecond=0)  # Current time with no milliseconds
     >>> # Encrypt
     >>> pkt.padataValue.encrypt(key, PA_ENC_TS_ENC(patimestamp=ASN1_GENERALIZED_TIME(now_time)))

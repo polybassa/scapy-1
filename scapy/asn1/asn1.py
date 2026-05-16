@@ -88,14 +88,12 @@ class RandASN1Object(RandField["ASN1_Object[Any]"]):
         if issubclass(o, ASN1_INTEGER):
             return o(int(random.gauss(0, 1000)))
         elif issubclass(o, ASN1_IPADDRESS):
-            z = RandIP()._fix()
-            return o(z)
-        elif issubclass(o, ASN1_GENERALIZED_TIME) or issubclass(o, ASN1_UTC_TIME):  # noqa: E501
-            z = GeneralizedTime()._fix()
-            return o(z)
+            return o(RandIP()._fix())
+        elif issubclass(o, ASN1_GENERALIZED_TIME) or issubclass(o, ASN1_UTC_TIME):
+            return o(GeneralizedTime()._fix())
         elif issubclass(o, ASN1_STRING):
             z1 = int(random.expovariate(0.05) + 1)
-            return o("".join(random.choice(self.chars) for _ in range(z1)))
+            return o("".join(random.choice(self.chars) for _ in range(z1)).encode())
         elif issubclass(o, ASN1_SEQUENCE) and (n < 10):
             z2 = int(random.expovariate(0.08) + 1)
             return o([self.__class__(objlist=self.objlist)._fix(n + 1)
@@ -275,6 +273,7 @@ class ASN1_Class_UNIVERSAL(ASN1_Class):
     BMP_STRING = cast(ASN1Tag, 30)
     IPADDRESS = cast(ASN1Tag, 0 | 0x40)     # application-specific encoding
     COUNTER32 = cast(ASN1Tag, 1 | 0x40)     # application-specific encoding
+    COUNTER64 = cast(ASN1Tag, 6 | 0x40)     # application-specific encoding
     GAUGE32 = cast(ASN1Tag, 2 | 0x40)       # application-specific encoding
     TIME_TICKS = cast(ASN1Tag, 3 | 0x40)    # application-specific encoding
 
@@ -355,9 +354,16 @@ class ASN1_Object(Generic[_K], metaclass=ASN1_Object_metaclass):
         # type: (Any) -> bool
         return bool(self.val != other)
 
-    def command(self):
-        # type: () -> str
-        return "%s(%s)" % (self.__class__.__name__, repr(self.val))
+    def command(self, json=False):
+        # type: (bool) -> Union[Dict[str, str], str]
+        if json:
+            if isinstance(self.val, bytes):
+                val = self.val.decode("utf-8", errors="backslashreplace")
+            else:
+                val = repr(self.val)
+            return {"type": self.__class__.__name__, "value": val}
+        else:
+            return "%s(%s)" % (self.__class__.__name__, repr(self.val))
 
 
 #######################
@@ -486,6 +492,17 @@ class ASN1_BIT_STRING(ASN1_Object[str]):
         else:
             object.__setattr__(self, name, value)
 
+    def set(self, i, val):
+        # type: (int, str) -> None
+        """
+        Sets bit 'i' to value 'val' (starting from 0)
+        """
+        val = str(val)
+        assert val in ['0', '1']
+        if len(self.val) < i:
+            self.val += "0" * (i - len(self.val))
+        self.val = self.val[:i] + val + self.val[i + 1:]
+
     def __repr__(self):
         # type: () -> str
         s = self.val_readable
@@ -503,7 +520,7 @@ class ASN1_BIT_STRING(ASN1_Object[str]):
         )
 
 
-class ASN1_STRING(ASN1_Object[str]):
+class ASN1_STRING(ASN1_Object[bytes]):
     tag = ASN1_Class_UNIVERSAL.STRING
 
 
@@ -538,11 +555,11 @@ class ASN1_UTF8_STRING(ASN1_STRING):
     tag = ASN1_Class_UNIVERSAL.UTF8_STRING
 
 
-class ASN1_NUMERIC_STRING(ASN1_STRING):
+class ASN1_NUMERIC_STRING(ASN1_Object[str]):
     tag = ASN1_Class_UNIVERSAL.NUMERIC_STRING
 
 
-class ASN1_PRINTABLE_STRING(ASN1_STRING):
+class ASN1_PRINTABLE_STRING(ASN1_Object[str]):
     tag = ASN1_Class_UNIVERSAL.PRINTABLE_STRING
 
 
@@ -562,7 +579,7 @@ class ASN1_GENERAL_STRING(ASN1_STRING):
     tag = ASN1_Class_UNIVERSAL.GENERAL_STRING
 
 
-class ASN1_GENERALIZED_TIME(ASN1_STRING):
+class ASN1_GENERALIZED_TIME(ASN1_Object[str]):
     """
     Improved version of ASN1_GENERALIZED_TIME, properly handling time zones and
     all string representation formats defined by ASN.1. These are:
@@ -693,6 +710,22 @@ class ASN1_UNIVERSAL_STRING(ASN1_STRING):
 class ASN1_BMP_STRING(ASN1_STRING):
     tag = ASN1_Class_UNIVERSAL.BMP_STRING
 
+    def __setattr__(self, name, value):
+        # type: (str, Any) -> None
+        if name == "val":
+            if isinstance(value, str):
+                value = value.encode("utf-16be")
+            object.__setattr__(self, name, value)
+        else:
+            object.__setattr__(self, name, value)
+
+    def __repr__(self):
+        # type: () -> str
+        return "<%s[%r]>" % (
+            self.__dict__.get("name", self.__class__.__name__),
+            self.val.decode("utf-16be"),
+        )
+
 
 class ASN1_SEQUENCE(ASN1_Object[List[Any]]):
     tag = ASN1_Class_UNIVERSAL.SEQUENCE
@@ -709,12 +742,16 @@ class ASN1_SET(ASN1_SEQUENCE):
     tag = ASN1_Class_UNIVERSAL.SET
 
 
-class ASN1_IPADDRESS(ASN1_STRING):
+class ASN1_IPADDRESS(ASN1_Object[str]):
     tag = ASN1_Class_UNIVERSAL.IPADDRESS
 
 
 class ASN1_COUNTER32(ASN1_INTEGER):
     tag = ASN1_Class_UNIVERSAL.COUNTER32
+
+
+class ASN1_COUNTER64(ASN1_INTEGER):
+    tag = ASN1_Class_UNIVERSAL.COUNTER64
 
 
 class ASN1_GAUGE32(ASN1_INTEGER):

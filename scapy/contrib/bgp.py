@@ -461,6 +461,17 @@ class BGPHeader(Packet):
 
         return _bgp_dispatcher(_pkt)
 
+    @classmethod
+    def tcp_reassemble(cls, data, *args, **kwargs):
+        if len(data) < 18:
+            return None
+        if data[:16] == _BGP_HEADER_MARKER:
+            length = struct.unpack("!H", data[16:18])[0]
+            if len(data) >= length:
+                return cls(data[:length]) / conf.padding_layer(data[length:])
+        else:
+            return cls(data)
+
     def post_build(self, p, pay):
         if self.len is None:
             length = len(p)
@@ -519,6 +530,8 @@ class BGP(Packet):
         """
 
         return _bgp_dispatcher(_pkt)
+
+    tcp_reassemble = BGPHeader.tcp_reassemble
 
     def guess_payload_class(self, p):
         cls = None
@@ -755,7 +768,8 @@ class BGPCapORFBlock(Packet):
             "entries",
             [],
             ORFTuple,
-            count_from=lambda p: p.orf_number
+            count_from=lambda p: p.orf_number,
+            max_count=20000,
         )
     ]
 
@@ -811,7 +825,8 @@ class BGPCapORF(BGPCapability):
             "orf",
             [],
             BGPCapORFBlock,
-            length_from=lambda p: p.length
+            length_from=lambda p: p.length,
+            max_count=20000,
         )
     ]
 
@@ -1042,6 +1057,7 @@ path_attributes = {
     27: "PE Distinguisher Labels",  # RFC 6514
     28: "BGP Entropy Label Capability Attribute (deprecated)",  # RFC 6790, RFC 7447  # noqa: E501
     29: "BGP-LS Attribute",  # RFC 7752
+    32: "LARGE_COMMUNITY",  # RFC 8092, RFC 8195
     40: "BGP Prefix-SID",  # (TEMPORARY - registered 2015-09-30, expires 2016-09-30)  # noqa: E501
     # draft-ietf-idr-bgp-prefix-sid
     128: "ATTR_SET",  # RFC 6368
@@ -1079,6 +1095,7 @@ attributes_flags = {
     27: 0xc0,   # PE Distinguisher Labels (RFC 6514)
     28: 0xc0,   # BGP Entropy Label Capability Attribute
     29: 0x80,   # BGP-LS Attribute
+    32: 0xc0,   # LARGE_COMMUNITY
     40: 0xc0,   # BGP Prefix-SID
     128: 0xc0   # ATTR_SET (RFC 6368)
 }
@@ -1739,6 +1756,9 @@ class _ExtCommValuePacketField(PacketField):
             elif type_low == 0x09:
                 ret = BGPPAExtCommTrafficMarking(m)
 
+            else:
+                ret = conf.raw_layer(m)
+
         elif type_high == 0x81:
             # FlowSpec
             if type_low == 0x08:
@@ -1905,7 +1925,8 @@ class BGPPAMPReachNLRI(Packet):
         ConditionalField(IP6Field("nh_v6_link_local", "::"),
                          lambda x: x.afi == 2 and x.nh_addr_len == 32),
         ByteField("reserved", 0),
-        MPReachNLRIPacketListField("nlri", [], BGPNLRI_IPv6)]
+        MPReachNLRIPacketListField("nlri", [], BGPNLRI_IPv6,
+                                   max_count=20000)]
 
     def post_build(self, p, pay):
         if self.nlri is None:
@@ -1993,8 +2014,35 @@ class BGPPAAS4Path(Packet):
 
 
 #
+# LARGE_COMMUNITY
+#
+
+class BGPLargeCommunitySegment(Packet):
+    """
+    Provides an implementation for LARGE_COMMUNITY segments
+    which holds 3*4 bytes integers.
+    """
+
+    fields_desc = [
+        IntField("global_administrator", None),
+        IntField("local_data_part1", None),
+        IntField("local_data_part2", None)
+    ]
+
+
+class BGPPALargeCommunity(Packet):
+    """
+    Provides an implementation of the LARGE_COMMUNITY attribute.
+    References: RFC 8092, RFC 8195
+    """
+
+    name = "LARGE_COMMUNITY"
+    fields_desc = [PacketListField("segments", [], BGPLargeCommunitySegment)]
+
+#
 # AS4_AGGREGATOR
 #
+
 
 class BGPPAAS4Aggregator(Packet):
     """
@@ -2023,7 +2071,8 @@ _path_attr_objects = {
     0x0F: "BGPPAMPUnreachNLRI",
     0x10: "BGPPAExtComms",
     0x11: "BGPPAAS4Path",
-    0x19: "BGPPAIPv6AddressSpecificExtComm"
+    0x19: "BGPPAIPv6AddressSpecificExtComm",
+    0x20: "BGPPALargeCommunity"
 }
 
 
@@ -2040,7 +2089,7 @@ class _PathAttrPacketField(PacketField):
         if type_code == 0 or type_code == 255:
             ret = conf.raw_layer(m)
         # Unassigned
-        elif (type_code >= 30 and type_code <= 39) or\
+        elif (type_code >= 33 and type_code <= 39) or\
             (type_code >= 41 and type_code <= 127) or\
                 (type_code >= 129 and type_code <= 254):
             ret = conf.raw_layer(m)
@@ -2048,6 +2097,8 @@ class _PathAttrPacketField(PacketField):
         else:
             if type_code == 0x02 and not bgp_module_conf.use_2_bytes_asn:
                 ret = BGPPAAS4BytesPath(m)
+            elif type_code == 0x20:
+                ret = BGPPALargeCommunity(m)
             else:
                 ret = _get_cls(
                     _path_attr_objects.get(type_code, conf.raw_layer))(m)
@@ -2181,7 +2232,8 @@ class BGPUpdate(BGP):
             BGPPathAttr,
             length_from=lambda p: p.path_attr_len
         ),
-        BGPNLRIPacketListField("nlri", [], "IPv4")
+        BGPNLRIPacketListField("nlri", [], "IPv4",
+                               max_count=20000)
     ]
 
     def post_build(self, p, pay):
@@ -2539,6 +2591,7 @@ class BGPORF(Packet):
             [],
             Packet,
             length_from=lambda p: p.orf_len,
+            max_count=20000,
         )
     ]
 

@@ -74,6 +74,12 @@ Here's an example of how to use `sshdump <https://www.wireshark.org/docs/man-pag
     ... )
 
 
+You can check the available options by using the following.
+
+.. code-block:: python
+
+    >>> conf.ifaces.dev_from_networkname("sshdump").get_extcap_config()
+
 .. todo:: The sections below can be greatly improved.
 
 IPv4 routes
@@ -105,7 +111,7 @@ Get the route for a specific IP:  :py:func:`conf.route.route() <scapy.route.Rout
 IPv6 routes
 -----------
 
-Same than IPv4 but with :py:attr:`conf.route6 <scapy.route6.Route6>`
+Same as IPv4 but with :py:attr:`conf.route6 <scapy.route6.Route6>`
 
 Get default gateway IP address
 ------------------------------
@@ -138,10 +144,11 @@ Get the MAC of an interface
     >>> mac
     '54:3f:19:c9:38:6d'
 
-Get MAC by IP
--------------
+Get MAC address of the next hop to reach an IP
+----------------------------------------------
 
-This basically performs a cached ARP who-has.
+This basically performs a cached ARP who-has when the IP is on the same local link,
+returns the MAC of the gateway when it's not, and handle special cases like multicast.
 
 .. code-block:: pycon
 

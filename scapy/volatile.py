@@ -108,9 +108,12 @@ class VolatileValue(Generic[_T]):
         # type: () -> str
         return ''
 
-    def command(self):
-        # type: () -> str
-        return "%s(%s)" % (self.__class__.__name__, self._command_args())
+    def command(self, json=False):
+        # type: (bool) -> Union[Dict[str, str], str]
+        if json:
+            return {"type": self.__class__.__name__, "value": self._command_args()}
+        else:
+            return "%s(%s)" % (self.__class__.__name__, self._command_args())
 
     def __eq__(self, other):
         # type: (Any) -> bool
@@ -574,6 +577,7 @@ class RandTermString(RandBin):
         # type: (Union[int, RandNum], bytes) -> None
         self.term = bytes_encode(term)
         super(RandTermString, self).__init__(size=size)
+        self.chars = self.chars.replace(self.term, b"")
 
     def _command_args(self):
         # type: () -> str

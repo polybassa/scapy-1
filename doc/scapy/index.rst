@@ -13,7 +13,7 @@ Welcome to Scapy's documentation!
 :Release: |release|
 :Date: |today|
 
-This document is under a `Creative Commons Attribution - Non-Commercial 
+Scapy's documentation is under a `Creative Commons Attribution - Non-Commercial 
 - Share Alike 2.5 <http://creativecommons.org/licenses/by-nc-sa/2.5/>`_ license.
 
 .. toctree::
@@ -24,7 +24,7 @@ This document is under a `Creative Commons Attribution - Non-Commercial
    installation
    
    usage
-   advanced_usage
+   advanced_usage/index.rst
    routing
 
 .. toctree::

@@ -1,5 +1,10 @@
 #!/bin/bash
 
+# SPDX-License-Identifier: GPL-2.0-only
+# This file is part of Scapy
+# See https://scapy.net/ for more information
+
+# Install packages needed for the CI on Linux/MacOS
 # Usage:
 # ./install.sh [install mode]
 
@@ -14,7 +19,7 @@ then
 fi
 
 # Install on osx
-if [ "${OSTYPE:0:6}" = "darwin" ] || [ "$TRAVIS_OS_NAME" = "osx" ]
+if [ "${OSTYPE:0:6}" = "darwin" ]
 then
   if [ ! -z $SCAPY_USE_LIBPCAP ]
   then
@@ -23,13 +28,17 @@ then
   fi
 fi
 
-# Install wireshark data, ifconfig & vcan
-if [ "$OSTYPE" = "linux-gnu" ] || [ "$TRAVIS_OS_NAME" = "linux" ]
+CUR=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+
+# Install wireshark data, ifconfig, vcan, samba, openldap
+if [ "$OSTYPE" = "linux-gnu" ]
 then
   sudo apt-get update
   sudo apt-get -qy install tshark net-tools || exit 1
   sudo apt-get -qy install can-utils || exit 1
   sudo apt-get -qy install linux-modules-extra-$(uname -r) || exit 1
+  sudo apt-get -qy install samba smbclient
+  sudo bash $CUR/openldap/install.sh
   # Make sure libpcap is installed
   if [ ! -z $SCAPY_USE_LIBPCAP ]
   then
@@ -37,16 +46,11 @@ then
   fi
 fi
 
-# On Travis, "osx" dependencies are installed in .travis.yml
-if [ "$TRAVIS_OS_NAME" != "osx" ]
-then
-  # Update pip & setuptools (tox uses those)
-  python -m pip install --upgrade pip setuptools --ignore-installed
+# Update pip & setuptools (tox uses those)
+python -m pip install --upgrade pip setuptools wheel --ignore-installed
 
-  # Make sure tox is installed and up to date
-  python -m pip install -U tox --ignore-installed
-fi
+# Make sure tox is installed and up to date
+python -m pip install -U tox --ignore-installed
 
 # Dump Environment (so that we can check PATH, UT_FLAGS, etc.)
-openssl version
 set

@@ -43,7 +43,7 @@ def load_nss_keys(filename):
     except FileNotFoundError:
         warning("Cannot open NSS Key Log: %s", filename)
         return {}
-    else:
+    try:
         with open(filename) as fd:
             for line in fd:
                 if line.startswith("#"):
@@ -55,13 +55,13 @@ def load_nss_keys(filename):
 
                 try:
                     client_random = binascii.unhexlify(data[1])
-                except binascii.Error:
+                except ValueError:
                     warning("Invalid ClientRandom: %s", data[1])
                     return {}
 
                 try:
                     secret = binascii.unhexlify(data[2])
-                except binascii.Error:
+                except ValueError:
                     warning("Invalid Secret: %s", data[2])
                     return {}
 
@@ -72,6 +72,9 @@ def load_nss_keys(filename):
 
                 keys[data[0]][client_random] = secret
         return keys
+    except UnicodeDecodeError as ex:
+        warning("Cannot read NSS Key Log: %s %s", filename, str(ex))
+        return {}
 
 
 # Note the following import may happen inside connState.__init__()
@@ -438,6 +441,9 @@ class tlsSession(object):
 
         # Ephemeral key exchange parameters
 
+        # The agreed-upon ephemeral key group
+        self.kx_group = None
+
         # These are the group/curve parameters, needed to hold the information
         # e.g. from receiving an SKE to sending a CKE. Usually, only one of
         # these attributes will be different from None.
@@ -480,6 +486,9 @@ class tlsSession(object):
         self.pre_master_secret = None
         self.master_secret = None
 
+        # The advertised supported signature algorithms found in the ClientHello
+        # extension. (for TLS 1.2-TLS 1.3 only)
+        self.advertised_sig_algs = []
         # The agreed-upon signature algorithm (for TLS 1.2-TLS 1.3 only)
         self.selected_sig_alg = None
 
@@ -501,7 +510,9 @@ class tlsSession(object):
         self.tls13_handshake_secret = None
         self.tls13_master_secret = None
         self.tls13_derived_secrets = {}
-        self.post_handshake_auth = False
+        self.tls13_cert_req_ctxt = False
+        self.post_handshake = False  # whether handshake is done
+        self.post_handshake_auth = False  # whether "Post-Handshake Auth" is used
         self.tls13_ticket_ciphersuite = None
         self.tls13_retry = False
         self.middlebox_compatibility = False
@@ -510,6 +521,9 @@ class tlsSession(object):
         # No record layer headers, no HelloRequests, no ChangeCipherSpecs.
         self.handshake_messages = []
         self.handshake_messages_parsed = []
+
+        # Post-handshake, handshake messages for post-handshake client authentication
+        self.post_handshake_messages = []
 
         # Flag, whether we derive the secret as Extended MS or not
         self.extms = False
@@ -717,6 +731,15 @@ class tlsSession(object):
                                  b"".join(self.handshake_messages))
         self.tls13_derived_secrets["early_exporter_secret"] = ees
 
+        if self.nss_keys:
+            cets_dict = self.nss_keys.get('CLIENT_EARLY_TRAFFIC_SECRET', {})
+            cets = cets_dict.get(self.client_random, cets)
+            self.tls13_derived_secrets["client_early_traffic_secret"] = cets
+
+            ees_dict = self.nss_keys.get('EARLY_EXPORTER_SECRET', {})
+            ees = ees_dict.get(self.client_random, ees)
+            self.tls13_derived_secrets["early_exporter_secret"] = ees
+
         if self.connection_end == "server":
             if self.prcs:
                 self.prcs.tls13_derive_keys(cets)
@@ -754,6 +777,15 @@ class tlsSession(object):
                                   b"".join(self.handshake_messages))
         self.tls13_derived_secrets["server_handshake_traffic_secret"] = shts
 
+        if self.nss_keys:
+            chts_dict = self.nss_keys.get('CLIENT_HANDSHAKE_TRAFFIC_SECRET', {})
+            chts = chts_dict.get(self.client_random, chts)
+            self.tls13_derived_secrets["client_handshake_traffic_secret"] = chts
+
+            shts_dict = self.nss_keys.get('SERVER_HANDSHAKE_TRAFFIC_SECRET', {})
+            shts = shts_dict.get(self.client_random, shts)
+            self.tls13_derived_secrets["server_handshake_traffic_secret"] = shts
+
     def compute_tls13_traffic_secrets(self):
         """
         Ciphers key and IV are updated accordingly for Application data.
@@ -787,6 +819,19 @@ class tlsSession(object):
                                 b"".join(self.handshake_messages))
         self.tls13_derived_secrets["exporter_secret"] = es
 
+        if self.nss_keys:
+            cts0_dict = self.nss_keys.get('CLIENT_TRAFFIC_SECRET_0', {})
+            cts0 = cts0_dict.get(self.client_random, cts0)
+            self.tls13_derived_secrets["client_traffic_secrets"] = [cts0]
+
+            sts0_dict = self.nss_keys.get('SERVER_TRAFFIC_SECRET_0', {})
+            sts0 = sts0_dict.get(self.client_random, sts0)
+            self.tls13_derived_secrets["server_traffic_secrets"] = [sts0]
+
+            es_dict = self.nss_keys.get('EXPORTER_SECRET', {})
+            es = es_dict.get(self.client_random, es)
+            self.tls13_derived_secrets["exporter_secret"] = es
+
         if self.connection_end == "server":
             # self.prcs.tls13_derive_keys(cts0)
             self.pwcs.tls13_derive_keys(sts0)
@@ -801,27 +846,50 @@ class tlsSession(object):
         elif self.connection_end == "client":
             self.pwcs.tls13_derive_keys(cts0)
 
-    def compute_tls13_verify_data(self, connection_end, read_or_write):
-        shts = "server_handshake_traffic_secret"
-        chts = "client_handshake_traffic_secret"
+    def compute_tls13_verify_data(self, connection_end, read_or_write,
+                                  handshake_context):
+        # RFC8446 - 4.4
+        # +-----------+-------------------------+-----------------------------+
+        # | Mode      | Handshake Context       | Base Key                    |
+        # +-----------+-------------------------+-----------------------------+
+        # | Server    | ClientHello ... later   | server_handshake_traffic_   |
+        # |           | of EncryptedExtensions/ | secret                      |
+        # |           | CertificateRequest      |                             |
+        # |           |                         |                             |
+        # | Client    | ClientHello ... later   | client_handshake_traffic_   |
+        # |           | of server               | secret                      |
+        # |           | Finished/EndOfEarlyData |                             |
+        # |           |                         |                             |
+        # | Post-     | ClientHello ... client  | client_application_traffic_ |
+        # | Handshake | Finished +              | secret_N                    |
+        # |           | CertificateRequest      |                             |
+        # +-----------+-------------------------+-----------------------------+
+        if self.post_handshake:
+            # RFC8446 - 4.6
+            # TLS also allows other messages to be sent after the main handshake.
+            # These messages use a handshake content type and are encrypted under
+            # the appropriate application traffic key.
+            shts = self.tls13_derived_secrets["server_traffic_secrets"][-1]
+            chts = self.tls13_derived_secrets["client_traffic_secrets"][-1]
+        else:
+            shts = self.tls13_derived_secrets["server_handshake_traffic_secret"]
+            chts = self.tls13_derived_secrets["client_handshake_traffic_secret"]
         if read_or_write == "read":
             hkdf = self.rcs.hkdf
             if connection_end == "client":
-                basekey = self.tls13_derived_secrets[shts]
+                basekey = shts
             elif connection_end == "server":
-                basekey = self.tls13_derived_secrets[chts]
+                basekey = chts
         elif read_or_write == "write":
             hkdf = self.wcs.hkdf
             if connection_end == "client":
-                basekey = self.tls13_derived_secrets[chts]
+                basekey = chts
             elif connection_end == "server":
-                basekey = self.tls13_derived_secrets[shts]
+                basekey = shts
 
         if not hkdf or not basekey:
             warning("Missing arguments for verify_data computation!")
             return None
-        # XXX this join() works in standard cases, but does it in all of them?
-        handshake_context = b"".join(self.handshake_messages)
         return hkdf.compute_verify_data(basekey, handshake_context)
 
     def compute_tls13_resumption_secret(self):
@@ -1130,6 +1198,8 @@ class _GenericTLSSessionInheritance(Packet):
             length = struct.unpack("!H", data[3:5])[0] + 5
             if len(data) >= length:
                 # get the underlayer as it is used to populate tls_session
+                if "original" not in metadata:
+                    return cls(data)
                 underlayer = metadata["original"][TCP].copy()
                 underlayer.remove_payload()
                 # eventually get the tls_session now for TLS.dispatch_hook

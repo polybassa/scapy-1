@@ -32,7 +32,7 @@ assert parsed.attributes == [
       STUNPriority(priority=1847591167),
       STUNIceControlling(tie_breaker=0x1b0ab98b6e8effa6),
       STUNUsername(length=37, username="oNph:Ht11MaRZHc4GOLJUsbu1R3YCs72HYN25"),
-      STUNMessageIntegrity(hmac_sha1=0x77e7f03e7f9e1996be42339159db1f682147bcfc),
+      STUNMessageIntegrity(hmac_sha1=0xfcbc4721681fdb59913342be96199e7f3ef0e777),
       STUNFingerprint(crc_32=0x8718c3a4)
 ]
 
@@ -59,7 +59,7 @@ assert parsed.attributes == [
       STUNIceControlling(tie_breaker=0xa696819e91c937da),
       STUNUseCandidate(),
       STUNPriority(priority=1845501695),
-      STUNMessageIntegrity(hmac_sha1=0x5fbd89b9c76b674db13a433112f3e0b1faaa87c1),
+      STUNMessageIntegrity(hmac_sha1=0xc187aafab1e0f31231433ab14d676bc7b989bd5f),
       STUNFingerprint(crc_32=0xc9566cfc)
 
 ]
@@ -78,8 +78,8 @@ assert parsed.length == 44
 assert parsed.magic_cookie == 0x2112A442
 assert parsed.transaction_id == 0xcfacb2a43aa2de5a9d56d85a, parsed.transaction_id
 assert parsed.attributes == [
-      STUNXorMappedAddress(xport=40480, xip="172.20.0.42"),
-      STUNMessageIntegrity(hmac_sha1=0x7d968d4241fa89d8e3f8ffe302c8975823c91fb7),
+      STUNXorMappedAddress(length=8, xport=40480, xip="172.20.0.42"),
+      STUNMessageIntegrity(hmac_sha1=0xb71fc9235897c802e3fff8e3d889fa41428d967d),
       STUNFingerprint(crc_32=0xea9b6559)
 ]
 
@@ -99,13 +99,50 @@ assert STUN.stun_message_type.i2repr(None, parsed.stun_message_type) == "Binding
 assert parsed.length == 88
 assert parsed.magic_cookie == 0x2112A442
 assert parsed.transaction_id == 0x3479476534635936316a796a, parsed.transaction_id
-assert parsed.attributes[0] == STUNXorMappedAddress(xport=25000, xip="172.20.0.200"), parsed.attributes
+assert parsed.attributes[0] == STUNXorMappedAddress(length=8, xport=25000, xip="172.20.0.200"), parsed.attributes
 assert parsed.attributes == [
-      STUNXorMappedAddress(xport=25000, xip="172.20.0.200"),
+      STUNXorMappedAddress(length=8, xport=25000, xip="172.20.0.200"),
       STUNUsername(length=37, username="Ht11MaRZHc4GOLJUsbu1R3YCs72HYN25:oNph"),
-      STUNMessageIntegrity(hmac_sha1=0x317065df81598d6cc8ca3bd684ca65fb6d03674b),
+      STUNMessageIntegrity(hmac_sha1=0x4b67036dfb65ca84d63bcac86c8d5981df657031),
       STUNFingerprint(crc_32=0x4041e9c3)
 ]
+
+= test STUN binding success response IPv6
+
+raw = b"\x01\x01\x00\x18\x21\x12\xa4\x42\x91\x1b\x25\x32\x99\x8d\xa0\x1c" \
+      b"\xf9\xd0\x53\xd9\x00\x20\x00\x14\x00\x02\x3c\xd7\x21\x12\xa4\x42" \
+      b"\x91\x1b\x25\x32\x99\x8d\xa0\x1c\xf9\xd0\x53\xd8"
+
+parsed = STUN(raw)
+assert parsed.RESERVED == 0x00, parsed.RESERVED
+assert STUN.stun_message_type.i2repr(None, parsed.stun_message_type) == "Binding success response"
+assert parsed.length == 24
+assert parsed.magic_cookie == 0x2112A442
+assert parsed.transaction_id == 0x911b2532998da01cf9d053d9, parsed.transaction_id
+assert len(parsed.attributes) == 1, len(parsed.attributes)
+assert parsed.attributes[0].type == 0x0020, parsed.attributes[0].type
+assert parsed.attributes[0].length == 20, parsed.attributes[0].length
+assert parsed.attributes[0].address_family == 0x02, parsed.attributes[0].address_family
+assert parsed.attributes[0].xport == 7621, parsed.attributes[0].xport
+assert parsed.attributes[0].xip == "::1", parsed.attributes[0].xip
+
+= test STUN classic binding success response
+
+raw = b"\x01\x01\x00\x0c\x37\x06\xd1\x4d\x38\x3a\xd6\xc8\x40\x5e\x17\x9a" \
+      b"\x93\x92\xea\xa8\x00\x01\x00\x08\x00\x01\x0d\x14\xc0\xa8\x00\x05"
+
+parsed = STUN(raw)
+assert parsed.RESERVED == 0x00, parsed.RESERVED
+assert STUN.stun_message_type.i2repr(None, parsed.stun_message_type) == "Binding success response"
+assert parsed.length == 12
+assert parsed.magic_cookie == 0x3706d14d
+assert parsed.transaction_id == 0x383ad6c8405e179a9392eaa8, parsed.transaction_id
+assert len(parsed.attributes) == 1, len(parsed.attributes)
+assert parsed.attributes[0].type == 0x0001, parsed.attributes[0].type
+assert parsed.attributes[0].length == 8, parsed.attributes[0].length
+assert parsed.attributes[0].address_family == 0x01, parsed.attributes[0].address_family
+assert parsed.attributes[0].port == 3348, parsed.attributes[0].port
+assert parsed.attributes[0].ip == "192.168.0.5", parsed.attributes[0].ip
 
 = test STUN binding indication 1
 
@@ -136,3 +173,70 @@ assert parsed.transaction_id == 0x1d9357a1e94a2051271996d9, parsed.transaction_i
 assert parsed.attributes == [
       STUNFingerprint(crc_32=0x53800d81)
 ]
+
+= test STUN packet build
+stun = STUN(
+    stun_message_type="Binding request",
+    transaction_id=0x7664047a24772b5748c0f173
+)
+built = stun.build()
+parsed = STUN(built)
+
+assert parsed.build() == built
+
+= test STUN packet build with attributes
+stun = STUN(
+    stun_message_type="Binding success response",
+    transaction_id=0x3479476534635936316a796a,
+    attributes=[
+        STUNXorMappedAddress(xport=25000, xip="172.20.0.200"),
+        STUNUsername(length=37, username="Ht11MaRZHc4GOLJUsbu1R3YCs72HYN25:oNph"),
+        STUNMessageIntegrity(hmac_sha1=0x4b67036dfb65ca84d63bcac86c8d5981df657031),
+        STUNFingerprint(crc_32=0x4041e9c3)
+    ]
+)
+
+built = stun.build()
+parsed = STUN(built)
+
+assert parsed.build() == built
+
+= test STUN packet build IPv6
+
+stun = STUN(
+    stun_message_type="Binding success response",
+    transaction_id=0x911b2532998da01cf9d053d9,
+    attributes=[
+        STUNXorMappedAddress(xport=7621, address_family="IPv6", xip="::1")
+    ]
+)
+built = stun.build()
+parsed = STUN(built)
+
+assert parsed.build() == built
+assert parsed.attributes[0].length == 20
+
+= test STUN bottom up binding 1
+
+udp = UDP(sport=62049, dport=3478) / STUN()
+built = udp.build()
+parsed = UDP(built)
+
+assert type(parsed.payload) == STUN, parsed.show(dump=True)
+
+= test STUN bottom up binding 2
+
+udp = UDP(sport=3478, dport=62049) / STUN(stun_message_type="Binding error response")
+built = udp.build()
+parsed = UDP(built)
+
+assert type(parsed.payload) == STUN, parsed.show(dump=True)
+
+= test STUN top down binding
+
+udp = UDP() / STUN()
+built = udp.build()
+parsed = UDP(built)
+
+assert parsed.sport == 3478, parsed.sport
+assert parsed.dport == 3478, parsed.dport

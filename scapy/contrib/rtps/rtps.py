@@ -25,7 +25,6 @@ from scapy.fields import (
     X3BytesField,
     XByteField,
     XIntField,
-    XLongField,
     XNBytesField,
     XShortField,
     XStrLenField,
@@ -198,7 +197,8 @@ class DataPacket(EPacket):
         writer_entity_id_key = kwargs.pop("writer_entity_id_key", None)
         writer_entity_id_kind = kwargs.pop("writer_entity_id_kind", None)
         pl_len = kwargs.pop("pl_len", 0)
-        if writer_entity_id_key == 0x200 and writer_entity_id_kind == 0xC2:
+        if (writer_entity_id_key == 0x200 or writer_entity_id_key == 0x100) and \
+                writer_entity_id_kind == 0xC2:
             DataPacket._pl_type = "ParticipantMessageData"
         else:
             DataPacket._pl_type = "SerializedData"
@@ -352,7 +352,8 @@ class RTPSSubMessage_ACKNACK(EPacket):
             "readerSNState",
             0, length_from=lambda pkt: pkt.octetsToNextHeader - 8 - 4
         ),
-        XNBytesField("count", 0, 4),
+        EField(IntField("count", 0),
+               endianness_from=e_flags),
     ]
 
 
@@ -396,8 +397,14 @@ class RTPSSubMessage_HEARTBEAT(EPacket):
             fmt="4s",
             enum=_rtps_reserved_entity_ids,
         ),
-        XLongField("firstAvailableSeqNum", 0),
-        XLongField("lastSeqNum", 0),
+        EField(IntField("firstAvailableSeqNumHi", 0),
+               endianness_from=e_flags),
+        EField(IntField("firstAvailableSeqNumLow", 0),
+               endianness_from=e_flags),
+        EField(IntField("lastSeqNumHi", 0),
+               endianness_from=e_flags),
+        EField(IntField("lastSeqNumLow", 0),
+               endianness_from=e_flags),
         EField(IntField("count", 0),
                endianness_from=e_flags),
     ]

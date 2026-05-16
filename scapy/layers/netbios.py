@@ -34,8 +34,16 @@ from scapy.fields import (
     XShortField,
     XStrFixedLenField
 )
+from scapy.interfaces import _GlobInterfaceType
+from scapy.sendrecv import sr1
 from scapy.layers.inet import IP, UDP, TCP
-from scapy.layers.l2 import SourceMACField
+from scapy.layers.l2 import Ether, SourceMACField
+
+# Typing imports
+from typing import (
+    List,
+    Union,
+)
 
 
 class NetBIOS_DS(Packet):
@@ -130,7 +138,12 @@ class NBNSHeader(Packet):
         ShortField("ARCOUNT", 0),
     ]
 
+    def hashret(self):
+        return b"NBNS" + struct.pack("!B", self.OPCODE)
+
+
 # Name Query Request
+# RFC1002 sect 4.2.12
 
 
 class NBNSQueryRequest(Packet):
@@ -143,7 +156,7 @@ class NBNSQueryRequest(Packet):
 
     def mysummary(self):
         return "NBNSQueryRequest who has '\\\\%s'" % (
-            self.QUESTION_NAME.strip().decode(errors="backslashreplace")
+            self.QUESTION_NAME.decode(errors="backslashreplace")
         )
 
 
@@ -152,6 +165,7 @@ bind_layers(NBNSHeader, NBNSQueryRequest,
 
 
 # Name Query Response
+# RFC1002 sect 4.2.13
 
 
 class NBNS_ADD_ENTRY(Packet):
@@ -179,19 +193,30 @@ class NBNSQueryResponse(Packet):
                    ]
 
     def mysummary(self):
-        if not self.ADDR_ENTRY:
+        if not self.ADDR_ENTRY or \
+           not isinstance(self.ADDR_ENTRY[0], NBNS_ADD_ENTRY):
             return "NBNSQueryResponse"
         return "NBNSQueryResponse '\\\\%s' is at %s" % (
-            self.RR_NAME.strip().decode(errors="backslashreplace"),
+            self.RR_NAME.decode(errors="backslashreplace"),
             self.ADDR_ENTRY[0].NB_ADDRESS
         )
 
+    def answers(self, other):
+        return (
+            isinstance(other, NBNSQueryRequest) and
+            other.QUESTION_NAME == self.RR_NAME
+        )
 
-bind_layers(NBNSHeader, NBNSQueryResponse,
+
+bind_layers(NBNSHeader, NBNSQueryResponse,  # RD+AA
             OPCODE=0x0, NM_FLAGS=0x50, RESPONSE=1, ANCOUNT=1)
+for _flg in [0x58, 0x70, 0x78]:
+    bind_bottom_up(NBNSHeader, NBNSQueryResponse,
+                   OPCODE=0x0, NM_FLAGS=_flg, RESPONSE=1, ANCOUNT=1)
+
 
 # Node Status Request
-
+# RFC1002 sect 4.2.17
 
 class NBNSNodeStatusRequest(NBNSQueryRequest):
     name = "NBNS status request"
@@ -200,15 +225,16 @@ class NBNSNodeStatusRequest(NBNSQueryRequest):
 
     def mysummary(self):
         return "NBNSNodeStatusRequest who has '\\\\%s'" % (
-            self.QUESTION_NAME.strip().decode(errors="backslashreplace")
+            self.QUESTION_NAME.decode(errors="backslashreplace")
         )
 
 
 bind_bottom_up(NBNSHeader, NBNSNodeStatusRequest, OPCODE=0x0, NM_FLAGS=0, QDCOUNT=1)
 bind_layers(NBNSHeader, NBNSNodeStatusRequest, OPCODE=0x0, NM_FLAGS=1, QDCOUNT=1)
 
-# Node Status Response
 
+# Node Status Response
+# RFC1002 sect 4.2.18
 
 class NBNSNodeStatusResponseService(Packet):
     name = "NBNS Node Status Response Service"
@@ -255,8 +281,9 @@ class NBNSNodeStatusResponse(Packet):
 bind_layers(NBNSHeader, NBNSNodeStatusResponse,
             OPCODE=0x0, NM_FLAGS=0x40, RESPONSE=1, ANCOUNT=1)
 
-# Name Registration Request
 
+# Name Registration Request
+# RFC1002 sect 4.2.2
 
 class NBNSRegistrationRequest(Packet):
     name = "NBNS registration request"
@@ -278,13 +305,17 @@ class NBNSRegistrationRequest(Packet):
         IPField("NB_ADDRESS", "127.0.0.1")
     ]
 
+    def mysummary(self):
+        return self.sprintf("Register %G% %QUESTION_NAME% at %NB_ADDRESS%")
 
+
+bind_bottom_up(NBNSHeader, NBNSRegistrationRequest, OPCODE=0x5)
 bind_layers(NBNSHeader, NBNSRegistrationRequest,
             OPCODE=0x5, NM_FLAGS=0x11, QDCOUNT=1, ARCOUNT=1)
 
 
 # Wait for Acknowledgement Response
-
+# RFC1002 sect 4.2.16
 
 class NBNSWackResponse(Packet):
     name = "NBNS Wait for Acknowledgement Response"
@@ -311,7 +342,7 @@ class NBTDatagram(Packet):
                    ShortField("ID", 0),
                    IPField("SourceIP", "127.0.0.1"),
                    ShortField("SourcePort", 138),
-                   ShortField("Length", 272),
+                   ShortField("Length", None),
                    ShortField("Offset", 0),
                    NetBIOSNameField("SourceName", "windows"),
                    ShortEnumField("SUFFIX1", 0x4141, _NETBIOS_SUFFIXES),
@@ -320,11 +351,19 @@ class NBTDatagram(Packet):
                    ShortEnumField("SUFFIX2", 0x4141, _NETBIOS_SUFFIXES),
                    ByteField("NULL2", 0)]
 
+    def post_build(self, pkt, pay):
+        if self.Length is None:
+            length = len(pay) + 68
+            pkt = pkt[:10] + struct.pack("!H", length) + pkt[12:]
+        return pkt + pay
+
+
 # SESSION SERVICE PACKETS
 
 
 class NBTSession(Packet):
     name = "NBT Session Packet"
+    MAXLENGTH = 0x3ffff
     fields_desc = [ByteEnumField("TYPE", 0, {0x00: "Session Message",
                                              0x81: "Session Request",
                                              0x82: "Positive Session Response",
@@ -336,22 +375,122 @@ class NBTSession(Packet):
 
     def post_build(self, pkt, pay):
         if self.LENGTH is None:
-            length = len(pay) & (2**18 - 1)
+            length = len(pay) & self.MAXLENGTH
             pkt = pkt[:1] + struct.pack("!I", length)[1:]
         return pkt + pay
+
+    def extract_padding(self, s):
+        return s[:self.LENGTH], s[self.LENGTH:]
+
+    @classmethod
+    def tcp_reassemble(cls, data, *args, **kwargs):
+        if len(data) < 4:
+            return None
+        length = struct.unpack("!I", data[:4])[0] & cls.MAXLENGTH
+        if len(data) >= length + 4:
+            return cls(data)
 
 
 bind_bottom_up(UDP, NBNSHeader, dport=137)
 bind_bottom_up(UDP, NBNSHeader, sport=137)
 bind_top_down(UDP, NBNSHeader, sport=137, dport=137)
 
-bind_layers(UDP, NBTDatagram, dport=138)
+bind_bottom_up(UDP, NBTDatagram, dport=138)
+bind_bottom_up(UDP, NBTDatagram, sport=138)
+bind_top_down(UDP, NBTDatagram, sport=138, dport=138)
 
 bind_bottom_up(TCP, NBTSession, dport=445)
 bind_bottom_up(TCP, NBTSession, sport=445)
 bind_bottom_up(TCP, NBTSession, dport=139)
 bind_bottom_up(TCP, NBTSession, sport=139)
 bind_layers(TCP, NBTSession, dport=139, sport=139)
+
+
+_nbns_cache = conf.netcache.new_cache("nbns_cache", 300)
+
+
+@conf.commands.register
+def nbns_resolve(
+    qname: str,
+    iface: Union[_GlobInterfaceType, List[_GlobInterfaceType]] = None,
+    raw: bool = False,
+    timeout: int = 3,
+    **kwargs,
+) -> List[str]:
+    """
+    Perform a simple NBNS (NetBios Name Services) resolution with caching
+
+    :param qname: the name to query
+    :param iface: the interfaces to use. (default: all)
+    :param raw: return the whole netbios packet (default False)
+    :param timeout: seconds until timeout (per server)
+    :raise TimeoutError: if no DNS servers were reached in time.
+    """
+    kwargs.setdefault("verbose", 0)
+
+    # Unify types (for caching)
+    qname = NBNSQueryRequest.QUESTION_NAME.any2i(None, qname)
+
+    # Check cache
+    cache_ident = qname + b"raw" if raw else b""
+    result = _nbns_cache.get(cache_ident)
+    if result:
+        return result
+
+    if iface is None:
+        ifaces = [
+            x
+            for name, x in conf.ifaces.items()
+            if x.is_valid() and name != conf.loopback_name
+        ]
+    elif isinstance(iface, list):
+        ifaces = iface
+    else:
+        ifaces = [iface]
+
+    # Builds a request for each broadcast address of each interface
+    requests = []
+    for iface in ifaces:
+        for bdcst in conf.route.get_if_bcast(iface):
+            if bdcst == "255.255.255.255":
+                continue
+            requests.append(
+                IP(dst=bdcst) /
+                UDP() /
+                NBNSHeader() /
+                NBNSQueryRequest(QUESTION_NAME=qname)
+            )
+
+    if not requests:
+        return None
+
+    # Perform requests, get the first response
+    try:
+        old_checkIPAddr = conf.checkIPaddr
+        conf.checkIPaddr = False
+
+        res = sr1(
+            requests,
+            timeout=timeout,
+            first=True,
+            **kwargs,
+        )
+    finally:
+        conf.checkIPaddr = old_checkIPAddr
+
+    if res is not None:
+        if raw:
+            # Raw
+            result = res
+        else:
+            # Get IP
+            result = [x.NB_ADDRESS for x in res.ADDR_ENTRY]
+        if result:
+            # Cache it
+            _nbns_cache[cache_ident] = result
+        return result
+    else:
+        raise TimeoutError
 
 
 class NBNS_am(AnsweringMachine):
@@ -384,9 +523,14 @@ class NBNS_am(AnsweringMachine):
 
     def make_reply(self, req):
         # type: (Packet) -> Packet
-        resp = IP(dst=req[IP].src) / UDP(sport=req.dport, dport=req.sport)
-        address = self.ip or get_if_addr(
-            self.optsniff.get("iface", conf.iface))
+        resp = Ether(
+            dst=req[Ether].src,
+            src=None if req[Ether].dst == "ff:ff:ff:ff:ff:ff" else req[Ether].dst,
+        ) / IP(dst=req[IP].src) / UDP(
+            sport=req.dport,
+            dport=req.sport,
+        )
+        address = self.ip or get_if_addr(self.optsniff.get("iface", conf.iface))
         resp /= NBNSHeader() / NBNSQueryResponse(
             RR_NAME=self.ServerName or req.QUESTION_NAME,
             SUFFIX=req.SUFFIX,

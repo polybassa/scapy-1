@@ -837,6 +837,13 @@ _J1939_TP_T2 = 1.250          # receiver timeout between consecutive DT frames
 _J1939_TP_T3 = 1.250          # sender timeout waiting for CTS after RTS/block
 _J1939_TP_T4 = 1.050          # sender timeout waiting for End-of-Message ACK
 
+# On slow serial interfaces (slcan) the OS serial buffer may hold hundreds of
+# background CAN frames that the mux must drain before the TP.DT frames
+# arrive.  Allow the inactivity timer to fire up to this many times before
+# declaring the transfer timed-out; each re-arm uses _J1939_TP_T2 as the
+# interval, giving effectively _J1939_TP_DT_TIMEOUT_EXTENSION × T2 total.
+_J1939_TP_DT_TIMEOUT_EXTENSION = 10
+
 # Maximum payload / per-frame data constants
 _J1939_TP_DT_DATA = 7         # usable data bytes per TP.DT packet
 _J1939_TP_MAX_DATA = 1785     # maximum J1939 TP payload (255 × 7 bytes)
@@ -863,12 +870,21 @@ class J1939TPImplementation:
     :param can_socket: a :class:`~scapy.contrib.cansocket.CANSocket` used for
                        raw CAN I/O
     :param src_addr:   this node's J1939 source address (0x00–0xFD)
+    :param listen_only: when ``True`` the implementation never sends CTS, ACK,
+                        or ABORT frames, allowing passive monitoring of TP
+                        sessions without influencing the bus.  Received payloads
+                        are still reassembled and delivered via :meth:`recv`.
+    :param pgn_filter: when non-zero, only messages whose PGN matches this
+                       value are delivered.  ``0`` (the default) accepts all
+                       PGNs.  Inspired by BenGardiner's ``rx_pgn`` parameter.
     """
 
     def __init__(
             self,
-            can_socket,   # type: "CANSocket"
-            src_addr,     # type: int
+            can_socket,           # type: "CANSocket"
+            src_addr,             # type: int
+            listen_only=False,    # type: bool
+            pgn_filter=0,         # type: int
     ):
         # type: (...) -> None
         from scapy.contrib.isotp.isotp_soft_socket import TimeoutScheduler
@@ -876,6 +892,8 @@ class J1939TPImplementation:
 
         self.can_socket = can_socket
         self.src_addr = src_addr
+        self.listen_only = listen_only
+        self.pgn_filter = pgn_filter  # 0 = accept all PGNs
         self.closed = False
         self.rx_tx_poll_rate = 0.005
 
@@ -891,6 +909,7 @@ class J1939TPImplementation:
         self.rx_seq = 1                           # next expected DT seq number
         self.rx_ts = 0.0                          # type: Union[float, EDecimal]
         self.rx_is_bam = True                     # True=BAM; False=RTS/CTS
+        self.rx_start_time = 0.0                  # wall-clock start of current TP rx
         self.rx_timeout_handle = None   # type: Optional[Any]
 
         # Delivered received messages: each item is (J1939, timestamp)
@@ -1017,6 +1036,8 @@ class J1939TPImplementation:
     def _on_short_frame(self, j):
         # type: (J1939_CAN) -> None
         data = bytes(j.data)
+        if self.pgn_filter != 0 and j.pgn != self.pgn_filter:
+            return
         msg = J1939(data, pgn=j.pgn, src=j.src, dst=j.dst, priority=j.priority)
         self.rx_queue.send((msg, j.time))
 
@@ -1033,6 +1054,8 @@ class J1939TPImplementation:
             if len(data) < 8:
                 return
             cm = J1939_TP_CM_BAM(data)
+            if self.pgn_filter != 0 and cm.pgn != self.pgn_filter:
+                return
             if self.rx_state != _J1939_RX_IDLE:
                 log_j1939.debug("J1939 TP: new BAM overwrites active RX session")
                 self._rx_reset()
@@ -1044,6 +1067,8 @@ class J1939TPImplementation:
             if len(data) < 8:
                 return
             cm = J1939_TP_CM_RTS(data)
+            if self.pgn_filter != 0 and cm.pgn != self.pgn_filter:
+                return
             if self.rx_state != _J1939_RX_IDLE:
                 log_j1939.debug("J1939 TP: new RTS overwrites active RX session")
                 self._rx_reset()
@@ -1051,14 +1076,15 @@ class J1939TPImplementation:
                            total=cm.total_size, npkts=cm.num_packets,
                            is_bam=False, ts=ts)
             # Respond with CTS authorising all packets starting at seq 1.
-            self._can_send_tp_cm(
-                dst_sa=sa,
-                data=bytes(J1939_TP_CM_CTS(
-                    num_packets=cm.num_packets,
-                    next_packet=1,
-                    pgn=cm.pgn,
-                )),
-            )
+            if not self.listen_only:
+                self._can_send_tp_cm(
+                    dst_sa=sa,
+                    data=bytes(J1939_TP_CM_CTS(
+                        num_packets=cm.num_packets,
+                        next_packet=1,
+                        pgn=cm.pgn,
+                    )),
+                )
 
         elif ctrl == J1939_TP_CTRL_CTS:
             if (self.tx_state == _J1939_TX_RTS_WAIT_CTS
@@ -1093,7 +1119,7 @@ class J1939TPImplementation:
         if seq != self.rx_seq:
             log_j1939.warning(
                 "J1939 TP: bad DT seq %d (expected %d)", seq, self.rx_seq)
-            if not self.rx_is_bam:
+            if not self.rx_is_bam and not self.listen_only:
                 self._can_send_tp_cm(
                     dst_sa=sa,
                     data=bytes(J1939_TP_CM_ABORT(reason=7, pgn=self.rx_pgn)),
@@ -1115,7 +1141,7 @@ class J1939TPImplementation:
         if seq >= self.rx_npkts:
             # All packets received – finalise the message.
             payload = self.rx_buf[:self.rx_total]
-            if not self.rx_is_bam:
+            if not self.rx_is_bam and not self.listen_only:
                 self._can_send_tp_cm(
                     dst_sa=sa,
                     data=bytes(J1939_TP_CM_ACK(
@@ -1147,6 +1173,7 @@ class J1939TPImplementation:
         self.rx_seq = 1
         self.rx_ts = ts
         self.rx_is_bam = is_bam
+        self.rx_start_time = time.monotonic()
         if self.rx_timeout_handle is not None:
             try:
                 self.rx_timeout_handle.cancel()
@@ -1168,6 +1195,14 @@ class J1939TPImplementation:
     def _rx_timeout(self):
         # type: () -> None
         if self.closed or self.rx_state == _J1939_RX_IDLE:
+            return
+        # On slow serial interfaces (slcan) the OS serial buffer may hold many
+        # background CAN frames queued ahead of TP.DT frames.  Re-arm the
+        # timer up to _J1939_TP_DT_TIMEOUT_EXTENSION times before giving up.
+        total_wait = time.monotonic() - self.rx_start_time
+        if total_wait < _J1939_TP_T2 * _J1939_TP_DT_TIMEOUT_EXTENSION:
+            self.rx_timeout_handle = self._TimeoutScheduler.schedule(
+                _J1939_TP_T2, self._rx_timeout)
             return
         log_j1939.warning(
             "J1939 TP: RX timeout – discarding incomplete message "
@@ -1443,6 +1478,12 @@ class J1939SoftSocket(SuperSocket):
                        defaults to :data:`socket.J1939_NO_ADDR` (0xFE = no address)
     :param basecls:    packet class for received messages
                        (default: :class:`J1939`)
+    :param listen_only: when ``True``, never send CTS / ACK / ABORT frames;
+                        all received TP sessions are still reassembled and
+                        delivered.  Useful for passive bus monitoring.
+    :param pgn:        when non-zero, only messages whose PGN matches this
+                       value are delivered; ``0`` (the default) accepts every
+                       PGN.  Inspired by BenGardiner's ``rx_pgn`` parameter.
     """
 
     desc = ("read/write J1939 messages using a software "
@@ -1453,6 +1494,8 @@ class J1939SoftSocket(SuperSocket):
             can_socket=None,                        # type: Optional["CANSocket"]
             src_addr=socket.J1939_NO_ADDR,          # type: int
             basecls=J1939,                          # type: Type[Packet]
+            listen_only=False,                      # type: bool
+            pgn=0,                                  # type: int
     ):
         # type: (...) -> None
         if LINUX and isinstance(can_socket, str):
@@ -1465,7 +1508,11 @@ class J1939SoftSocket(SuperSocket):
         self.src_addr = src_addr
         self.basecls = basecls
 
-        impl = J1939TPImplementation(can_socket, src_addr)
+        impl = J1939TPImplementation(
+            can_socket, src_addr,
+            listen_only=listen_only,
+            pgn_filter=pgn,
+        )
         # Cast so SuperSocket internals are satisfied (recv/send are overridden).
         self.ins = cast(socket.socket, impl)
         self.outs = cast(socket.socket, impl)

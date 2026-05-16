@@ -839,9 +839,11 @@ _J1939_TP_T4 = 1.050          # sender timeout waiting for End-of-Message ACK
 
 # On slow serial interfaces (slcan) the OS serial buffer may hold hundreds of
 # background CAN frames that the mux must drain before the TP.DT frames
-# arrive.  Allow the inactivity timer to fire up to this many times before
-# declaring the transfer timed-out; each re-arm uses _J1939_TP_T2 as the
-# interval, giving effectively _J1939_TP_DT_TIMEOUT_EXTENSION × T2 total.
+# arrive.  When the inactivity timer fires, the handler checks the total
+# elapsed time; if it is below _J1939_TP_T2 × _J1939_TP_DT_TIMEOUT_EXTENSION
+# (i.e. 1.25 s × 10 = 12.5 s), the timer is re-armed and the session
+# continues.  Only after that wall-clock ceiling is exceeded is the transfer
+# declared timed-out.
 _J1939_TP_DT_TIMEOUT_EXTENSION = 10
 
 # Maximum payload / per-frame data constants
@@ -1198,7 +1200,8 @@ class J1939TPImplementation:
             return
         # On slow serial interfaces (slcan) the OS serial buffer may hold many
         # background CAN frames queued ahead of TP.DT frames.  Re-arm the
-        # timer up to _J1939_TP_DT_TIMEOUT_EXTENSION times before giving up.
+        # timer as long as the total elapsed time since the session started is
+        # below _J1939_TP_T2 × _J1939_TP_DT_TIMEOUT_EXTENSION (12.5 s total).
         total_wait = time.monotonic() - self.rx_start_time
         if total_wait < _J1939_TP_T2 * _J1939_TP_DT_TIMEOUT_EXTENSION:
             self.rx_timeout_handle = self._TimeoutScheduler.schedule(

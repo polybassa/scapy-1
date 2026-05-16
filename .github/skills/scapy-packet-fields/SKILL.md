@@ -56,13 +56,45 @@ Examples:
 - Extensive bindings in `scapy/layers/l2.py` and `scapy/layers/inet.py`
 - Custom dispatch in `ICMP.guess_payload_class`
 
-### 5) Use specialized field helpers for protocol correctness
+### 5) Request/response matching and stream reassembly hooks
 
-- Length coupling: `FieldLenField` + `StrLenField`/`PacketListField`
-- Bit-level headers: `BitField`, `FlagsField`
-- Typed alternatives by context: `MultipleTypeField`
-- Optional fields by conditions: `ConditionalField`
-- Raw bypass when intentional: `RawVal`
+- Implement `hashret()` when a protocol needs stable request/response correlation keys.
+  - Base `Packet.hashret()` delegates to payload; many layers override it (e.g. IP/TCP/UDP) to include flow context.
+- Implement `answers(other)` to express protocol-level "is response to" logic.
+  - Base behavior matches same class then delegates to payload.
+  - Typical checks include type/code pairs, id/seq tuples, and src/dst or sport/dport relationships.
+- For stream-aware sniffing:
+  - `IPSession` performs on-the-fly IPv4 defragmentation.
+  - `TCPSession` reconstructs TCP byte streams and can call layer `tcp_reassemble(data, metadata, session)` when implemented.
+  - `tcp_reassemble` should return a packet when enough bytes are present, else `None` and keep state in `metadata` / `session`.
+
+References:
+- `scapy/packet.py` (`hashret`, `answers`)
+- `scapy/layers/inet.py` (`IP/TCP/UDP/ICMP` overrides)
+- `scapy/sessions.py` (`IPSession`, `TCPSession`, `streamcls`)
+
+### 6) Use specialized field helpers for protocol correctness
+
+- **Length-coupled fields**
+  - `FieldLenField` + `StrLenField` / `PacketListField` / `StrFixedLenField`
+  - Pattern: one field stores encoded length/count, another consumes it via `length_from` / `count_from`.
+- **Bit-packed structures**
+  - `BitField`, `FlagsField`, and enum variants for compact headers and flag masks.
+- **Conditional and variant typing**
+  - `ConditionalField` for optional layout branches.
+  - `MultipleTypeField` to switch field type from surrounding context (e.g. ARP IPv4 vs IPv6 address fields).
+- **Container/composition helpers**
+  - `PacketField` / `PacketListField` for nested packets.
+  - `MayEnd` where short/error forms can legally stop dissection early.
+- **Value representation helpers**
+  - Enum helpers (`ByteEnumField`, `ShortEnumField`, `MultiEnumField`) for readable symbolic values.
+  - Display wrappers like `Emph(...)` when emphasizing fields in output.
+- **Intentional raw injection**
+  - `RawVal` bypasses field conversion for explicit low-level byte control.
+
+Examples:
+- `scapy/layers/inet.py`: `IP.options` (`PacketListField`), `ICMP` conditionals/multi-types
+- `scapy/layers/l2.py`: `ARP` multi-type address fields, GRE conditionals
 
 ## UTScapy integration patterns
 

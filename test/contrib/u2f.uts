@@ -161,7 +161,7 @@ parsed = U2FCommandAPDU(raw_apdu)
 assert parsed.ins == 0x02
 assert parsed.p1 == 0x07
 assert parsed.lc == 81  # 32 + 32 + 1 (kh_len) + 16 (key_handle) = 81
-# Re-check: U2FAuthenticateRequest = 32+32+1+16 = 81 bytes
+# Recheck: U2FAuthenticateRequest = 32+32+1+16 = 81 bytes
 auth_req = U2FAuthenticateRequest(parsed.data)
 assert auth_req.challenge_parameter == challenge
 assert auth_req.application_parameter == app_id

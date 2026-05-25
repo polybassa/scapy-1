@@ -3304,7 +3304,8 @@ from test.testsocket import SlowTestSocket
 = J1939SoftSocket – BAM receive via SlowTestSocket (serial-buffer path)
 # J1939SoftSocket uses a SlowTestSocket as its CAN socket.  Frames injected
 # by the stim go into the SlowTestSocket's serial buffer; they only reach
-# J1939SoftSocket after _mux() is called (triggered by can_socket.select()).
+# J1939SoftSocket after _mux() is called internally by SlowTestSocket.select()
+# (which J1939SoftSocket invokes via can_socket.select() in its receive loop).
 
 with SlowTestSocket(CAN, frame_delay=0, mux_throttle=0) as slow_cans, \
         TestSocket(CAN) as stim:
@@ -3365,6 +3366,8 @@ assert _slbt_reassembled == _slbt_payload, \
 # Background PDU1 frames (unicast to a different address) are injected into
 # the serial buffer before the J1939 BAM frames.  The soft socket must filter
 # out the background traffic and correctly reassemble only the BAM.
+# 30 frames is chosen to be comfortably larger than the 4 J1939 frames (BAM +
+# 3 DTs), ensuring the filter is exercised under realistic serial-buffer load.
 
 with SlowTestSocket(CAN, frame_delay=0.001, mux_throttle=0) as slow_cans, \
         TestSocket(CAN) as stim:

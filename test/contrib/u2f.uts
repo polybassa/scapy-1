@@ -1,0 +1,340 @@
+% FIDO U2F layer test campaign
+~ u2f
+
++ Syntax check
+
+= Import the U2F layer
+from scapy.contrib.u2f import *
+
++ U2F HID Initialization Packet tests
+
+= U2F HID INIT request: build default packet
+pkt = U2FHIDInitializationPacket()
+assert pkt.cid == 0xFFFFFFFF
+assert pkt.cmd == 0x86
+assert pkt.bcnt is None
+
+= U2F HID INIT request: auto-compute bcnt on build
+pkt = U2FHIDInitializationPacket() / U2FHIDINITRequest()
+raw_pkt = raw(pkt)
+# Header: CID(4) + CMD(1) + BCNT(2) = 7 bytes; nonce = 8 bytes
+assert len(raw_pkt) == 15
+parsed = U2FHIDInitializationPacket(raw_pkt)
+assert parsed.bcnt == 8
+
+= U2F HID INIT request: bcnt auto-set to nonce length
+pkt = U2FHIDInitializationPacket() / U2FHIDINITRequest(nonce=b'\x01\x02\x03\x04\x05\x06\x07\x08')
+raw_pkt = raw(pkt)
+parsed = U2FHIDInitializationPacket(raw_pkt)
+assert parsed.bcnt == 8
+assert parsed.payload.nonce == b'\x01\x02\x03\x04\x05\x06\x07\x08'
+
+= U2F HID INIT response: build and dissect
+nonce = b'\xde\xad\xbe\xef\xca\xfe\xba\xbe'
+resp = U2FHIDInitializationPacket(cmd=0x86, bcnt=17) / U2FHIDINITResponse(
+    nonce=nonce,
+    cid=0x00010001,
+    protocol_version=2,
+    major_device_version=1,
+    minor_device_version=0,
+    build_device_version=0,
+    capabilities=0x01,
+)
+raw_resp = raw(resp)
+parsed = U2FHIDInitializationPacket(raw_resp)
+assert parsed.cmd == 0x86
+assert parsed.bcnt == 17
+assert isinstance(parsed.payload, U2FHIDINITResponse)
+assert parsed.payload.nonce == nonce
+assert parsed.payload.cid == 0x00010001
+assert parsed.payload.protocol_version == 2
+assert parsed.payload.capabilities == 0x01
+
+= U2F HID INIT response: guess_payload_class dispatch on bcnt=17
+raw_bytes = (
+    b'\xff\xff\xff\xff'  # broadcast CID
+    b'\x86'             # CMD = INIT
+    b'\x00\x11'         # BCNT = 17
+    + b'\xaa' * 8       # nonce
+    + b'\x00\x01\x00\x02'  # allocated CID
+    + b'\x02'           # protocol_version
+    + b'\x01\x00\x00'   # device versions
+    + b'\x01'           # capabilities = WINK
+)
+parsed = U2FHIDInitializationPacket(raw_bytes)
+assert isinstance(parsed.payload, U2FHIDINITResponse)
+assert parsed.payload.capabilities & 0x01  # WINK bit
+
+= U2F HID INIT request: guess_payload_class dispatch on bcnt=8
+raw_bytes = (
+    b'\xff\xff\xff\xff'  # broadcast CID
+    b'\x86'             # CMD = INIT
+    b'\x00\x08'         # BCNT = 8
+    + b'\x11\x22\x33\x44\x55\x66\x77\x88'  # nonce
+)
+parsed = U2FHIDInitializationPacket(raw_bytes)
+assert isinstance(parsed.payload, U2FHIDINITRequest)
+assert parsed.payload.nonce == b'\x11\x22\x33\x44\x55\x66\x77\x88'
+
+= U2F HID ERROR: build and dissect
+err_pkt = U2FHIDInitializationPacket(cid=0x00010001, cmd=0xBF) / \
+    U2FHIDError(error_code=0x06)  # ERR_CHANNEL_BUSY
+raw_err = raw(err_pkt)
+parsed = U2FHIDInitializationPacket(raw_err)
+assert parsed.cmd == 0xBF
+assert isinstance(parsed.payload, U2FHIDError)
+assert parsed.payload.error_code == 0x06
+
+= U2F HID Continuation packet: build and dissect
+cont = U2FHIDContinuationPacket(cid=0x00010001, seq=0)
+cont = cont / Raw(b'\xab' * 59)
+raw_cont = raw(cont)
+parsed = U2FHIDContinuationPacket(raw_cont)
+assert parsed.cid == 0x00010001
+assert parsed.seq == 0
+
+= U2F HID INIT response: capabilities flags
+resp = U2FHIDINITResponse(capabilities=0x05)  # WINK + CBOR
+assert resp.capabilities & 0x01  # WINK
+assert resp.capabilities & 0x04  # CBOR
+
++ U2F HID frame padding tests
+
+= U2F HID packet: trailing padding is stripped on dissect
+# Simulate a full 64-byte HID frame with 8-byte payload + 49 bytes padding
+header = b'\xff\xff\xff\xff\x86\x00\x08'  # CID + CMD=INIT + BCNT=8
+payload = b'\x01\x02\x03\x04\x05\x06\x07\x08'  # 8-byte nonce
+padding = b'\x00' * 49  # zero-fill to 64 bytes
+raw_frame = header + payload + padding
+parsed = U2FHIDInitializationPacket(raw_frame)
+assert parsed.bcnt == 8
+assert isinstance(parsed.payload, U2FHIDINITRequest)
+assert parsed.payload.nonce == b'\x01\x02\x03\x04\x05\x06\x07\x08'
+
++ U2F APDU Command tests
+
+= U2F APDU Command: default fields
+apdu = U2FCommandAPDU()
+assert apdu.cla == 0x00
+assert apdu.ins == 0x01
+assert apdu.p1 == 0x00
+assert apdu.p2 == 0x00
+assert apdu.le == 0
+
+= U2F APDU Command: Version request (no data)
+apdu = U2FCommandAPDU(ins=0x03, data=b'')
+raw_apdu = raw(apdu)
+# CLA(1) INS(1) P1(1) P2(1) _ext(1) LcH(1) LcL(1) Le(2) = 9 bytes
+assert len(raw_apdu) == 9
+parsed = U2FCommandAPDU(raw_apdu)
+assert parsed.ins == 0x03
+assert parsed.lc == 0
+assert parsed.data == b''
+
+= U2F APDU Command: Register request with 64-byte data
+challenge = b'\xaa' * 32
+app_id = b'\xbb' * 32
+data = challenge + app_id
+apdu = U2FCommandAPDU(ins=0x01, p1=0x03, data=data, le=0)
+raw_apdu = raw(apdu)
+# CLA(1) INS(1) P1(1) P2(1) _ext(1) Lc(2) data(64) Le(2) = 73 bytes
+assert len(raw_apdu) == 73
+parsed = U2FCommandAPDU(raw_apdu)
+assert parsed.ins == 0x01
+assert parsed.p1 == 0x03
+assert parsed.lc == 64
+assert parsed.data == data
+assert parsed.le == 0
+
+= U2F APDU Command: Authenticate request with key handle
+challenge = b'\xcc' * 32
+app_id = b'\xdd' * 32
+key_handle = b'\xee' * 16
+inner = raw(U2FAuthenticateRequest(
+    challenge_parameter=challenge,
+    application_parameter=app_id,
+    key_handle=key_handle,
+))
+apdu = U2FCommandAPDU(ins=0x02, p1=0x07, data=inner, le=0)
+raw_apdu = raw(apdu)
+parsed = U2FCommandAPDU(raw_apdu)
+assert parsed.ins == 0x02
+assert parsed.p1 == 0x07
+assert parsed.lc == 81  # 32 + 32 + 1 (kh_len) + 16 (key_handle) = 81
+# Re-check: U2FAuthenticateRequest = 32+32+1+16 = 81 bytes
+auth_req = U2FAuthenticateRequest(parsed.data)
+assert auth_req.challenge_parameter == challenge
+assert auth_req.application_parameter == app_id
+assert auth_req.key_handle == key_handle
+
+= U2F APDU Command: lc auto-computation
+apdu = U2FCommandAPDU(ins=0x01, data=b'\xab' * 40)
+raw_apdu = raw(apdu)
+parsed = U2FCommandAPDU(raw_apdu)
+assert parsed.lc == 40
+
++ U2F APDU Response tests
+
+= U2F APDU Response: success with no data
+resp = U2FResponseAPDU(data=b'', sw1=0x90, sw2=0x00)
+raw_resp = raw(resp)
+assert len(raw_resp) == 2
+parsed = U2FResponseAPDU(raw_resp)
+assert parsed.sw1 == 0x90
+assert parsed.sw2 == 0x00
+assert parsed.data == b''
+
+= U2F APDU Response: success with data
+payload = b'U2F_V2'
+resp = U2FResponseAPDU(data=payload, sw1=0x90, sw2=0x00)
+raw_resp = raw(resp)
+assert len(raw_resp) == 8
+parsed = U2FResponseAPDU(raw_resp)
+assert parsed.data == b'U2F_V2'
+assert parsed.sw1 == 0x90
+assert parsed.sw2 == 0x00
+
+= U2F APDU Response: condition not satisfied
+resp = U2FResponseAPDU(data=b'', sw1=0x69, sw2=0x85)
+raw_resp = raw(resp)
+parsed = U2FResponseAPDU(raw_resp)
+assert parsed.sw1 == 0x69
+assert parsed.sw2 == 0x85
+
+= U2F APDU Response: version response dissection
+raw_resp = b'U2F_V2' + b'\x90\x00'
+parsed = U2FResponseAPDU(raw_resp)
+assert parsed.data == b'U2F_V2'
+assert parsed.sw1 == 0x90
+assert parsed.sw2 == 0x00
+
++ U2F Register message tests
+
+= U2F Register Request: build and dissect
+challenge = bytes(range(32))
+app_id = bytes(range(32, 64))
+req = U2FRegisterRequest(challenge_parameter=challenge,
+                          application_parameter=app_id)
+raw_req = raw(req)
+assert len(raw_req) == 64
+parsed = U2FRegisterRequest(raw_req)
+assert parsed.challenge_parameter == challenge
+assert parsed.application_parameter == app_id
+
+= U2F Register Request: default values
+req = U2FRegisterRequest()
+assert len(req.challenge_parameter) == 32
+assert len(req.application_parameter) == 32
+
+= U2F Register Response: build and dissect
+pub_key = b'\x04' + b'\x11' * 32 + b'\x22' * 32  # 65-byte uncompressed point
+key_handle = b'\x33' * 20
+resp = U2FRegisterResponse(
+    reserved=0x05,
+    user_public_key=pub_key,
+    key_handle=key_handle,
+)
+raw_resp = raw(resp)
+# reserved(1) + pub_key(65) + kh_len(1) + kh(20) = 87 bytes
+assert len(raw_resp) == 87
+parsed = U2FRegisterResponse(raw_resp)
+assert parsed.reserved == 0x05
+assert parsed.user_public_key == pub_key
+assert parsed.key_handle_length == 20
+assert parsed.key_handle == key_handle
+
+= U2F Register Response: key_handle_length auto-computed
+resp = U2FRegisterResponse(user_public_key=b'\x04' + b'\x00' * 64,
+                            key_handle=b'\xab' * 32)
+raw_resp = raw(resp)
+parsed = U2FRegisterResponse(raw_resp)
+assert parsed.key_handle_length == 32
+assert parsed.key_handle == b'\xab' * 32
+
++ U2F Authenticate message tests
+
+= U2F Authenticate Request: build and dissect
+challenge = b'\xca' * 32
+app_id = b'\xfe' * 32
+key_handle = b'\xba' * 64
+req = U2FAuthenticateRequest(
+    challenge_parameter=challenge,
+    application_parameter=app_id,
+    key_handle=key_handle,
+)
+raw_req = raw(req)
+# 32 + 32 + 1 + 64 = 129 bytes
+assert len(raw_req) == 129
+parsed = U2FAuthenticateRequest(raw_req)
+assert parsed.challenge_parameter == challenge
+assert parsed.application_parameter == app_id
+assert parsed.key_handle_length == 64
+assert parsed.key_handle == key_handle
+
+= U2F Authenticate Request: key_handle_length auto-computed
+req = U2FAuthenticateRequest(
+    challenge_parameter=b'\x00' * 32,
+    application_parameter=b'\x00' * 32,
+    key_handle=b'\xff' * 10,
+)
+raw_req = raw(req)
+parsed = U2FAuthenticateRequest(raw_req)
+assert parsed.key_handle_length == 10
+
+= U2F Authenticate Response: build and dissect
+resp = U2FAuthenticateResponse(user_presence=0x01, counter=42)
+raw_resp = raw(resp)
+# user_presence(1) + counter(4) = 5 bytes
+assert len(raw_resp) == 5
+parsed = U2FAuthenticateResponse(raw_resp)
+assert parsed.user_presence == 0x01
+assert parsed.counter == 42
+
+= U2F Authenticate Response: user not present
+resp = U2FAuthenticateResponse(user_presence=0x00, counter=0)
+raw_resp = raw(resp)
+parsed = U2FAuthenticateResponse(raw_resp)
+assert parsed.user_presence == 0x00
+assert parsed.counter == 0
+
++ U2F end-to-end transaction tests
+
+= U2F Register transaction: full MSG packet build
+challenge = b'\x01' * 32
+app_id = b'\x02' * 32
+reg_req_data = raw(U2FRegisterRequest(
+    challenge_parameter=challenge,
+    application_parameter=app_id,
+))
+apdu = U2FCommandAPDU(ins=0x01, p1=0x03, data=reg_req_data, le=0)
+msg_pkt = U2FHIDInitializationPacket(cid=0xFFFFFFFF, cmd=0x83) / apdu
+raw_msg = raw(msg_pkt)
+# Parse back
+parsed_hid = U2FHIDInitializationPacket(raw_msg)
+assert parsed_hid.cid == 0xFFFFFFFF
+assert parsed_hid.cmd == 0x83
+assert parsed_hid.bcnt == len(raw(apdu))
+assert isinstance(parsed_hid.payload, U2FCommandAPDU)
+assert parsed_hid.payload.ins == 0x01
+assert parsed_hid.payload.lc == 64
+parsed_req = U2FRegisterRequest(parsed_hid.payload.data)
+assert parsed_req.challenge_parameter == challenge
+assert parsed_req.application_parameter == app_id
+
+= U2F layer binding: MSG command dispatches to U2FCommandAPDU
+raw_bytes = (
+    b'\x00\x01\x00\x02'   # CID
+    b'\x83'               # CMD = MSG
+    b'\x00\x09'           # BCNT = 9 (Version APDU size)
+    b'\x00\x03\x00\x00'   # CLA INS P1 P2
+    b'\x00\x00\x00'       # _ext + Lc = 0
+    b'\x00\x00'           # Le = 0
+)
+parsed = U2FHIDInitializationPacket(raw_bytes)
+assert parsed.cmd == 0x83
+assert isinstance(parsed.payload, U2FCommandAPDU)
+assert parsed.payload.ins == 0x03  # Version
+
+= U2F Version response: complete response APDU
+resp = U2FResponseAPDU(data=b'U2F_V2', sw1=0x90, sw2=0x00)
+assert raw(resp) == b'U2F_V2\x90\x00'

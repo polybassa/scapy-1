@@ -1322,9 +1322,9 @@ class J1939TPImplementation:
     def _tx_start_bam(self, data, pgn, dst, priority, data_page):
         # type: (bytes, int, int, int, int) -> None
         npkts = (len(data) + _J1939_TP_DT_DATA - 1) // _J1939_TP_DT_DATA
-        bam = J1939_TP_CM_BAM(total_size=len(data), num_packets=npkts, pgn=pgn)
-        self._can_send_tp_cm(socket.J1939_NO_ADDR, bytes(bam))
-
+        # Set tx_state BEFORE the CAN send so that close() does not see the
+        # queue empty with state=IDLE and break out of the drain loop early
+        # (race window: CAN send may block on slow adapters).
         self.tx_state = _J1939_TX_BAM
         self.tx_buf = data
         self.tx_pgn = pgn
@@ -1333,6 +1333,8 @@ class J1939TPImplementation:
         self.tx_data_page = data_page
         self.tx_npkts = npkts
         self.tx_seq = 1
+        bam = J1939_TP_CM_BAM(total_size=len(data), num_packets=npkts, pgn=pgn)
+        self._can_send_tp_cm(socket.J1939_NO_ADDR, bytes(bam))
         self.tx_timeout_handle = self._TimeoutScheduler.schedule(
             _J1939_TP_BAM_DELAY, self._tx_bam_next_dt)
 
@@ -1357,12 +1359,7 @@ class J1939TPImplementation:
     def _tx_start_rts(self, data, pgn, dst, priority, data_page):
         # type: (bytes, int, int, int, int) -> None
         npkts = (len(data) + _J1939_TP_DT_DATA - 1) // _J1939_TP_DT_DATA
-        rts = J1939_TP_CM_RTS(
-            total_size=len(data), num_packets=npkts,
-            max_packets=0xFF, pgn=pgn,
-        )
-        self._can_send_tp_cm(dst, bytes(rts))
-
+        # Set tx_state BEFORE the CAN send (same race-prevention as _tx_start_bam).
         self.tx_state = _J1939_TX_RTS_WAIT_CTS
         self.tx_buf = data
         self.tx_pgn = pgn
@@ -1372,6 +1369,11 @@ class J1939TPImplementation:
         self.tx_npkts = npkts
         self.tx_seq = 1
         self.tx_peer_sa = dst
+        rts = J1939_TP_CM_RTS(
+            total_size=len(data), num_packets=npkts,
+            max_packets=0xFF, pgn=pgn,
+        )
+        self._can_send_tp_cm(dst, bytes(rts))
         self.tx_timeout_handle = self._TimeoutScheduler.schedule(
             _J1939_TP_T3, self._tx_timeout)
 

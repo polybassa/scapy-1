@@ -164,10 +164,10 @@ Examples:
   - `PacketListField` decodes repeated embedded packets; dispatcher may be a class or a function returning a class.
   - Common with TLV/IE lists where element type depends on runtime bytes.
 - **Post-dissection mutation hooks**
-  - `post_dissect(self, s)` can adjust decoded state after full layer parsing (for example decrypting payload-dependent content).
+  - `post_dissect(self, s)` can adjust decoded state after full layer parsing (e.g., decrypting payload-dependent content).
   - Use only when mutation is required after field extraction.
 - **Explicit payload vs. extra-bytes control**
-  - `extract_padding` can intentionally discard/redirect trailing bytes when they are not protocol padding (important with list-style inner decoding).
+  - `extract_padding` can intentionally discard/redirect trailing bytes when they are not protocol padding. This is important when parsing variable-length lists of embedded packets where trailing bytes should not be interpreted as padding.
 - **Custom field implementation workflow**
   - Model field states explicitly:
     - internal (`i`): Scapy runtime value

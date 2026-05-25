@@ -1,0 +1,77 @@
+% U2F tests
+
+# Run with:
+#   test/run_tests -P "load_contrib('u2f')" -t test/contrib/u2f.uts
+
++ U2F HID framing
+
+= Build and dissect INIT request
+
+p = U2FHIDInit(cid=0xffffffff, cmd='INIT') / U2FHIDInitReq(
+    nonce=hex_bytes('0102030405060708')
+)
+assert raw(p) == hex_bytes('ffffffff8600080102030405060708')
+
+q = U2FHID(raw(p))
+assert U2FHIDInit in q
+assert q.cid == 0xffffffff
+assert q.cmd == 0x86
+assert q.bcnt == 8
+assert q[U2FHIDInitReq].nonce == hex_bytes('0102030405060708')
+
+= Build and dissect INIT response
+
+p = U2FHIDInit(cid=0xffffffff, cmd='INIT') / U2FHIDInitResp(
+    nonce=hex_bytes('0102030405060708'),
+    new_cid=0x11223344,
+    version_interface=2,
+    version_major=1,
+    version_minor=2,
+    version_build=3,
+    cap_flags=0x07,
+)
+
+assert raw(p) == hex_bytes('ffffffff8600110102030405060708112233440201020307')
+
+q = U2FHID(raw(p))
+assert q.bcnt == 17
+assert q[U2FHIDInitResp].new_cid == 0x11223344
+assert q[U2FHIDInitResp].version_major == 1
+assert q[U2FHIDInitResp].version_minor == 2
+assert q[U2FHIDInitResp].version_build == 3
+
+= Build and dissect ERROR
+
+p = U2FHIDInit(cid=0xaabbccdd, cmd='ERROR') / U2FHIDError(error=0x01)
+assert raw(p) == hex_bytes('aabbccddbf000101')
+
+q = U2FHID(raw(p))
+assert q.cid == 0xaabbccdd
+assert q.cmd == 0xbf
+assert q.bcnt == 1
+assert q[U2FHIDError].error == 0x01
+
+= Build and dissect MSG with APDU
+
+p = U2FHIDInit(cid=0x01020304, cmd='MSG') / U2FAPDU(
+    cla=0x00, ins='AUTHENTICATE', p1=0x03, p2=0x00,
+    lc=2, data=hex_bytes('aabb')
+)
+
+assert raw(p) == hex_bytes('010203048300070002030002aabb')
+
+q = U2FHID(raw(p))
+assert q.cid == 0x01020304
+assert q.cmd == 0x83
+assert q.bcnt == 7
+assert q[U2FAPDU].ins == 0x02
+assert q[U2FAPDU].p1 == 0x03
+assert q[U2FAPDU].data == hex_bytes('aabb')
+
+= Dissect continuation frame
+
+q = U2FHID(hex_bytes('0102030405deadbeef'))
+assert U2FHIDCont in q
+assert q.cid == 0x01020304
+assert q.seq == 0x05
+assert q[Raw].load == hex_bytes('deadbeef')

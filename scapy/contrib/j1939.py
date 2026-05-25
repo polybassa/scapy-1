@@ -948,6 +948,15 @@ class J1939TPImplementation:
         # type: () -> None
         if self.closed:
             return
+        # Wait for any in-progress TX to drain before shutting down.
+        # This ensures that a send() followed immediately by close() (e.g.
+        # inside a ``with`` statement) still delivers every queued message.
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if (self.tx_state == _J1939_TX_IDLE
+                    and not select_objects([self.tx_queue], 0)):
+                break
+            time.sleep(0.005)
         self.closed = True
         # Brief pause so any in-flight scheduler callback sees the flag.
         time.sleep(0.005)
@@ -1436,8 +1445,22 @@ class J1939TPImplementation:
 
     def send(self, msg):
         # type: (Packet) -> None
-        """Enqueue *msg* for transmission."""
+        """Enqueue *msg* for transmission.
+
+        Also schedules an immediate TX poll so the message is picked up
+        without waiting for the next 5 ms polling interval.  This allows
+        ``send()`` followed immediately by ``close()`` to reliably deliver
+        the frame (e.g. inside a ``with J1939SoftSocket(...) as s:`` block).
+        """
         self.tx_queue.send(msg)
+        # Cancel the pending poll and reschedule it to fire immediately so
+        # the message is dispatched within microseconds, not up to 5 ms later.
+        if self.tx_handle is not None:
+            try:
+                self.tx_handle.cancel()
+            except Exception:
+                pass
+        self.tx_handle = self._TimeoutScheduler.schedule(0, self._tx_poll)
 
     def recv(self):
         # type: () -> Optional[Tuple[J1939, Union[float, EDecimal]]]
@@ -1578,7 +1601,7 @@ class J1939SoftSocket(SuperSocket):
 
     @staticmethod
     def select(sockets, remain=None):  # type: ignore[override]
-        # type: (List[Union[SuperSocket, ObjectPipe[Any]]], Optional[float]) -> List[Union[SuperSocket, ObjectPipe[Any]]]
+        # type: (List[Union[SuperSocket, ObjectPipe[Any]]], Optional[float]) -> List[Union[SuperSocket, ObjectPipe[Any]]]  # noqa: E501
         """Support :func:`~scapy.sendrecv.sniff` on :class:`J1939SoftSocket`."""
         obj_pipes = [
             x.impl.rx_queue for x in sockets

@@ -2153,6 +2153,28 @@ with realtime_session(socket=rxd, rt_kernel=False, poll_interval=0.01,
 rxd.close()
 txd.close()
 
+= Realtime session: send lifecycle and sendrecv
+
+sa = RTTestSocket(Ether)
+sb = RTTestSocket(Ether)
+sa.pair(sb)
+
+rt = realtime_session(socket=sa, rt_kernel=True)
+try:
+    rt.send(Ether()/IP()/UDP())
+    assert False, "send() before __enter__ should fail"
+except Scapy_Exception:
+    assert True
+
+with rt:
+    sb.send(Ether()/IP()/UDP(dport=5555))
+    ans = rt.sendrecv(Ether()/IP()/UDP(dport=6666), timeout=0.5)
+    assert ans is not None
+    assert ans[UDP].dport == 5555
+
+sa.close()
+sb.close()
+
 = GH issue 3306
 ~ netaccess needs_root
 

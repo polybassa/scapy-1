@@ -238,6 +238,12 @@ class RealtimeSession(object):
         )
         self._rx_thread.start()
 
+    def _get_poll_interval(self):
+        # type: () -> float
+        if self.poll_interval is None:
+            return conf.recv_poll_rate
+        return self.poll_interval
+
     def _enqueue(self, pkt):
         # type: (Packet) -> None
         if self.queue_size and len(self._queue) >= self.queue_size:
@@ -271,9 +277,7 @@ class RealtimeSession(object):
         while not self._stop_event.is_set():
             if not self.socket:
                 break
-            remain = self.poll_interval
-            if remain is None:
-                remain = conf.recv_poll_rate
+            remain = self._get_poll_interval()
             sockets = self.socket.select([self.socket], remain)
             if not sockets:
                 continue
@@ -290,7 +294,7 @@ class RealtimeSession(object):
 
     def send(self, pkt):
         # type: (Packet) -> int
-        if not self.socket:
+        if not self.running or not self.socket:
             raise Scapy_Exception("RealtimeSession is not started")
         return self.socket.send(pkt)
 
@@ -314,6 +318,7 @@ class RealtimeSession(object):
                 return None
             try:
                 found = False
+                first = None  # type: Optional[Packet]
                 for pkt in self._iter_packets():
                     if not found:
                         found = True
@@ -340,9 +345,7 @@ class RealtimeSession(object):
                 raise self._thread_exception
             if self._stop_event.is_set():
                 return None
-            wait_time = self.poll_interval
-            if wait_time is None:
-                wait_time = conf.recv_poll_rate
+            wait_time = self._get_poll_interval()
             if deadline is not None:
                 remain = deadline - time.monotonic()
                 if remain <= 0:

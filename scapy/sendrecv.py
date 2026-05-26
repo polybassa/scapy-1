@@ -8,6 +8,7 @@ Functions to send and receive packets.
 """
 
 import itertools
+from collections import deque
 from threading import Thread, Event
 import os
 import re
@@ -43,6 +44,7 @@ from scapy.supersocket import SuperSocket, IterSocket
 from typing import (
     Any,
     Callable,
+    Deque,
     Dict,
     Iterator,
     List,
@@ -102,6 +104,294 @@ _DOC_SNDRCV_PARAMS = """
 
 
 _GlobSessionType = Union[Type[DefaultSession], DefaultSession]
+
+
+class RealtimeSession(object):
+    """
+    Context-managed real-time send/receive session.
+
+    In default mode, packets are received asynchronously in a background thread.
+    With ``rt_kernel=True``, reception uses a single-threaded blocking loop to
+    reduce scheduler jitter on real-time kernels.
+    """
+
+    def __init__(self,
+                 socket=None,  # type: Optional[SuperSocket]
+                 iface=None,  # type: Optional[_GlobInterfaceType]
+                 L2socket=None,  # type: Optional[Type[SuperSocket]]
+                 promisc=None,  # type: Optional[bool]
+                 filter=None,  # type: Optional[str]
+                 nofilter=0,  # type: int
+                 type=ETH_P_ALL,  # type: int
+                 session=None,  # type: Optional[_GlobSessionType]
+                 lfilter=None,  # type: Optional[Callable[[Packet], bool]]
+                 rt_kernel=False,  # type: bool
+                 poll_interval=None,  # type: Optional[float]
+                 queue_size=0,  # type: int
+                 strict_drop=False,  # type: bool
+                 socket_rcvbuf=None,  # type: Optional[int]
+                 socket_sndbuf=None,  # type: Optional[int]
+                 setup_callback=None,  # type: Optional[Callable[["RealtimeSession"], Any]]  # noqa: E501
+                 teardown_callback=None,  # type: Optional[Callable[["RealtimeSession"], Any]]  # noqa: E501
+                 **socket_kwargs  # type: Any
+                 ):
+        # type: (...) -> None
+        self.socket = socket
+        self._owns_socket = socket is None
+        self.iface = iface
+        self.L2socket = L2socket
+        self.promisc = promisc
+        self.filter = filter
+        self.nofilter = nofilter
+        self.type = type
+        self.session = session
+        self.lfilter = lfilter
+        self.rt_kernel = rt_kernel
+        self.poll_interval = poll_interval
+        self.queue_size = max(0, queue_size)
+        self.strict_drop = strict_drop
+        self.socket_rcvbuf = socket_rcvbuf
+        self.socket_sndbuf = socket_sndbuf
+        self.setup_callback = setup_callback
+        self.teardown_callback = teardown_callback
+        self.socket_kwargs = socket_kwargs
+
+        self.running = False
+        self.closed = False
+        self._socket_label = None  # type: Optional[_GlobInterfaceType]
+        self._session = None  # type: Optional[DefaultSession]
+        self._pending = deque()  # type: Deque[Packet]
+        self._queue = deque()  # type: Deque[Packet]
+        self._queue_event = Event()
+        self._stop_event = Event()
+        self._rx_thread = None  # type: Optional[Thread]
+        self._thread_exception = None  # type: Optional[Exception]
+
+    def __enter__(self):
+        # type: () -> "RealtimeSession"
+        if self.running:
+            return self
+        if self.socket is None:
+            iface = resolve_iface(self.iface or conf.iface)
+            l2socket = self.L2socket or iface.l2socket()
+            self.socket = l2socket(
+                promisc=self.promisc,
+                filter=self.filter,
+                iface=iface,
+                nofilter=self.nofilter,
+                type=self.type,
+                **self.socket_kwargs
+            )
+            self._socket_label = iface
+        else:
+            self._socket_label = self.iface
+        self._configure_socket_buffers()
+        if not isinstance(self.session, DefaultSession):
+            klass = self.session or DefaultSession
+            self._session = klass()  # type: ignore
+        else:
+            self._session = self.session
+        self.running = True
+        self.closed = False
+        if self.setup_callback is not None:
+            self.setup_callback(self)
+        if not self.rt_kernel:
+            self._start_rx_thread()
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        # type: (Optional[Type[BaseException]], Optional[BaseException], Optional[Any]) -> None  # noqa: E501
+        self.close()
+        if exc_type is None and self._thread_exception is not None:
+            raise self._thread_exception
+
+    def _configure_socket_buffers(self):
+        # type: () -> None
+        if not self.socket:
+            return
+        socks = [getattr(self.socket, "ins", None), getattr(self.socket, "outs", None)]  # noqa: E501
+        for sock in socks:
+            if sock is None or not hasattr(sock, "setsockopt"):
+                continue
+            try:
+                if self.socket_rcvbuf is not None:
+                    sock.setsockopt(
+                        socket.SOL_SOCKET,
+                        socket.SO_RCVBUF,
+                        self.socket_rcvbuf
+                    )
+                if self.socket_sndbuf is not None:
+                    sock.setsockopt(
+                        socket.SOL_SOCKET,
+                        socket.SO_SNDBUF,
+                        self.socket_sndbuf
+                    )
+            except OSError:
+                pass
+
+    def _start_rx_thread(self):
+        # type: () -> None
+        self._rx_thread = Thread(
+            target=self._rx_loop,
+            name="RealtimeSession",
+            daemon=True
+        )
+        self._rx_thread.start()
+
+    def _enqueue(self, pkt):
+        # type: (Packet) -> None
+        if self.queue_size and len(self._queue) >= self.queue_size:
+            if self.strict_drop:
+                self._queue.popleft()
+            else:
+                return
+        self._queue.append(pkt)
+        self._queue_event.set()
+
+    def _decorate(self, pkt):
+        # type: (Packet) -> Packet
+        if getattr(pkt, "sniffed_on", None) is None:
+            pkt.sniffed_on = self._socket_label
+        if getattr(pkt, "time", None) is None:
+            pkt.time = time.time()
+        return pkt
+
+    def _iter_packets(self):
+        # type: () -> Iterator[Packet]
+        if not self.socket or not self._session:
+            return
+        packets = self._session.recv(self.socket)
+        for pkt in packets:
+            if self.lfilter and not self.lfilter(pkt):
+                continue
+            yield self._decorate(pkt)
+
+    def _rx_loop(self):
+        # type: () -> None
+        while not self._stop_event.is_set():
+            if not self.socket:
+                break
+            remain = self.poll_interval
+            if remain is None:
+                remain = conf.recv_poll_rate
+            sockets = self.socket.select([self.socket], remain)
+            if not sockets:
+                continue
+            try:
+                for pkt in self._iter_packets():
+                    self._enqueue(pkt)
+            except EOFError:
+                break
+            except Exception as ex:
+                self._thread_exception = ex
+                break
+        self._stop_event.set()
+        self._queue_event.set()
+
+    def send(self, pkt):
+        # type: (Packet) -> int
+        if not self.socket:
+            raise Scapy_Exception("RealtimeSession is not started")
+        return self.socket.send(pkt)
+
+    def _recv_rt(self, timeout=None):
+        # type: (Optional[float]) -> Optional[Packet]
+        if self._pending:
+            return self._pending.popleft()
+        if not self.socket:
+            return None
+        deadline = None
+        if timeout is not None:
+            deadline = time.monotonic() + timeout
+        while True:
+            remain = None
+            if deadline is not None:
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    return None
+            sockets = self.socket.select([self.socket], remain)
+            if not sockets:
+                return None
+            try:
+                found = False
+                for pkt in self._iter_packets():
+                    if not found:
+                        found = True
+                        first = pkt
+                    else:
+                        self._pending.append(pkt)
+                if found:
+                    return first
+            except EOFError:
+                return None
+
+    def _recv_bg(self, timeout=None):
+        # type: (Optional[float]) -> Optional[Packet]
+        deadline = None
+        if timeout is not None:
+            deadline = time.monotonic() + timeout
+        while True:
+            if self._queue:
+                pkt = self._queue.popleft()
+                if not self._queue:
+                    self._queue_event.clear()
+                return pkt
+            if self._thread_exception is not None:
+                raise self._thread_exception
+            if self._stop_event.is_set():
+                return None
+            wait_time = self.poll_interval
+            if wait_time is None:
+                wait_time = conf.recv_poll_rate
+            if deadline is not None:
+                remain = deadline - time.monotonic()
+                if remain <= 0:
+                    return None
+                wait_time = min(wait_time, remain)
+            self._queue_event.wait(wait_time)
+
+    def recv(self, timeout=None):
+        # type: (Optional[float]) -> Optional[Packet]
+        """
+        Receive one packet from the session.
+        """
+        if self.rt_kernel:
+            return self._recv_rt(timeout=timeout)
+        return self._recv_bg(timeout=timeout)
+
+    def sendrecv(self, pkt, timeout=None):
+        # type: (Packet, Optional[float]) -> Optional[Packet]
+        """
+        Send one packet then receive one packet from the same session socket.
+        """
+        self.send(pkt)
+        return self.recv(timeout=timeout)
+
+    def close(self):
+        # type: () -> None
+        if self.closed:
+            return
+        self.closed = True
+        self.running = False
+        self._stop_event.set()
+        self._queue_event.set()
+        if self._rx_thread is not None:
+            self._rx_thread.join()
+        self._rx_thread = None
+        self._queue.clear()
+        self._pending.clear()
+        if self.socket and self._owns_socket:
+            self.socket.close()
+        if self.teardown_callback is not None:
+            self.teardown_callback(self)
+
+
+def realtime_session(*args, **kwargs):
+    # type: (*Any, **Any) -> RealtimeSession
+    """
+    Return a context-managed real-time packet session.
+    """
+    return RealtimeSession(*args, **kwargs)
 
 
 class SndRcvHandler(object):

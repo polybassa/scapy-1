@@ -2058,6 +2058,101 @@ o.send(REFPACKET)
 pkts = sniff(opened_socket=[o], timeout=3)
 assert len(pkts) == 10
 
+= Realtime session: RT kernel timeout and timestamps
+
+import time
+from scapy.data import MTU
+from scapy.automaton import select_objects
+from scapy.supersocket import SuperSocket
+
+exec("""class RTTestSocket(SuperSocket):
+    def __init__(self, basecls=Ether):
+        self.basecls = basecls
+        self.ins = ObjectPipe(name="RTTestSocket")
+        self.outs = None
+        self.paired_sockets = []
+        self._ts = 1000.0
+
+    def pair(self, sock):
+        self.paired_sockets.append(sock)
+        sock.paired_sockets.append(self)
+
+    def send(self, x):
+        sx = bytes(x)
+        for r in self.paired_sockets:
+            r.ins.send(sx)
+        x.sent_time = time.time()
+        return len(sx)
+
+    def recv_raw(self, x=MTU):
+        self._ts += 0.001
+        return self.basecls, self.ins.recv(0), self._ts
+
+    @staticmethod
+    def select(sockets, remain=conf.recv_poll_rate):
+        return select_objects(sockets, remain)
+""")
+
+
+rx = RTTestSocket(Ether)
+tx = RTTestSocket(Ether)
+rx.pair(tx)
+pkt1 = Ether()/IP()/UDP(dport=1111)
+pkt2 = Ether()/IP()/UDP(dport=2222)
+tx.send(pkt1)
+tx.send(pkt2)
+
+with realtime_session(socket=rx, rt_kernel=True) as rt:
+    p1 = rt.recv(timeout=0.5)
+    p2 = rt.recv(timeout=0.5)
+    assert p1 is not None and p2 is not None
+    assert p1.time <= p2.time
+    assert p1[UDP].dport == 1111
+    assert p2[UDP].dport == 2222
+
+rx.close()
+tx.close()
+
+= Realtime session: timeout and thread shutdown
+
+s1 = RTTestSocket(Ether)
+s2 = RTTestSocket(Ether)
+s1.pair(s2)
+
+with realtime_session(socket=s1, rt_kernel=True, poll_interval=0.01) as rt:
+    start = time.monotonic()
+    p = rt.recv(timeout=0.05)
+    elapsed = time.monotonic() - start
+    assert p is None
+    assert elapsed >= 0.03
+    assert elapsed < 0.25
+
+with realtime_session(socket=s1, rt_kernel=False, poll_interval=0.01) as rt:
+    assert rt._rx_thread is not None
+    assert rt._rx_thread.is_alive()
+
+assert rt._rx_thread is None or not rt._rx_thread.is_alive()
+s1.close()
+s2.close()
+
+= Realtime session: strict drop keeps freshest packet
+
+rxd = RTTestSocket(Ether)
+txd = RTTestSocket(Ether)
+rxd.pair(txd)
+
+with realtime_session(socket=rxd, rt_kernel=False, poll_interval=0.01,
+                      queue_size=1, strict_drop=True) as rt:
+    txd.send(Ether()/IP()/UDP(dport=3333))
+    txd.send(Ether()/IP()/UDP(dport=4444))
+    time.sleep(0.1)
+    p = rt.recv(timeout=0.5)
+    assert p is not None
+    assert p[UDP].dport == 4444
+
+rxd.close()
+txd.close()
+
 = GH issue 3306
 ~ netaccess needs_root
 

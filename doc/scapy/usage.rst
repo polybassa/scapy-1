@@ -782,6 +782,38 @@ Another example: using ``prn`` and ``store=False``
     >>> time.sleep(20)
     >>> t.stop()
 
+Real-time session mode
+----------------------
+
+For interactive send/receive workflows, Scapy provides a context manager that
+keeps a socket open across sends and receives:
+
+.. code-block:: python
+
+    >>> with realtime_session(iface="eth0") as rt:
+    ...     rt.send(Ether()/IP(dst="192.0.2.1")/ICMP())
+    ...     ans = rt.recv(timeout=1)
+
+To reduce scheduler jitter on real-time kernels, enable ``rt_kernel=True``.
+In that mode, Scapy uses a single-threaded blocking receive loop on one socket.
+In default mode, reception is asynchronous through a background thread.
+
+Optional tuning parameters are available:
+
+- ``socket_rcvbuf`` / ``socket_sndbuf`` to request socket buffer sizes
+- ``poll_interval`` to tune receive polling granularity
+- ``queue_size`` with ``strict_drop=True`` to keep freshest packets under load
+
+Scapy does **not** change process scheduling policy directly. Use
+``setup_callback`` / ``teardown_callback`` to apply environment-specific process
+settings (for instance CPU affinity or RT policy) in your own code.
+
+.. warning::
+   Real-time scheduler policies typically require elevated privileges.
+   Incorrect settings can starve other system workloads. Prefer conservative
+   priorities and validate behavior under realistic traffic. Tight latency
+   targets often require dropping packets under load.
+
 Advanced Sniffing - Sniffing Sessions
 -------------------------------------
 
@@ -1899,6 +1931,5 @@ For example to guess OS from a single captured packet:
     192.168.1.100:54716 - Linux 2.6 (newer, 1) (up: 24 hrs)
       -> 74.125.19.104:www (distance 0)
     <Sniffed: TCP:339 UDP:2 ICMP:0 Other:156>
-
 
 

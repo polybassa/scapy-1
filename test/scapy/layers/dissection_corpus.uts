@@ -32,7 +32,9 @@ def _parse_int_value(value):
         if value == "":
             return None
         try:
-            return int(value, 0)
+            if value.lower().startswith(("0x", "+0x", "-0x")):
+                return int(value, 16)
+            return int(value, 10)
         except ValueError:
             return None
     try:

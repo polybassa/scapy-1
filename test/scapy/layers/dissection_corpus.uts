@@ -19,9 +19,14 @@ def _normalize_scapy_value(value):
 
 
 def _compare_tcp_flags(tshark_value, scapy_value):
-    if tshark_value == "" and scapy_value is None:
-        return True
-    return int(tshark_value) == int(scapy_value)
+    if tshark_value == "":
+        return scapy_value is None
+    if scapy_value is None:
+        return False
+    try:
+        return int(tshark_value) == int(scapy_value)
+    except (TypeError, ValueError):
+        return False
 
 
 def _default_compare(tshark_value, scapy_value):
@@ -36,15 +41,30 @@ LAYER_BY_NAME = {
 
 
 def _get_scapy_field(packet, scapy_field):
+    assert scapy_field.count(".") == 1, (
+        f"Invalid scapy_field format: {scapy_field!r}. "
+        "Expected format: LayerName.field_name (exactly one dot)"
+    )
     layer_name, field_name = scapy_field.split(".", 1)
+    assert layer_name and field_name, (
+        f"Invalid scapy field mapping: {scapy_field!r}. "
+        "Layer and field names must be non-empty"
+    )
+    assert layer_name in LAYER_BY_NAME, (
+        f"Unsupported layer in mapping: {layer_name!r}. "
+        f"Supported layers: {list(LAYER_BY_NAME.keys())!r}"
+    )
     layer = LAYER_BY_NAME[layer_name]
     if layer not in packet:
         return None
+    assert hasattr(packet[layer], field_name), (
+        f"Field {field_name!r} does not exist on layer {layer_name!r}"
+    )
     return getattr(packet[layer], field_name)
 
 
 def _extract_tshark_rows(pcap_path, mapping):
-    args = ["-T", "fields", "-E", "separator=\\t", "-E", "occurrence=f"]
+    args = ["-T", "fields", "-E", "separator=\t", "-E", "occurrence=f"]
     for tshark_field in mapping:
         args.extend(["-e", tshark_field])
     output = tcpdump(
@@ -68,53 +88,55 @@ def _compare_pcap_dissection(pcap_file, mapping):
     tshark_rows = _extract_tshark_rows(pcap_path, mapping)
 
     assert len(packets) == len(tshark_rows), (
-        "Packet count mismatch for %s: scapy=%d tshark=%d" % (
-            pcap_file,
-            len(packets),
-            len(tshark_rows),
-        )
+        f"Packet count mismatch for {pcap_file}: "
+        f"scapy={len(packets)} tshark={len(tshark_rows)}"
     )
 
     tshark_fields = list(mapping)
-    for index, (packet, tshark_row) in enumerate(zip(packets, tshark_rows), 1):
+    for packet_number, (packet, tshark_row) in enumerate(
+        zip(packets, tshark_rows), 1
+    ):
         assert len(tshark_row) == len(tshark_fields), (
-            "Field count mismatch for %s packet #%d" % (pcap_file, index)
+            f"Field count mismatch for {pcap_file} packet #{packet_number}"
         )
-        for position, tshark_field in enumerate(tshark_fields):
+        for field_idx, tshark_field in enumerate(tshark_fields):
             entry = mapping[tshark_field]
             compare = entry.get("compare", _default_compare)
             scapy_value = _get_scapy_field(packet, entry["scapy"])
-            tshark_value = tshark_row[position]
+            tshark_value = tshark_row[field_idx]
             assert compare(tshark_value, scapy_value), (
-                "Mismatch in %s packet #%d for %s/%s: tshark=%r scapy=%r" % (
-                    pcap_file,
-                    index,
-                    tshark_field,
-                    entry["scapy"],
-                    tshark_value,
-                    scapy_value,
-                )
+                f"Mismatch in {pcap_file} packet #{packet_number} for "
+                f"{tshark_field}/{entry['scapy']}: "
+                f"tshark={tshark_value!r} scapy={scapy_value!r}"
             )
 
 
-DISSECTION_CORPUS = {
-    "test/pcaps/http_content_length.pcap": {
-        "ip.src": {"scapy": "IP.src"},
-        "ip.dst": {"scapy": "IP.dst"},
-        "ip.ttl": {"scapy": "IP.ttl"},
-        "tcp.srcport": {"scapy": "TCP.sport"},
-        "tcp.dstport": {"scapy": "TCP.dport"},
-        "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
+dissection_corpus = [
+    {
+        "name": "http_content_length",
+        "pcap": "test/pcaps/http_content_length.pcap",
+        "mapping": {
+            "ip.src": {"scapy": "IP.src"},
+            "ip.dst": {"scapy": "IP.dst"},
+            "ip.ttl": {"scapy": "IP.ttl"},
+            "tcp.srcport": {"scapy": "TCP.sport"},
+            "tcp.dstport": {"scapy": "TCP.dport"},
+            "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
+        },
     },
-    "test/pcaps/netflowv9.pcap": {
-        "ip.src": {"scapy": "IP.src"},
-        "ip.dst": {"scapy": "IP.dst"},
-        "ip.ttl": {"scapy": "IP.ttl"},
-        "udp.srcport": {"scapy": "UDP.sport"},
-        "udp.dstport": {"scapy": "UDP.dport"},
+    {
+        "name": "netflowv9",
+        "pcap": "test/pcaps/netflowv9.pcap",
+        "mapping": {
+            "ip.src": {"scapy": "IP.src"},
+            "ip.dst": {"scapy": "IP.dst"},
+            "ip.ttl": {"scapy": "IP.ttl"},
+            "udp.srcport": {"scapy": "UDP.sport"},
+            "udp.dstport": {"scapy": "UDP.dport"},
+        },
     },
-}
+]
 
 
-for pcap_file, mapping in DISSECTION_CORPUS.items():
-    _compare_pcap_dissection(pcap_file, mapping)
+for corpus_entry in dissection_corpus:
+    _compare_pcap_dissection(corpus_entry["pcap"], corpus_entry["mapping"])

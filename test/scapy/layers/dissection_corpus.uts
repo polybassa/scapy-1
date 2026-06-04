@@ -34,7 +34,7 @@ def _parse_int_value(value):
         try:
             if value.lower().startswith(("0x", "+0x", "-0x")):
                 return int(value, 16)
-            return int(value, 10)
+            return int(value)
         except ValueError:
             return None
     try:

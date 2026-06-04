@@ -19,14 +19,38 @@ def _normalize_scapy_value(value):
 
 
 def _compare_tcp_flags(tshark_value, scapy_value):
+    return _compare_int_field(tshark_value, scapy_value)
+
+
+def _parse_int_value(value):
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        value = value.strip()
+        if value == "":
+            return None
+        try:
+            return int(value, 0)
+        except ValueError:
+            return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compare_int_field(tshark_value, scapy_value):
     if tshark_value == "":
         return scapy_value is None
     if scapy_value is None:
         return False
-    try:
-        return int(tshark_value) == int(scapy_value)
-    except (TypeError, ValueError):
+    tshark_int = _parse_int_value(tshark_value)
+    scapy_int = _parse_int_value(scapy_value)
+    if tshark_int is None or scapy_int is None:
         return False
+    return tshark_int == scapy_int
 
 
 def _default_compare(tshark_value, scapy_value):
@@ -118,9 +142,28 @@ dissection_corpus = [
         "mapping": {
             "ip.src": {"scapy": "IP.src"},
             "ip.dst": {"scapy": "IP.dst"},
-            "ip.ttl": {"scapy": "IP.ttl"},
-            "tcp.srcport": {"scapy": "TCP.sport"},
-            "tcp.dstport": {"scapy": "TCP.dport"},
+            "ip.version": {"scapy": "IP.version", "compare": _compare_int_field},
+            "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
+            "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
+            "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
+            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
+            "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
+            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
+            "tcp.srcport": {"scapy": "TCP.sport", "compare": _compare_int_field},
+            "tcp.dstport": {"scapy": "TCP.dport", "compare": _compare_int_field},
+            "tcp.seq": {"scapy": "TCP.seq", "compare": _compare_int_field},
+            "tcp.ack": {"scapy": "TCP.ack", "compare": _compare_int_field},
+            "tcp.window_size_value": {
+                "scapy": "TCP.window",
+                "compare": _compare_int_field,
+            },
+            "tcp.checksum": {"scapy": "TCP.chksum", "compare": _compare_int_field},
+            "tcp.urgent_pointer": {
+                "scapy": "TCP.urgptr",
+                "compare": _compare_int_field,
+            },
             "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
         },
     },
@@ -130,9 +173,19 @@ dissection_corpus = [
         "mapping": {
             "ip.src": {"scapy": "IP.src"},
             "ip.dst": {"scapy": "IP.dst"},
-            "ip.ttl": {"scapy": "IP.ttl"},
-            "udp.srcport": {"scapy": "UDP.sport"},
-            "udp.dstport": {"scapy": "UDP.dport"},
+            "ip.version": {"scapy": "IP.version", "compare": _compare_int_field},
+            "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
+            "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
+            "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
+            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
+            "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
+            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
+            "udp.srcport": {"scapy": "UDP.sport", "compare": _compare_int_field},
+            "udp.dstport": {"scapy": "UDP.dport", "compare": _compare_int_field},
+            "udp.length": {"scapy": "UDP.len", "compare": _compare_int_field},
+            "udp.checksum": {"scapy": "UDP.chksum", "compare": _compare_int_field},
         },
     },
     {
@@ -141,9 +194,28 @@ dissection_corpus = [
         "mapping": {
             "ip.src": {"scapy": "IP.src"},
             "ip.dst": {"scapy": "IP.dst"},
-            "ip.ttl": {"scapy": "IP.ttl"},
-            "tcp.srcport": {"scapy": "TCP.sport"},
-            "tcp.dstport": {"scapy": "TCP.dport"},
+            "ip.version": {"scapy": "IP.version", "compare": _compare_int_field},
+            "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
+            "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
+            "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
+            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
+            "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
+            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
+            "tcp.srcport": {"scapy": "TCP.sport", "compare": _compare_int_field},
+            "tcp.dstport": {"scapy": "TCP.dport", "compare": _compare_int_field},
+            "tcp.seq": {"scapy": "TCP.seq", "compare": _compare_int_field},
+            "tcp.ack": {"scapy": "TCP.ack", "compare": _compare_int_field},
+            "tcp.window_size_value": {
+                "scapy": "TCP.window",
+                "compare": _compare_int_field,
+            },
+            "tcp.checksum": {"scapy": "TCP.chksum", "compare": _compare_int_field},
+            "tcp.urgent_pointer": {
+                "scapy": "TCP.urgptr",
+                "compare": _compare_int_field,
+            },
             "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
         },
     },
@@ -153,9 +225,28 @@ dissection_corpus = [
         "mapping": {
             "ip.src": {"scapy": "IP.src"},
             "ip.dst": {"scapy": "IP.dst"},
-            "ip.ttl": {"scapy": "IP.ttl"},
-            "tcp.srcport": {"scapy": "TCP.sport"},
-            "tcp.dstport": {"scapy": "TCP.dport"},
+            "ip.version": {"scapy": "IP.version", "compare": _compare_int_field},
+            "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
+            "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
+            "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
+            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
+            "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
+            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
+            "tcp.srcport": {"scapy": "TCP.sport", "compare": _compare_int_field},
+            "tcp.dstport": {"scapy": "TCP.dport", "compare": _compare_int_field},
+            "tcp.seq": {"scapy": "TCP.seq", "compare": _compare_int_field},
+            "tcp.ack": {"scapy": "TCP.ack", "compare": _compare_int_field},
+            "tcp.window_size_value": {
+                "scapy": "TCP.window",
+                "compare": _compare_int_field,
+            },
+            "tcp.checksum": {"scapy": "TCP.chksum", "compare": _compare_int_field},
+            "tcp.urgent_pointer": {
+                "scapy": "TCP.urgptr",
+                "compare": _compare_int_field,
+            },
             "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
         },
     },
@@ -165,9 +256,19 @@ dissection_corpus = [
         "mapping": {
             "ip.src": {"scapy": "IP.src"},
             "ip.dst": {"scapy": "IP.dst"},
-            "ip.ttl": {"scapy": "IP.ttl"},
-            "udp.srcport": {"scapy": "UDP.sport"},
-            "udp.dstport": {"scapy": "UDP.dport"},
+            "ip.version": {"scapy": "IP.version", "compare": _compare_int_field},
+            "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
+            "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
+            "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
+            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
+            "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
+            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
+            "udp.srcport": {"scapy": "UDP.sport", "compare": _compare_int_field},
+            "udp.dstport": {"scapy": "UDP.dport", "compare": _compare_int_field},
+            "udp.length": {"scapy": "UDP.len", "compare": _compare_int_field},
+            "udp.checksum": {"scapy": "UDP.chksum", "compare": _compare_int_field},
         },
     },
 ]

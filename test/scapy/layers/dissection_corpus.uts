@@ -135,6 +135,41 @@ dissection_corpus = [
             "udp.dstport": {"scapy": "UDP.dport"},
         },
     },
+    {
+        "name": "http_compressed",
+        "pcap": "test/pcaps/http_compressed.pcap",
+        "mapping": {
+            "ip.src": {"scapy": "IP.src"},
+            "ip.dst": {"scapy": "IP.dst"},
+            "ip.ttl": {"scapy": "IP.ttl"},
+            "tcp.srcport": {"scapy": "TCP.sport"},
+            "tcp.dstport": {"scapy": "TCP.dport"},
+            "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
+        },
+    },
+    {
+        "name": "ssh_ed25519",
+        "pcap": "test/pcaps/ssh_ed25519.pcap",
+        "mapping": {
+            "ip.src": {"scapy": "IP.src"},
+            "ip.dst": {"scapy": "IP.dst"},
+            "ip.ttl": {"scapy": "IP.ttl"},
+            "tcp.srcport": {"scapy": "TCP.sport"},
+            "tcp.dstport": {"scapy": "TCP.dport"},
+            "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
+        },
+    },
+    {
+        "name": "ipfix",
+        "pcap": "test/pcaps/ipfix.pcap",
+        "mapping": {
+            "ip.src": {"scapy": "IP.src"},
+            "ip.dst": {"scapy": "IP.dst"},
+            "ip.ttl": {"scapy": "IP.ttl"},
+            "udp.srcport": {"scapy": "UDP.sport"},
+            "udp.dstport": {"scapy": "UDP.dport"},
+        },
+    },
 ]
 
 

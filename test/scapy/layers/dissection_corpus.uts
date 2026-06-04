@@ -14,7 +14,7 @@ def _normalize_scapy_value(value):
     if value is None:
         return ""
     if isinstance(value, bytes):
-        return value.decode("utf8", errors="replace")
+        return value.decode("utf-8", errors="replace")
     return str(value)
 
 
@@ -24,9 +24,20 @@ def _compare_tcp_flags(tshark_value, scapy_value):
     return int(tshark_value) == int(scapy_value)
 
 
+def _default_compare(tshark_value, scapy_value):
+    return tshark_value == _normalize_scapy_value(scapy_value)
+
+
+LAYER_BY_NAME = {
+    "IP": IP,
+    "TCP": TCP,
+    "UDP": UDP,
+}
+
+
 def _get_scapy_field(packet, scapy_field):
     layer_name, field_name = scapy_field.split(".", 1)
-    layer = globals()[layer_name]
+    layer = LAYER_BY_NAME[layer_name]
     if layer not in packet:
         return None
     return getattr(packet[layer], field_name)
@@ -44,7 +55,7 @@ def _extract_tshark_rows(pcap_path, mapping):
         dump=True,
         wait=True,
     )
-    lines = output.decode("utf8").splitlines()
+    lines = output.decode("utf-8").splitlines()
     rows = [line.split("\t") for line in lines]
     return rows
 
@@ -71,11 +82,7 @@ def _compare_pcap_dissection(pcap_file, mapping):
         )
         for position, tshark_field in enumerate(tshark_fields):
             entry = mapping[tshark_field]
-            compare = entry.get("compare")
-            if compare is None:
-                compare = lambda tshark_val, scapy_val: (
-                    tshark_val == _normalize_scapy_value(scapy_val)
-                )
+            compare = entry.get("compare", _default_compare)
             scapy_value = _get_scapy_field(packet, entry["scapy"])
             tshark_value = tshark_row[position]
             assert compare(tshark_value, scapy_value), (

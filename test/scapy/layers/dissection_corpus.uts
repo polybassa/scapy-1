@@ -11,6 +11,8 @@ import os
 
 
 def _normalize_scapy_value(value):
+    if isinstance(value, tuple):
+        value = value[0]
     if value is None:
         return ""
     if isinstance(value, bytes):
@@ -23,6 +25,8 @@ def _compare_tcp_flags(tshark_value, scapy_value):
 
 
 def _parse_int_value(value):
+    if isinstance(value, tuple):
+        value = value[0]
     if value is None:
         return None
     if isinstance(value, bytes):
@@ -59,6 +63,37 @@ def _default_compare(tshark_value, scapy_value):
     return tshark_value == _normalize_scapy_value(scapy_value)
 
 
+def _normalize_enum_text(value):
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    return "".join(ch.lower() for ch in str(value) if ch.isalnum())
+
+
+def _compare_enum_field(tshark_value, scapy_value):
+    if isinstance(scapy_value, tuple):
+        scapy_value = scapy_value[1]
+    tshark_enum = _normalize_enum_text(tshark_value)
+    scapy_enum = _normalize_enum_text(scapy_value)
+    if not tshark_enum or not scapy_enum:
+        return False
+    return tshark_enum == scapy_enum
+
+
+def _get_compare_functions(entry):
+    compare = entry.get("compare", _default_compare)
+    if not isinstance(compare, (list, tuple)):
+        compare = [compare]
+    assert compare, "At least one compare function must be provided"
+    for compare_func in compare:
+        assert callable(compare_func), (
+            f"Invalid compare function in mapping for {entry['scapy']!r}: "
+            f"{compare_func!r}"
+        )
+    return compare
+
+
 LAYER_BY_NAME = {
     "IP": IP,
     "TCP": TCP,
@@ -86,7 +121,10 @@ def _get_scapy_field(packet, scapy_field):
     assert hasattr(packet[layer], field_name), (
         f"Field {field_name!r} does not exist on layer {layer_name!r}"
     )
-    return getattr(packet[layer], field_name)
+    return (
+        getattr(packet[layer], field_name),
+        packet.sprintf(f"%{layer_name}.{field_name}%"),
+    )
 
 
 def _extract_tshark_rows(pcap_path, mapping):
@@ -127,10 +165,13 @@ def _compare_pcap_dissection(pcap_file, mapping):
         )
         for field_idx, tshark_field in enumerate(tshark_fields):
             entry = mapping[tshark_field]
-            compare = entry.get("compare", _default_compare)
+            compare_functions = _get_compare_functions(entry)
             scapy_value = _get_scapy_field(packet, entry["scapy"])
             tshark_value = tshark_row[field_idx]
-            assert compare(tshark_value, scapy_value), (
+            assert any(
+                compare(tshark_value, scapy_value)
+                for compare in compare_functions
+            ), (
                 f"Mismatch in {pcap_file} packet #{packet_number} for "
                 f"{tshark_field}/{entry['scapy']}: "
                 f"tshark={tshark_value!r} scapy={scapy_value!r}"
@@ -148,10 +189,16 @@ dissection_corpus = [
             "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
             "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
             "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
-            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.flags": {
+                "scapy": "IP.flags",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
             "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
-            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.proto": {
+                "scapy": "IP.proto",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
             "tcp.srcport": {"scapy": "TCP.sport", "compare": _compare_int_field},
             "tcp.dstport": {"scapy": "TCP.dport", "compare": _compare_int_field},
@@ -166,7 +213,10 @@ dissection_corpus = [
                 "scapy": "TCP.urgptr",
                 "compare": _compare_int_field,
             },
-            "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
+            "tcp.flags": {
+                "scapy": "TCP.flags",
+                "compare": [_compare_tcp_flags, _compare_enum_field],
+            },
         },
     },
     {
@@ -179,10 +229,16 @@ dissection_corpus = [
             "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
             "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
             "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
-            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.flags": {
+                "scapy": "IP.flags",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
             "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
-            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.proto": {
+                "scapy": "IP.proto",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
             "udp.srcport": {"scapy": "UDP.sport", "compare": _compare_int_field},
             "udp.dstport": {"scapy": "UDP.dport", "compare": _compare_int_field},
@@ -200,10 +256,16 @@ dissection_corpus = [
             "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
             "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
             "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
-            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.flags": {
+                "scapy": "IP.flags",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
             "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
-            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.proto": {
+                "scapy": "IP.proto",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
             "tcp.srcport": {"scapy": "TCP.sport", "compare": _compare_int_field},
             "tcp.dstport": {"scapy": "TCP.dport", "compare": _compare_int_field},
@@ -218,7 +280,10 @@ dissection_corpus = [
                 "scapy": "TCP.urgptr",
                 "compare": _compare_int_field,
             },
-            "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
+            "tcp.flags": {
+                "scapy": "TCP.flags",
+                "compare": [_compare_tcp_flags, _compare_enum_field],
+            },
         },
     },
     {
@@ -231,10 +296,16 @@ dissection_corpus = [
             "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
             "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
             "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
-            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.flags": {
+                "scapy": "IP.flags",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
             "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
-            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.proto": {
+                "scapy": "IP.proto",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
             "tcp.srcport": {"scapy": "TCP.sport", "compare": _compare_int_field},
             "tcp.dstport": {"scapy": "TCP.dport", "compare": _compare_int_field},
@@ -249,7 +320,10 @@ dissection_corpus = [
                 "scapy": "TCP.urgptr",
                 "compare": _compare_int_field,
             },
-            "tcp.flags": {"scapy": "TCP.flags", "compare": _compare_tcp_flags},
+            "tcp.flags": {
+                "scapy": "TCP.flags",
+                "compare": [_compare_tcp_flags, _compare_enum_field],
+            },
         },
     },
     {
@@ -262,10 +336,16 @@ dissection_corpus = [
             "ip.dsfield": {"scapy": "IP.tos", "compare": _compare_int_field},
             "ip.len": {"scapy": "IP.len", "compare": _compare_int_field},
             "ip.id": {"scapy": "IP.id", "compare": _compare_int_field},
-            "ip.flags": {"scapy": "IP.flags", "compare": _compare_int_field},
+            "ip.flags": {
+                "scapy": "IP.flags",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.frag_offset": {"scapy": "IP.frag", "compare": _compare_int_field},
             "ip.ttl": {"scapy": "IP.ttl", "compare": _compare_int_field},
-            "ip.proto": {"scapy": "IP.proto", "compare": _compare_int_field},
+            "ip.proto": {
+                "scapy": "IP.proto",
+                "compare": [_compare_int_field, _compare_enum_field],
+            },
             "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
             "udp.srcport": {"scapy": "UDP.sport", "compare": _compare_int_field},
             "udp.dstport": {"scapy": "UDP.dport", "compare": _compare_int_field},

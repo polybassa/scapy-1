@@ -157,7 +157,7 @@ def _get_scapy_field(packet: Packet, scapy_field: str) -> ScapyFieldValue:
     )
     return (
         getattr(packet[layer], field_name),
-        packet.sprintf("%%%s.%s%%" % (layer_name, field_name)),
+        packet.sprintf(f"%{layer_name}.{field_name}%"),
     )
 
 

@@ -11,8 +11,7 @@ import os
 
 
 def _normalize_scapy_value(value):
-    if isinstance(value, tuple):
-        value = value[0]
+    value = _get_scapy_raw_value(value)
     if value is None:
         return ""
     if isinstance(value, bytes):
@@ -25,8 +24,7 @@ def _compare_tcp_flags(tshark_value, scapy_value):
 
 
 def _parse_int_value(value):
-    if isinstance(value, tuple):
-        value = value[0]
+    value = _get_scapy_raw_value(value)
     if value is None:
         return None
     if isinstance(value, bytes):
@@ -63,7 +61,7 @@ def _default_compare(tshark_value, scapy_value):
     return tshark_value == _normalize_scapy_value(scapy_value)
 
 
-def _normalize_enum_text(value):
+def _normalize_alnum_lower(value):
     if value is None:
         return ""
     if isinstance(value, bytes):
@@ -72,26 +70,45 @@ def _normalize_enum_text(value):
 
 
 def _compare_enum_field(tshark_value, scapy_value):
-    if isinstance(scapy_value, tuple):
-        scapy_value = scapy_value[1]
-    tshark_enum = _normalize_enum_text(tshark_value)
-    scapy_enum = _normalize_enum_text(scapy_value)
+    scapy_value = _get_scapy_display_value(scapy_value)
+    tshark_enum = _normalize_alnum_lower(tshark_value)
+    scapy_enum = _normalize_alnum_lower(scapy_value)
     if not tshark_enum or not scapy_enum:
         return False
     return tshark_enum == scapy_enum
 
 
-def _get_compare_functions(entry):
-    compare = entry.get("compare", _default_compare)
-    if not isinstance(compare, (list, tuple)):
-        compare = [compare]
-    assert compare, "At least one compare function must be provided"
-    for compare_func in compare:
+def _get_scapy_raw_value(scapy_value):
+    if isinstance(scapy_value, tuple):
+        return scapy_value[0]
+    return scapy_value
+
+
+def _get_scapy_display_value(scapy_value):
+    if isinstance(scapy_value, tuple):
+        return scapy_value[1]
+    return scapy_value
+
+
+def _get_compare_functions(tshark_field, entry):
+    compare = entry.get("compare")
+    if compare is None:
+        compare_functions = [_default_compare]
+    elif isinstance(compare, (list, tuple)):
+        assert compare, (
+            f"At least one compare function must be provided for "
+            f"{tshark_field!r} ({entry.get('scapy', 'unknown')!r})"
+        )
+        compare_functions = compare
+    else:
+        compare_functions = [compare]
+    for compare_func in compare_functions:
         assert callable(compare_func), (
-            f"Invalid compare function in mapping for {entry['scapy']!r}: "
+            f"Invalid compare function in mapping for "
+            f"{tshark_field!r} ({entry.get('scapy', 'unknown')!r}): "
             f"{compare_func!r}"
         )
-    return compare
+    return compare_functions
 
 
 LAYER_BY_NAME = {
@@ -165,12 +182,12 @@ def _compare_pcap_dissection(pcap_file, mapping):
         )
         for field_idx, tshark_field in enumerate(tshark_fields):
             entry = mapping[tshark_field]
-            compare_functions = _get_compare_functions(entry)
+            compare_functions = _get_compare_functions(tshark_field, entry)
             scapy_value = _get_scapy_field(packet, entry["scapy"])
             tshark_value = tshark_row[field_idx]
             assert any(
-                compare(tshark_value, scapy_value)
-                for compare in compare_functions
+                compare_func(tshark_value, scapy_value)
+                for compare_func in compare_functions
             ), (
                 f"Mismatch in {pcap_file} packet #{packet_number} for "
                 f"{tshark_field}/{entry['scapy']}: "

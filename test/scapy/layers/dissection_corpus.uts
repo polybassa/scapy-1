@@ -37,8 +37,8 @@ dissection_corpus = [
             "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
             "tcp.srcport": {"scapy": "TCP.sport", "compare": _compare_int_field},
             "tcp.dstport": {"scapy": "TCP.dport", "compare": _compare_int_field},
-            "tcp.seq": {"scapy": "TCP.seq", "compare": _compare_int_field},
-            "tcp.ack": {"scapy": "TCP.ack", "compare": _compare_int_field},
+            "tcp.seq_raw": {"scapy": "TCP.seq", "compare": _compare_int_field},
+            "tcp.ack_raw": {"scapy": "TCP.ack", "compare": _compare_int_field},
             "tcp.window_size_value": {
                 "scapy": "TCP.window",
                 "compare": _compare_int_field,
@@ -104,8 +104,8 @@ dissection_corpus = [
             "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
             "tcp.srcport": {"scapy": "TCP.sport", "compare": _compare_int_field},
             "tcp.dstport": {"scapy": "TCP.dport", "compare": _compare_int_field},
-            "tcp.seq": {"scapy": "TCP.seq", "compare": _compare_int_field},
-            "tcp.ack": {"scapy": "TCP.ack", "compare": _compare_int_field},
+            "tcp.seq_raw": {"scapy": "TCP.seq", "compare": _compare_int_field},
+            "tcp.ack_raw": {"scapy": "TCP.ack", "compare": _compare_int_field},
             "tcp.window_size_value": {
                 "scapy": "TCP.window",
                 "compare": _compare_int_field,
@@ -144,8 +144,8 @@ dissection_corpus = [
             "ip.checksum": {"scapy": "IP.chksum", "compare": _compare_int_field},
             "tcp.srcport": {"scapy": "TCP.sport", "compare": _compare_int_field},
             "tcp.dstport": {"scapy": "TCP.dport", "compare": _compare_int_field},
-            "tcp.seq": {"scapy": "TCP.seq", "compare": _compare_int_field},
-            "tcp.ack": {"scapy": "TCP.ack", "compare": _compare_int_field},
+            "tcp.seq_raw": {"scapy": "TCP.seq", "compare": _compare_int_field},
+            "tcp.ack_raw": {"scapy": "TCP.ack", "compare": _compare_int_field},
             "tcp.window_size_value": {
                 "scapy": "TCP.window",
                 "compare": _compare_int_field,

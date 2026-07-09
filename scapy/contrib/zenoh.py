@@ -586,6 +586,25 @@ class ZenohDeclare(Packet):
     ]
 
 
+class ZenohOAM(Packet):
+    """Zenoh OAM (Operations, Administration, and Maintenance) network message.
+
+    Header byte layout: [_|Z|_][OAM(0x1f)]
+      bit 7: _ (reserved)
+      bit 6: Z - zenoh extensions present
+      bit 5: _ (reserved)
+      bits[4:0]: 0x1f (OAM MID)
+    """
+    name = "ZenohOAM"
+    fields_desc = [
+        BitField("flag_reserved1", 0, 1),
+        BitField("flag_z", 0, 1),
+        BitField("flag_reserved2", 0, 1),
+        BitEnumField("mid", 0x1f, 5, ZENOH_NETWORK_MID),
+        ZenohVarIntField("id", 0),
+    ]
+
+
 # ============================================================================
 # Dispatch Tables
 # ============================================================================
@@ -614,6 +633,7 @@ _NETWORK_MSG_CLASSES = {
     0x02: ZenohResponse,
     0x03: ZenohResponseFinal,
     0x05: ZenohDeclare,
+    0x1f: ZenohOAM,
 }
 
 

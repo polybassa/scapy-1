@@ -431,6 +431,21 @@ assert data[0] == 0x05
 parsed = ZenohDeclare(data)
 assert parsed.mid == 5
 
+= ZenohOAM: build and dissect
+oam = ZenohOAM(id=1)
+data = raw(oam)
+assert data[0] == 0x1f
+parsed = ZenohOAM(data)
+assert parsed.mid == 0x1f
+assert parsed.id == 1
+
+= ZenohFrame: dispatch to OAM network message
+oam_data = raw(ZenohOAM(id=42))
+frame_data = raw(ZenohFrame(flag_r=0, sn=0)) + oam_data
+frame = ZenohFrame(frame_data)
+assert ZenohOAM in frame
+assert frame[ZenohOAM].id == 42
+
 
 + Dispatch layer tests
 

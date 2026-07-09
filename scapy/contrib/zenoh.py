@@ -601,7 +601,7 @@ class ZenohOAM(Packet):
         BitField("flag_z", 0, 1),
         BitField("flag_reserved2", 0, 1),
         BitEnumField("mid", 0x1f, 5, ZENOH_NETWORK_MID),
-        ZenohVarIntField("id", 0),
+        ZenohVarIntField("oam_id", 0),
     ]
 
 

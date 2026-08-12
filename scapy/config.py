@@ -939,6 +939,19 @@ def _reset_tls_nss_keys(attr, val, old):
     return val
 
 
+def _dissection_changer(attr, val, old):
+    # type: (str, bool, bool) -> bool
+    """Compile the dissection of the packet classes, or give it back"""
+    from scapy.fastdissect import disable, enable
+    if val:
+        # A class is compiled when a packet of it first turns up, so that
+        # loading Scapy and dissecting a handful of packets stay as they are
+        enable(lazy=True)
+    else:
+        disable()
+    return val
+
+
 class Conf(ConfClass):
     """
     This object contains the configuration of Scapy.
@@ -1055,6 +1068,11 @@ class Conf(ConfClass):
     auto_fragment = True
     #: raise exception when a packet dissector raises an exception
     debug_dissector = False
+    #: compile the fields, the bindings and the layer of the packet classes
+    #: into a dissection of their own. See scapy.fastdissect
+    compile_dissectors: bool = Interceptor(
+        "compile_dissectors", False, _dissection_changer
+    )
     color_theme: ColorTheme = Interceptor("color_theme", NoTheme(), _prompt_changer)
     #: how much time between warnings from the same place
     warning_threshold = 5

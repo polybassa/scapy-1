@@ -44,6 +44,10 @@ class CBOR_Exception(Exception):
     pass
 
 
+class CBOR_INDEFINITE(object):
+    """Marker returned by :func:`CBOR_decode_head` for indefinite-length items."""
+
+
 class CBOR_Codec_Encoding_Error(CBOR_Encoding_Error):
     def __init__(self,
                  msg,  # type: str
@@ -69,15 +73,16 @@ class CBOR_Codec_Decoding_Error(CBOR_Decoding_Error):
 
 
 def CBOR_encode_head(major_type, value):
-    # type: (int, Optional[int]) -> bytes
+    # type: (int, int) -> bytes
     """
     Encode CBOR initial byte and additional info.
     Format: 3 bits major type + 5 bits additional info
     """
-    if value is None or value < 24:
+    if value is None:
+        raise CBOR_Codec_Encoding_Error(
+            "Indefinite length requires CBOR_encode_indefinite_head")
+    if value < 24:
         # Value fits in 5 bits
-        if value is None:
-            value = 0x1f
         return chb((major_type << 5) | value)
     elif value < 256:
         # 1-byte value follows
@@ -93,8 +98,39 @@ def CBOR_encode_head(major_type, value):
         return chb((major_type << 5) | 27) + struct.pack(">Q", value)
 
 
+def CBOR_encode_indefinite_head(major_type):
+    # type: (int) -> bytes
+    """Encode a CBOR indefinite-length header (additional info 31)."""
+    if major_type not in (2, 3, 4, 5):
+        raise CBOR_Codec_Encoding_Error(
+            "Indefinite length not allowed for major type %d" % major_type
+        )
+    return chb((major_type << 5) | 31)
+
+
+def CBOR_encode_break():
+    # type: () -> bytes
+    """Encode the CBOR break stop code (0xff)."""
+    return b'\xff'
+
+
+def cbor_is_break(s):
+    # type: (bytes) -> bool
+    """Return whether *s* begins with a CBOR break byte."""
+    return bool(s) and orb(s[0]) == 0xff
+
+
+def cbor_consume_break(s):
+    # type: (bytes) -> bytes
+    """Consume a leading CBOR break byte from *s*."""
+    if not cbor_is_break(s):
+        raise CBOR_Codec_Decoding_Error(
+            "Expected break byte (0xff)", remaining=s)
+    return s[1:]
+
+
 def CBOR_decode_head(s):
-    # type: (bytes) -> Tuple[int, Optional[int], bytes]
+    # type: (bytes) -> Tuple[int, Union[int, CBOR_INDEFINITE], bytes]
     """
     Decode CBOR initial byte and additional info.
     Returns: (major_type, value, remaining_bytes)
@@ -137,7 +173,18 @@ def CBOR_decode_head(s):
         value = struct.unpack(">Q", s[1:9])[0]
         return major_type, value, s[9:]
     elif additional_info == 31:
-        return major_type, None, s[1:]
+        if major_type in (0, 1, 6):
+            raise CBOR_Codec_Decoding_Error(
+                "Indefinite length not allowed for major type %d" %
+                major_type, remaining=s)
+        if major_type in (2, 3, 4, 5):
+            return major_type, CBOR_INDEFINITE, s[1:]
+        raise CBOR_Codec_Decoding_Error(
+            "Indefinite length not allowed for major type %d" %
+            major_type, remaining=s)
+    elif additional_info in (28, 29, 30):
+        raise CBOR_Codec_Decoding_Error(
+            "Reserved additional info: %d" % additional_info, remaining=s)
     else:
         raise CBOR_Codec_Decoding_Error(
             "Invalid additional info: %d" % additional_info, remaining=s)
@@ -328,6 +375,28 @@ class CBORcodec_BYTE_STRING(CBORcodec_Object[bytes]):
             raise CBOR_Codec_Decoding_Error(
                 "Expected major type 2 (byte string), got %d" % major_type,
                 remaining=s)
+        if length is CBOR_INDEFINITE:
+            chunks = []  # type: List[bytes]
+            while True:
+                if cbor_is_break(remainder):
+                    remainder = cbor_consume_break(remainder)
+                    break
+                chunk_mt, chunk_len, remainder = CBOR_decode_head(remainder)
+                if chunk_mt != 2:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Indefinite byte string chunk must be major type 2",
+                        remaining=remainder)
+                if chunk_len is CBOR_INDEFINITE:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Nested indefinite byte string", remaining=remainder)
+                if len(remainder) < chunk_len:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Not enough bytes for byte string chunk: "
+                        "expected %d, got %d" %
+                        (chunk_len, len(remainder)), remaining=remainder)
+                chunks.append(remainder[:chunk_len])
+                remainder = remainder[chunk_len:]
+            return cls.cbor_object(b"".join(chunks)), remainder
         if len(remainder) < length:
             raise CBOR_Codec_Decoding_Error(
                 "Not enough bytes for byte string: expected %d, got %d" %
@@ -364,6 +433,33 @@ class CBORcodec_TEXT_STRING(CBORcodec_Object[str]):
             raise CBOR_Codec_Decoding_Error(
                 "Expected major type 3 (text string), got %d" % major_type,
                 remaining=s)
+        if length is CBOR_INDEFINITE:
+            chunks = []  # type: List[bytes]
+            while True:
+                if cbor_is_break(remainder):
+                    remainder = cbor_consume_break(remainder)
+                    break
+                chunk_mt, chunk_len, remainder = CBOR_decode_head(remainder)
+                if chunk_mt != 3:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Indefinite text string chunk must be major type 3",
+                        remaining=remainder)
+                if chunk_len is CBOR_INDEFINITE:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Nested indefinite text string", remaining=remainder)
+                if len(remainder) < chunk_len:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Not enough bytes for text string chunk: "
+                        "expected %d, got %d" %
+                        (chunk_len, len(remainder)), remaining=remainder)
+                chunks.append(remainder[:chunk_len])
+                remainder = remainder[chunk_len:]
+            try:
+                text = b"".join(chunks).decode('utf-8')
+            except UnicodeDecodeError as e:
+                raise CBOR_Codec_Decoding_Error(
+                    "Invalid UTF-8 in text string: %s" % str(e), remaining=s)
+            return cls.cbor_object(text), remainder
         if len(remainder) < length:
             raise CBOR_Codec_Decoding_Error(
                 "Not enough bytes for text string: expected %d, got %d" %
@@ -406,13 +502,25 @@ class CBORcodec_ARRAY(CBORcodec_Object[List[Any]]):
                 remaining=s)
 
         items = []
-        for _ in range(length):
-            if not remainder:
-                raise CBOR_Codec_Decoding_Error(
-                    "Not enough items in array", remaining=s)
-            item, remainder = CBORcodec_Object.decode_cbor_item(
-                remainder, safe=safe)
-            items.append(item)
+        if length is CBOR_INDEFINITE:
+            while True:
+                if cbor_is_break(remainder):
+                    remainder = cbor_consume_break(remainder)
+                    break
+                if not remainder:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Not enough items in array", remaining=s)
+                item, remainder = CBORcodec_Object.decode_cbor_item(
+                    remainder, safe=safe)
+                items.append(item)
+        else:
+            for _ in range(length):
+                if not remainder:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Not enough items in array", remaining=s)
+                item, remainder = CBORcodec_Object.decode_cbor_item(
+                    remainder, safe=safe)
+                items.append(item)
 
         return cls.cbor_object(items), remainder
 
@@ -448,23 +556,44 @@ class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
                 remaining=s)
 
         mapping = {}
-        for _ in range(length):
-            if not remainder:
-                raise CBOR_Codec_Decoding_Error(
-                    "Not enough key-value pairs in map", remaining=s)
-            key, remainder = CBORcodec_Object.decode_cbor_item(
-                remainder, safe=safe)
-            if not remainder:
-                raise CBOR_Codec_Decoding_Error(
-                    "Map key without value", remaining=s)
-            value, remainder = CBORcodec_Object.decode_cbor_item(
-                remainder, safe=safe)
-            # Convert key to hashable type if it's a CBOR object
-            if isinstance(key, CBOR_Object):
-                key_val = key.val
-            else:
-                key_val = key
-            mapping[key_val] = value
+        if length is CBOR_INDEFINITE:
+            while True:
+                if cbor_is_break(remainder):
+                    remainder = cbor_consume_break(remainder)
+                    break
+                if not remainder:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Not enough key-value pairs in map", remaining=s)
+                key, remainder = CBORcodec_Object.decode_cbor_item(
+                    remainder, safe=safe)
+                if not remainder:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Map key without value", remaining=s)
+                value, remainder = CBORcodec_Object.decode_cbor_item(
+                    remainder, safe=safe)
+                if isinstance(key, CBOR_Object):
+                    key_val = key.val
+                else:
+                    key_val = key
+                mapping[key_val] = value
+        else:
+            for _ in range(length):
+                if not remainder:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Not enough key-value pairs in map", remaining=s)
+                key, remainder = CBORcodec_Object.decode_cbor_item(
+                    remainder, safe=safe)
+                if not remainder:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Map key without value", remaining=s)
+                value, remainder = CBORcodec_Object.decode_cbor_item(
+                    remainder, safe=safe)
+                # Convert key to hashable type if it's a CBOR object
+                if isinstance(key, CBOR_Object):
+                    key_val = key.val
+                else:
+                    key_val = key
+                mapping[key_val] = value
 
         return cls.cbor_object(mapping), remainder
 
@@ -656,10 +785,26 @@ class CBORcodec_SIMPLE_AND_FLOAT(CBORcodec_Object[Union[int, float, bool, None]]
 def _encode_cbor_item(item):
     # type: (Any) -> bytes
     """Encode a Python value to CBOR bytes"""
-    from scapy.cbor.cbor import CBOR_Object
+    from scapy.cbor.cbor import (
+        CBOR_Object,
+        CBOR_UNDEFINED,
+        CBOR_UNDEFINED_VALUE,
+        CBORTagValue,
+        CBORSimpleValue,
+        CBOR_SIMPLE_VALUE,
+    )
 
     if isinstance(item, CBOR_Object):
         return item.enc()
+    elif item is CBOR_UNDEFINED_VALUE:
+        return CBOR_UNDEFINED().enc()
+    elif isinstance(item, CBORTagValue):
+        return (
+            CBOR_encode_head(6, item.tag) +
+            _encode_cbor_item(item.value)
+        )
+    elif isinstance(item, CBORSimpleValue):
+        return CBORcodec_SIMPLE_AND_FLOAT.enc(CBOR_SIMPLE_VALUE(item.value))
     elif isinstance(item, bool):
         # Must check bool before int (bool is subclass of int)
         return CBORcodec_SIMPLE_AND_FLOAT.enc(item)
@@ -691,7 +836,11 @@ def _decode_cbor_item(s, safe=False):
     if not s:
         raise CBOR_Codec_Decoding_Error("Empty CBOR data", remaining=s)
 
-    initial_byte = s[0]
+    if cbor_is_break(s):
+        raise CBOR_Codec_Decoding_Error(
+            "Standalone break byte (0xff)", remaining=s)
+
+    initial_byte = orb(s[0])
     major_type = initial_byte >> 5
 
     # Dispatch to appropriate codec based on major type

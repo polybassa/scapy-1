@@ -17,12 +17,9 @@ from typing import (
     Dict,
     Tuple,
     Type,
+    Optional,
     cast,
-    TYPE_CHECKING,
 )
-
-if TYPE_CHECKING:
-    from scapy.cbor.cborfields import CBORF_field  # noqa: F401
 
 
 class CBORPacket_metaclass(Packet_metaclass):
@@ -41,12 +38,7 @@ class CBORPacket_metaclass(Packet_metaclass):
 
 
 class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
-    CBOR_root = cast('CBORF_field[Any, Any]', None)
-
-    def setfieldval(self, attr, val):
-        fld = cast('CBORF_field', self.get_field(attr))
-        val = fld._wrap(val)
-        super().setfieldval(attr, val)
+    CBOR_root = None  # type: Optional[Any]
 
     def self_build(self):
         # type: () -> bytes

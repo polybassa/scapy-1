@@ -1005,10 +1005,10 @@ class PktUInt(CBOR_Packet):
     CBOR_root = CBORF_UNSIGNED_INTEGER("value", 42)
 
 pkt = PktUInt()
-assert pkt.value.val == 42
+assert pkt.value == 42
 raw_data = bytes(pkt)
 pkt2 = PktUInt(raw_data)
-assert pkt2.value.val == 42
+assert pkt2.value == 42
 
 = CBORF_UNSIGNED_INTEGER zero value
 from scapy.cbor.cborfields import CBORF_UNSIGNED_INTEGER
@@ -1021,7 +1021,7 @@ pkt = PktUIntZero()
 raw_data = bytes(pkt)
 assert raw_data == b'\x00'
 pkt2 = PktUIntZero(raw_data)
-assert pkt2.value.val == 0
+assert pkt2.value == 0
 
 = CBORF_UNSIGNED_INTEGER large value roundtrip
 from scapy.cbor.cborfields import CBORF_UNSIGNED_INTEGER
@@ -1033,7 +1033,7 @@ class PktUIntLarge(CBOR_Packet):
 pkt = PktUIntLarge()
 raw_data = bytes(pkt)
 pkt2 = PktUIntLarge(raw_data)
-assert pkt2.value.val == 1000000
+assert pkt2.value == 1000000
 
 + CBORF scalar fields - CBORF_NEGATIVE_INTEGER
 
@@ -1045,10 +1045,10 @@ class PktNInt(CBOR_Packet):
     CBOR_root = CBORF_NEGATIVE_INTEGER("value", -1)
 
 pkt = PktNInt()
-assert pkt.value.val == -1
+assert pkt.value == -1
 raw_data = bytes(pkt)
 pkt2 = PktNInt(raw_data)
-assert pkt2.value.val == -1
+assert pkt2.value == -1
 
 = CBORF_NEGATIVE_INTEGER -100 roundtrip
 from scapy.cbor.cborfields import CBORF_NEGATIVE_INTEGER
@@ -1060,7 +1060,7 @@ class PktNInt100(CBOR_Packet):
 pkt = PktNInt100()
 raw_data = bytes(pkt)
 pkt2 = PktNInt100(raw_data)
-assert pkt2.value.val == -100
+assert pkt2.value == -100
 
 + CBORF scalar fields - CBORF_INTEGER
 
@@ -1074,7 +1074,7 @@ class PktInt(CBOR_Packet):
 pkt = PktInt()
 raw_data = bytes(pkt)
 pkt2 = PktInt(raw_data)
-assert pkt2.value.val == 7
+assert pkt2.value == 7
 
 = CBORF_INTEGER negative value
 from scapy.cbor.cborfields import CBORF_INTEGER
@@ -1086,7 +1086,7 @@ class PktIntNeg(CBOR_Packet):
 pkt = PktIntNeg()
 raw_data = bytes(pkt)
 pkt2 = PktIntNeg(raw_data)
-assert pkt2.value.val == -5
+assert pkt2.value == -5
 
 + CBORF scalar fields - CBORF_BYTE_STRING
 
@@ -1098,10 +1098,10 @@ class PktBStr(CBOR_Packet):
     CBOR_root = CBORF_BYTE_STRING("data", b"hello")
 
 pkt = PktBStr()
-assert pkt.data.val == b"hello"
+assert pkt.data == b"hello"
 raw_data = bytes(pkt)
 pkt2 = PktBStr(raw_data)
-assert pkt2.data.val == b"hello"
+assert pkt2.data == b"hello"
 
 = CBORF_BYTE_STRING empty bytes
 from scapy.cbor.cborfields import CBORF_BYTE_STRING
@@ -1114,7 +1114,7 @@ pkt = PktBStrEmpty()
 raw_data = bytes(pkt)
 assert raw_data == b'\x40'
 pkt2 = PktBStrEmpty(raw_data)
-assert pkt2.data.val == b""
+assert pkt2.data == b""
 
 + CBORF scalar fields - CBORF_TEXT_STRING
 
@@ -1126,10 +1126,10 @@ class PktTStr(CBOR_Packet):
     CBOR_root = CBORF_TEXT_STRING("title", "hello")
 
 pkt = PktTStr()
-assert pkt.title.val == "hello"
+assert pkt.title == "hello"
 raw_data = bytes(pkt)
 pkt2 = PktTStr(raw_data)
-assert pkt2.title.val == "hello"
+assert pkt2.title == "hello"
 
 = CBORF_TEXT_STRING empty string
 from scapy.cbor.cborfields import CBORF_TEXT_STRING
@@ -1142,7 +1142,7 @@ pkt = PktTStrEmpty()
 raw_data = bytes(pkt)
 assert raw_data == b'\x60'
 pkt2 = PktTStrEmpty(raw_data)
-assert pkt2.title.val == ""
+assert pkt2.title == ""
 
 + CBORF scalar fields - CBORF_BOOLEAN
 
@@ -1155,11 +1155,11 @@ class PktBool(CBOR_Packet):
     CBOR_root = CBORF_BOOLEAN("flag", True)
 
 pkt = PktBool()
-assert isinstance(pkt.flag, CBOR_TRUE)
+assert pkt.flag is True
 raw_data = bytes(pkt)
 assert raw_data == b'\xf5'
 pkt2 = PktBool(raw_data)
-assert isinstance(pkt2.flag, CBOR_TRUE)
+assert pkt2.flag is True
 
 = CBORF_BOOLEAN false value
 from scapy.cbor.cborfields import CBORF_BOOLEAN
@@ -1173,7 +1173,7 @@ pkt = PktBoolFalse()
 raw_data = bytes(pkt)
 assert raw_data == b'\xf4'
 pkt2 = PktBoolFalse(raw_data)
-assert isinstance(pkt2.flag, CBOR_FALSE)
+assert pkt2.flag is False
 
 + CBORF scalar fields - CBORF_FLOAT
 
@@ -1187,7 +1187,7 @@ class PktFloat(CBOR_Packet):
 pkt = PktFloat()
 raw_data = bytes(pkt)
 pkt2 = PktFloat(raw_data)
-assert abs(pkt2.value.val - 1.5) < 1e-9
+assert abs(pkt2.value - 1.5) < 1e-9
 
 = CBORF_NULL encode/decode
 from scapy.cbor.cborfields import CBORF_NULL
@@ -1201,7 +1201,7 @@ pkt = PktNull()
 raw_data = bytes(pkt)
 assert raw_data == b'\xf6'
 pkt2 = PktNull(raw_data)
-assert isinstance(pkt2.nothing, CBOR_NULL)
+assert pkt2.nothing is None
 
 + CBORF scalar fields - CBORF_UNDEFINED
 
@@ -1217,7 +1217,7 @@ pkt = PktUndef()
 raw_data = bytes(pkt)
 assert raw_data == b'\xf7'
 pkt2 = PktUndef(raw_data)
-assert isinstance(pkt2.undef, CBOR_UNDEFINED)
+assert pkt2.undef is None
 
 + CBORF structured fields - CBORF_ARRAY
 
@@ -1232,12 +1232,12 @@ class MyCBOR(CBOR_Packet):
     )
 
 pkt = MyCBOR()
-assert pkt.version.val == 1
-assert pkt.title.val == "test"
+assert pkt.version == 1
+assert pkt.title == "test"
 raw_data = bytes(pkt)
 pkt2 = MyCBOR(raw_data)
-assert pkt2.version.val == 1
-assert pkt2.title.val == "test"
+assert pkt2.version == 1
+assert pkt2.title == "test"
 
 = CBORF_ARRAY three-field encode/decode
 from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_BOOLEAN
@@ -1253,8 +1253,8 @@ class Multi(CBOR_Packet):
 pkt = Multi()
 raw_data = bytes(pkt)
 pkt2 = Multi(raw_data)
-assert pkt2.id.val == 99
-assert pkt2.label.val == "x"
+assert pkt2.id == 99
+assert pkt2.label == "x"
 
 = CBORF_ARRAY single integer roundtrip
 from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_UNSIGNED_INTEGER
@@ -1268,7 +1268,7 @@ class Single(CBOR_Packet):
 pkt = Single()
 raw_data = bytes(pkt)
 pkt2 = Single(raw_data)
-assert pkt2.count.val == 5
+assert pkt2.count == 5
 
 + CBORF structured fields - CBORF_ARRAY_OF
 
@@ -1281,12 +1281,12 @@ class ArrOfInt(CBOR_Packet):
     CBOR_root = CBORF_ARRAY_OF("items", [], CBORF_INTEGER)
 
 pkt = ArrOfInt()
-pkt.items = [CBOR_UNSIGNED_INTEGER(1), CBOR_UNSIGNED_INTEGER(2), CBOR_UNSIGNED_INTEGER(3)]
+pkt.items = [1, 2, 3]
 raw_data = bytes(pkt)
 pkt2 = ArrOfInt(raw_data)
 assert len(pkt2.items) == 3
-assert pkt2.items[0].val == 1
-assert pkt2.items[2].val == 3
+assert pkt2.items[0] == 1
+assert pkt2.items[2] == 3
 
 + CBORF structured fields - CBORF_MAP
 
@@ -1301,12 +1301,12 @@ class MyMap(CBOR_Packet):
     )
 
 pkt = MyMap()
-assert pkt.version.val == 2
-assert pkt.title.val == "cbor"
+assert pkt.version == 2
+assert pkt.title == "cbor"
 raw_data = bytes(pkt)
 pkt2 = MyMap(raw_data)
-assert pkt2.version.val == 2
-assert pkt2.title.val == "cbor"
+assert pkt2.version == 2
+assert pkt2.title == "cbor"
 
 = CBORF_MAP byte string value
 from scapy.cbor.cborfields import CBORF_MAP, CBORF_BYTE_STRING
@@ -1320,7 +1320,7 @@ class BinMap(CBOR_Packet):
 pkt = BinMap()
 raw_data = bytes(pkt)
 pkt2 = BinMap(raw_data)
-assert pkt2.data.val == b"\xde\xad\xbe\xef"
+assert pkt2.data == b"\xde\xad\xbe\xef"
 
 + CBORF complex fields - CBORF_optional
 
@@ -1337,8 +1337,8 @@ class OptPkt(CBOR_Packet):
 pkt = OptPkt()
 raw_data = bytes(pkt)
 pkt2 = OptPkt(raw_data)
-assert pkt2.version.val == 1
-assert pkt2.title.val == ""
+assert pkt2.version == 1
+assert pkt2.title == ""
 
 + CBORF_PACKET nested packet
 
@@ -1363,7 +1363,7 @@ outer.label = outer.label  # keep default
 outer.inner = inner
 raw_data = bytes(outer)
 outer2 = Outer(raw_data)
-assert outer2.label.val == "outer"
+assert outer2.label == "outer"
 
 + CBORF_SEMANTIC_TAG
 
@@ -2062,7 +2062,7 @@ class VersionInfo2(CBOR_Packet):
 
 cbor2_data = cbor2.dumps([4, 5, 6])
 pkt = VersionInfo2(cbor2_data)
-pkt.major.val == 4 and pkt.minor.val == 5 and pkt.patch.val == 6
+pkt.major == 4 and pkt.minor == 5 and pkt.patch == 6
 
 = CBORF_ARRAY packet roundtrip through cbor2
 import cbor2
@@ -2080,7 +2080,7 @@ raw = bytes(pkt)
 cbor2_dec = cbor2.loads(raw)
 cbor2_re_enc = cbor2.dumps(cbor2_dec)
 pkt2 = MsgPkt(cbor2_re_enc)
-pkt2.code.val == 200 and pkt2.status.val == 'ok'
+pkt2.code == 200 and pkt2.status == 'ok'
 
 = CBORF_ARRAY with boolean and null fields to cbor2
 import cbor2
@@ -2113,7 +2113,7 @@ class Mixed(CBOR_Packet):
 
 cbor2_data = cbor2.dumps([42, False, None])
 pkt = Mixed(cbor2_data)
-pkt.num.val == 42
+pkt.num == 42
 
 + CBORF Fields - Interop: CBORF_MAP packet to cbor2
 
@@ -2146,7 +2146,7 @@ class Claims(CBOR_Packet):
 
 cbor2_data = cbor2.dumps({'iss': 'myapp', 'exp': 12345})
 pkt = Claims(cbor2_data)
-pkt.iss.val == 'myapp' and pkt.exp.val == 12345
+pkt.iss == 'myapp' and pkt.exp == 12345
 
 = CBORF_MAP packet roundtrip through cbor2
 import cbor2
@@ -2164,7 +2164,7 @@ raw = bytes(pkt)
 cbor2_dec = cbor2.loads(raw)
 cbor2_re_enc = cbor2.dumps(cbor2_dec)
 pkt2 = BinHeader(cbor2_re_enc)
-pkt2.alg.val == 'ES256' and pkt2.kid.val == b'\x01\x02\x03\x04'
+pkt2.alg == 'ES256' and pkt2.kid == b'\x01\x02\x03\x04'
 
 = CBORF_MAP with boolean values to cbor2
 import cbor2
@@ -2194,7 +2194,7 @@ class SimpleMap(CBOR_Packet):
 
 cbor2_data = cbor2.dumps({'known': 'value', 'unknown': 'extra'})
 pkt = SimpleMap(cbor2_data)
-pkt.known.val == 'value'
+pkt.known == 'value'
 
 + CBORF Fields - Interop: CBORF_ARRAY_OF packet to cbor2
 
@@ -2208,7 +2208,7 @@ class IntList(CBOR_Packet):
     CBOR_root = CBORF_ARRAY_OF('items', [], CBORF_INTEGER)
 
 pkt = IntList()
-pkt.items = [CBOR_UNSIGNED_INTEGER(10), CBOR_UNSIGNED_INTEGER(20), CBOR_UNSIGNED_INTEGER(30)]
+pkt.items = [10, 20, 30]
 raw = bytes(pkt)
 dec = cbor2.loads(raw)
 isinstance(dec, list) and dec == [10, 20, 30]
@@ -2223,7 +2223,7 @@ class IntList2(CBOR_Packet):
 
 cbor2_data = cbor2.dumps([100, 200, 300])
 pkt = IntList2(cbor2_data)
-len(pkt.items) == 3 and pkt.items[0].val == 100 and pkt.items[2].val == 300
+len(pkt.items) == 3 and pkt.items[0] == 100 and pkt.items[2] == 300
 
 + CBORF Fields - Interop: CBORF_SEMANTIC_TAG to cbor2
 
@@ -2266,7 +2266,7 @@ class UIntPkt(CBOR_Packet):
 results = []
 for val in [0, 23, 24, 255, 256, 65535, 65536, 4294967295, 4294967296, 18446744073709551615]:
     pkt = UIntPkt()
-    pkt.n.val = val
+    pkt.n = val
     dec = cbor2.loads(bytes(pkt))
     results.append(dec == val)
 
@@ -2283,7 +2283,7 @@ class UIntPkt2(CBOR_Packet):
 results = []
 for val in [0, 23, 24, 255, 256, 65535, 65536, 4294967295, 4294967296]:
     pkt = UIntPkt2(cbor2.dumps(val))
-    results.append(pkt.n.val == val)
+    results.append(pkt.n == val)
 
 all(results)
 
@@ -2298,7 +2298,7 @@ class UIntExact(CBOR_Packet):
 results = []
 for val in [0, 1, 10, 23, 24, 255, 256, 65535, 65536, 4294967295]:
     pkt = UIntExact()
-    pkt.n.val = val
+    pkt.n = val
     results.append(bytes(pkt) == cbor2.dumps(val))
 
 all(results)
@@ -2316,7 +2316,7 @@ class NIntPkt(CBOR_Packet):
 results = []
 for val in [-1, -24, -25, -256, -257, -65536, -65537, -4294967296, -4294967297]:
     pkt = NIntPkt()
-    pkt.n.val = val
+    pkt.n = val
     dec = cbor2.loads(bytes(pkt))
     results.append(dec == val)
 
@@ -2333,7 +2333,7 @@ class NIntPkt2(CBOR_Packet):
 results = []
 for val in [-1, -24, -25, -256, -257, -65536, -4294967296]:
     pkt = NIntPkt2(cbor2.dumps(val))
-    results.append(pkt.n.val == val)
+    results.append(pkt.n == val)
 
 all(results)
 
@@ -2348,7 +2348,7 @@ class NIntExact(CBOR_Packet):
 results = []
 for val in [-1, -10, -24, -25, -256, -257, -65536, -65537]:
     pkt = NIntExact()
-    pkt.n.val = val
+    pkt.n = val
     results.append(bytes(pkt) == cbor2.dumps(val))
 
 all(results)
@@ -2366,7 +2366,7 @@ class IntPkt(CBOR_Packet):
 results = []
 for val in [0, 1, 42, 100, 1000, 1000000]:
     pkt = IntPkt()
-    pkt.n.val = val
+    pkt.n = val
     dec = cbor2.loads(bytes(pkt))
     results.append(dec == val)
 
@@ -2383,7 +2383,7 @@ class IntNegPkt(CBOR_Packet):
 results = []
 for val in [-1, -10, -100, -1000, -1000000]:
     pkt = IntNegPkt()
-    pkt.n.val = val
+    pkt.n = val
     dec = cbor2.loads(bytes(pkt))
     results.append(dec == val)
 
@@ -2400,7 +2400,7 @@ class IntPkt2(CBOR_Packet):
 results = []
 for val in [0, 42, -1, -42, 255, -256, 65536, -65537]:
     pkt = IntPkt2(cbor2.dumps(val))
-    results.append(pkt.n.val == val)
+    results.append(pkt.n == val)
 
 all(results)
 
@@ -2427,7 +2427,7 @@ class ByteAllPkt(CBOR_Packet):
     CBOR_root = CBORF_BYTE_STRING('data', b'')
 
 pkt = ByteAllPkt()
-pkt.data.val = bytes(range(256))
+pkt.data = bytes(range(256))
 dec = cbor2.loads(bytes(pkt))
 dec == bytes(range(256))
 
@@ -2441,7 +2441,7 @@ class BytePkt3(CBOR_Packet):
 
 for raw_val in [b'', b'\xde\xad\xbe\xef', bytes(range(256))]:
     pkt = BytePkt3(cbor2.dumps(raw_val))
-    assert pkt.data.val == raw_val
+    assert pkt.data == raw_val
 
 True
 
@@ -2456,7 +2456,7 @@ class ByteExact(CBOR_Packet):
 results = []
 for raw_val in [b'', b'\x00', b'\xff', b'\xde\xad\xbe\xef', b'hello']:
     pkt = ByteExact()
-    pkt.data.val = raw_val
+    pkt.data = raw_val
     results.append(bytes(pkt) == cbor2.dumps(raw_val))
 
 all(results)
@@ -2484,7 +2484,7 @@ class TextPkt2(CBOR_Packet):
     CBOR_root = CBORF_TEXT_STRING('txt', '')
 
 pkt = TextPkt2()
-pkt.txt.val = 'Hello, World!'
+pkt.txt = 'Hello, World!'
 dec = cbor2.loads(bytes(pkt))
 dec == 'Hello, World!'
 
@@ -2497,7 +2497,7 @@ class TextUniPkt(CBOR_Packet):
     CBOR_root = CBORF_TEXT_STRING('txt', '')
 
 pkt = TextUniPkt()
-pkt.txt.val = u'Hello, \u4e16\u754c'
+pkt.txt = u'Hello, \u4e16\u754c'
 dec = cbor2.loads(bytes(pkt))
 dec == u'Hello, \u4e16\u754c'
 
@@ -2511,7 +2511,7 @@ class TextPkt3(CBOR_Packet):
 
 for s in ['', 'hello', 'Hello, World!', u'caf\u00e9', u'\u4e16\u754c']:
     pkt = TextPkt3(cbor2.dumps(s))
-    assert pkt.txt.val == s
+    assert pkt.txt == s
 
 True
 
@@ -2526,7 +2526,7 @@ class TextExact(CBOR_Packet):
 results = []
 for s in ['', 'a', 'hello', 'IETF', u'\u6c34']:
     pkt = TextExact()
-    pkt.txt.val = s
+    pkt.txt = s
     results.append(bytes(pkt) == cbor2.dumps(s))
 
 all(results)
@@ -2567,7 +2567,7 @@ class BoolPkt2(CBOR_Packet):
 
 pkt_true = BoolPkt2(cbor2.dumps(True))
 pkt_false = BoolPkt2(cbor2.dumps(False))
-pkt_true.flag.val is True and pkt_false.flag.val is False
+pkt_true.flag is True and pkt_false.flag is False
 
 = CBORF_BOOLEAN byte-exact comparison with cbor2
 import cbor2
@@ -2634,7 +2634,7 @@ class FloatPkt(CBOR_Packet):
 results = []
 for val in [0.0, 1.0, -1.0, 3.14159, 1e10, -2.5]:
     pkt = FloatPkt()
-    pkt.f.val = val
+    pkt.f = val
     dec = cbor2.loads(bytes(pkt))
     results.append(dec == val)
 
@@ -2649,13 +2649,13 @@ class FloatSpecialPkt(CBOR_Packet):
     CBOR_root = CBORF_FLOAT('f', 0.0)
 
 pkt_nan = FloatSpecialPkt()
-pkt_nan.f.val = float('nan')
+pkt_nan.f = float('nan')
 raw_nan = bytes(pkt_nan)
 pkt_inf = FloatSpecialPkt()
-pkt_inf.f.val = float('inf')
+pkt_inf.f = float('inf')
 raw_inf = bytes(pkt_inf)
 pkt_ninf = FloatSpecialPkt()
-pkt_ninf.f.val = float('-inf')
+pkt_ninf.f = float('-inf')
 raw_ninf = bytes(pkt_ninf)
 math.isnan(cbor2.loads(raw_nan)) and math.isinf(cbor2.loads(raw_inf)) and cbor2.loads(raw_ninf) == float('-inf')
 
@@ -2672,7 +2672,7 @@ class FloatArrPkt(CBOR_Packet):
     )
 
 pkt = FloatArrPkt(cbor2.dumps([float('nan'), float('inf'), float('-inf')]))
-math.isnan(pkt.nan_val.val) and math.isinf(pkt.inf_val.val) and pkt.ninf_val.val == float('-inf')
+math.isnan(pkt.nan_val) and math.isinf(pkt.inf_val) and pkt.ninf_val == float('-inf')
 
 = CBORF_FLOAT - cbor2 encode, Scapy decode roundtrip
 import cbor2
@@ -2685,7 +2685,7 @@ class FloatPkt2(CBOR_Packet):
 results = []
 for val in [0.0, 1.0, -1.0, 2.5, 100.0]:
     pkt = FloatPkt2(cbor2.dumps(val))
-    results.append(pkt.f.val == val)
+    results.append(pkt.f == val)
 
 all(results)
 
@@ -2735,7 +2735,7 @@ class RecordPkt(CBOR_Packet):
     )
 
 pkt = RecordPkt(cbor2.dumps([200, 'OK']))
-pkt.code.val == 200 and pkt.msg.val == 'OK'
+pkt.code == 200 and pkt.msg == 'OK'
 
 = CBORF_ARRAY roundtrip through cbor2 - multiple encode/decode cycles
 import cbor2
@@ -2753,7 +2753,7 @@ raw = bytes(pkt)
 cbor2_dec = cbor2.loads(raw)
 re_enc = cbor2.dumps(cbor2_dec)
 pkt2 = RTPkt(re_enc)
-pkt2.seq.val == 1 and pkt2.data.val == 'payload'
+pkt2.seq == 1 and pkt2.data == 'payload'
 
 = CBORF_ARRAY with null elements - Scapy encode, cbor2 decode
 import cbor2
@@ -2782,7 +2782,7 @@ class TextListPkt(CBOR_Packet):
     CBOR_root = CBORF_ARRAY_OF('items', [], CBORF_TEXT_STRING)
 
 pkt = TextListPkt(cbor2.dumps(['hello', 'world', 'foo']))
-len(pkt.items) == 3 and pkt.items[0].val == 'hello' and pkt.items[2].val == 'foo'
+len(pkt.items) == 3 and pkt.items[0] == 'hello' and pkt.items[2] == 'foo'
 
 = CBORF_ARRAY_OF with text strings - Scapy encode, cbor2 decode
 import cbor2
@@ -2812,7 +2812,7 @@ pkt.items = [CBOR_TEXT_STRING('x'), CBOR_TEXT_STRING('y'), CBOR_TEXT_STRING('z')
 raw = bytes(pkt)
 re_enc = cbor2.dumps(cbor2.loads(raw))
 pkt2 = TextListRT(re_enc)
-len(pkt2.items) == 3 and pkt2.items[1].val == 'y'
+len(pkt2.items) == 3 and pkt2.items[1] == 'y'
 
 = CBORF_ARRAY_OF with byte strings - cbor2 encode, Scapy decode
 import cbor2
@@ -2824,7 +2824,7 @@ class ByteListPkt(CBOR_Packet):
     CBOR_root = CBORF_ARRAY_OF('items', [], CBORF_BYTE_STRING)
 
 pkt = ByteListPkt(cbor2.dumps([b'\x01\x02', b'\x03\x04', b'\x05\x06']))
-len(pkt.items) == 3 and pkt.items[0].val == b'\x01\x02' and pkt.items[2].val == b'\x05\x06'
+len(pkt.items) == 3 and pkt.items[0] == b'\x01\x02' and pkt.items[2] == b'\x05\x06'
 
 = CBORF_ARRAY_OF with byte strings - Scapy encode, cbor2 decode
 import cbor2
@@ -2851,7 +2851,7 @@ class BigIntList(CBOR_Packet):
 
 cbor2_data = cbor2.dumps(list(range(50)))
 pkt = BigIntList(cbor2_data)
-len(pkt.items) == 50 and pkt.items[0].val == 0 and pkt.items[49].val == 49
+len(pkt.items) == 50 and pkt.items[0] == 0 and pkt.items[49] == 49
 
 = CBORF_ARRAY_OF integers - Scapy encode, cbor2 decode
 import cbor2
@@ -2898,7 +2898,7 @@ class CredPkt(CBOR_Packet):
     )
 
 pkt = CredPkt(cbor2.dumps({'sub': 'user42', 'iat': 1700000000, 'admin': True}))
-pkt.sub.val == 'user42' and pkt.iat.val == 1700000000 and pkt.admin.val is True
+pkt.sub == 'user42' and pkt.iat == 1700000000 and pkt.admin is True
 
 = CBORF_MAP roundtrip through cbor2
 import cbor2
@@ -2916,7 +2916,7 @@ pkt = CoseHeaderPkt()
 raw = bytes(pkt)
 re_enc = cbor2.dumps(cbor2.loads(raw))
 pkt2 = CoseHeaderPkt(re_enc)
-pkt2.alg.val == 'ES256' and pkt2.kid.val == b'\x01\x02\x03\x04' and pkt2.crit.val == 1
+pkt2.alg == 'ES256' and pkt2.kid == b'\x01\x02\x03\x04' and pkt2.crit == 1
 
 = CBORF_MAP with null value - Scapy encode, cbor2 decode
 import cbor2
@@ -2951,7 +2951,7 @@ raw = bytes(pkt)
 dec = cbor2.loads(raw)
 re_enc = cbor2.dumps(dec)
 pkt2 = FlagsPkt(re_enc)
-pkt2.active.val is True and pkt2.verified.val is False and pkt2.level.val == 3 and pkt2.role.val == 'admin'
+pkt2.active is True and pkt2.verified is False and pkt2.level == 3 and pkt2.role == 'admin'
 
 = CBORF_MAP skip unknown keys from cbor2
 import cbor2
@@ -2965,7 +2965,7 @@ class KnownKeysPkt(CBOR_Packet):
     )
 
 pkt = KnownKeysPkt(cbor2.dumps({'known': 'found', 'count': 42, 'extra': 'ignored'}))
-pkt.known.val == 'found' and pkt.count.val == 42
+pkt.known == 'found' and pkt.count == 42
 
 + CBORF Fields - Interop: CBOR_Packet complex structures with cbor2
 
@@ -3034,7 +3034,7 @@ class OffsetPkt(CBOR_Packet):
     )
 
 pkt = OffsetPkt(cbor2.dumps({'name': 'delta', 'offset': -1024, 'count': 512}))
-pkt.name.val == 'delta' and pkt.offset.val == -1024 and pkt.count.val == 512
+pkt.name == 'delta' and pkt.offset == -1024 and pkt.count == 512
 
 + CBOR_Packet - nested CBORF_PACKET structures
 
@@ -3063,14 +3063,14 @@ class NestOuter(CBOR_Packet):
 
 inner = NestInner(cbor2.dumps([30, 40]))
 mid = NestMiddle()
-mid.zone.val = 'north'
+mid.zone = 'north'
 mid.point = inner
 outer = NestOuter()
-outer.version.val = 2
+outer.version = 2
 outer.region = mid
 raw = bytes(outer)
 outer2 = NestOuter(raw)
-outer2.version.val == 2 and outer2.region.zone.val == 'north' and outer2.region.point.x.val == 30 and outer2.region.point.y.val == 40
+outer2.version == 2 and outer2.region.zone.val == 'north' and outer2.region.point.x.val == 30 and outer2.region.point.y.val == 40
 
 = CBORF_PACKET three-level nesting cbor2 interop
 import cbor2
@@ -3097,10 +3097,10 @@ class NestOuter2(CBOR_Packet):
 
 inner = NestInner2(cbor2.dumps([10, 20]))
 mid = NestMiddle2()
-mid.zone.val = 'south'
+mid.zone = 'south'
 mid.point = inner
 outer = NestOuter2()
-outer.version.val = 1
+outer.version = 1
 outer.region = mid
 dec = cbor2.loads(bytes(outer))
 dec == [1, ['south', [10, 20]]]
@@ -3124,7 +3124,7 @@ class MapWithNestedPkt(CBOR_Packet):
 
 inner = MapInner(cbor2.dumps([5, 7]))
 pkt = MapWithNestedPkt()
-pkt.label.val = 'origin'
+pkt.label = 'origin'
 pkt.coords = inner
 dec = cbor2.loads(bytes(pkt))
 dec.get('label') == 'origin' and dec.get('coords') == [5, 7]
@@ -3148,10 +3148,10 @@ class CoordsOuter(CBOR_Packet):
 
 inner = CoordsInner(cbor2.dumps([5, 7]))
 pkt = CoordsOuter()
-pkt.label.val = 'origin'
+pkt.label = 'origin'
 pkt.coords = inner
 pkt2 = CoordsOuter(bytes(pkt))
-pkt2.label.val == 'origin' and pkt2.coords.px.val == 5 and pkt2.coords.py.val == 7
+pkt2.label == 'origin' and pkt2.coords.px.val == 5 and pkt2.coords.py.val == 7
 
 = CBORF_PACKET: nested MAP-in-MAP via CBORF_PACKET (Document/Metadata)
 import cbor2
@@ -3172,11 +3172,11 @@ class DocPacket(CBOR_Packet):
     )
 
 meta = DocMeta()
-meta.creator.val = 'alice'
-meta.version.val = 3
+meta.creator = 'alice'
+meta.version = 3
 doc = DocPacket()
-doc.title.val = 'My Document'
-doc.body.val = b'hello world'
+doc.title = 'My Document'
+doc.body = b'hello world'
 doc.metadata = meta
 raw = bytes(doc)
 dec = cbor2.loads(raw)
@@ -3201,15 +3201,15 @@ class DocPacket2(CBOR_Packet):
     )
 
 meta = DocMeta2()
-meta.creator.val = 'bob'
-meta.version.val = 7
+meta.creator = 'bob'
+meta.version = 7
 doc = DocPacket2()
-doc.title.val = 'Report'
-doc.body.val = b'\x01\x02\x03'
+doc.title = 'Report'
+doc.body = b'\x01\x02\x03'
 doc.metadata = meta
 raw = bytes(doc)
 doc2 = DocPacket2(raw)
-doc2.title.val == 'Report' and doc2.body.val == b'\x01\x02\x03' and doc2.metadata.creator.val == 'bob' and doc2.metadata.version.val == 7
+doc2.title == 'Report' and doc2.body == b'\x01\x02\x03' and doc2.metadata.creator.val == 'bob' and doc2.metadata.version.val == 7
 
 + CBOR_Packet - CBORF_ARRAY_OF with CBOR_Packet elements
 
@@ -3229,7 +3229,7 @@ class StatusList(CBOR_Packet):
 
 raw = cbor2.dumps([[200, 'OK'], [201, 'Created'], [204, 'No Content']])
 pkt = StatusList(raw)
-len(pkt.statuses) == 3 and pkt.statuses[0].code.val == 200 and pkt.statuses[1].msg.val == 'Created' and pkt.statuses[2].code.val == 204
+len(pkt.statuses) == 3 and pkt.statuses[0].code == 200 and pkt.statuses[1].msg == 'Created' and pkt.statuses[2].code == 204
 
 = CBORF_ARRAY_OF with CBOR_Packet class: Scapy encode → cbor2 decode
 import cbor2
@@ -3268,7 +3268,7 @@ raw = cbor2.dumps([[1, 'hello'], [2, 'world'], [3, 'foo']])
 pkt = MsgList(raw)
 raw2 = bytes(pkt)
 pkt2 = MsgList(raw2)
-len(pkt2.messages) == 3 and pkt2.messages[2].id.val == 3 and pkt2.messages[2].txt.val == 'foo'
+len(pkt2.messages) == 3 and pkt2.messages[2].id == 3 and pkt2.messages[2].txt == 'foo'
 
 = CBORF_ARRAY_OF with CBOR_Packet class: empty list
 import cbor2
@@ -3312,8 +3312,8 @@ class Report(CBOR_Packet):
 log = EventLog()
 log.events = [EventItem(cbor2.dumps(['boot', 1000])), EventItem(cbor2.dumps(['login', 2000]))]
 rpt = Report()
-rpt.source.val = 'sensor-1'
-rpt.count.val = 2
+rpt.source = 'sensor-1'
+rpt.count = 2
 rpt.log = log
 raw = bytes(rpt)
 dec = cbor2.loads(raw)
@@ -3334,7 +3334,7 @@ class TwoFieldPkt(CBOR_Packet):
 
 raw = cbor2.dumps([7, 99])
 pkt = TwoFieldPkt(raw)
-pkt.version.val == 7 and pkt.description is None
+pkt.version == 7 and pkt.description is None
 
 = CBORF_optional: correct type present is decoded normally
 import cbor2
@@ -3349,7 +3349,7 @@ class OptPresentPkt(CBOR_Packet):
 
 raw = cbor2.dumps([3, 'hello world'])
 pkt = OptPresentPkt(raw)
-pkt.version.val == 3 and pkt.description.val == 'hello world'
+pkt.version == 3 and pkt.description == 'hello world'
 
 = CBORF_optional: encode and decode roundtrip with present field
 import cbor2
@@ -3363,10 +3363,10 @@ class OptRTPkt(CBOR_Packet):
     )
 
 pkt = OptRTPkt()
-pkt.title.val = 'test title'
+pkt.title = 'test title'
 raw = bytes(pkt)
 pkt2 = OptRTPkt(raw)
-pkt2.version.val == 1 and pkt2.title.val == 'test title'
+pkt2.version == 1 and pkt2.title == 'test title'
 
 = CBORF_optional: cbor2 interop - optional present
 import cbor2
@@ -3380,7 +3380,7 @@ class OptInteropPkt(CBOR_Packet):
     )
 
 pkt = OptInteropPkt()
-pkt.note.val = 'cbor2 interop'
+pkt.note = 'cbor2 interop'
 dec = cbor2.loads(bytes(pkt))
 dec == [0, 'cbor2 interop']
 
@@ -3397,7 +3397,7 @@ class ConfigWithOpt(CBOR_Packet):
     )
 
 pkt = ConfigWithOpt(cbor2.dumps({'timeout': 60, 'endpoint': 'https://example.com', 'retries': 5}))
-pkt.timeout.val == 60 and pkt.endpoint.val == 'https://example.com' and pkt.retries.val == 5
+pkt.timeout == 60 and pkt.endpoint == 'https://example.com' and pkt.retries == 5
 
 = CBORF_optional inside CBORF_MAP: missing key stays at default
 import cbor2
@@ -3412,7 +3412,7 @@ class ConfigNoOpt(CBOR_Packet):
     )
 
 pkt = ConfigNoOpt(cbor2.dumps({'timeout': 15, 'retries': 2}))
-pkt.timeout.val == 15 and pkt.retries.val == 2
+pkt.timeout == 15 and pkt.retries == 2
 
 + CBOR_Packet - CBORF_SEMANTIC_TAG extended tests
 
@@ -3425,7 +3425,7 @@ class DatetimePkt(CBOR_Packet):
     CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 0, CBORF_TEXT_STRING('dt', ''))
 
 pkt = DatetimePkt()
-pkt.dt.val = '2023-01-15T12:00:00Z'
+pkt.dt = '2023-01-15T12:00:00Z'
 dec = cbor2.loads(bytes(pkt))
 isinstance(dec, datetime.datetime)
 
@@ -3438,7 +3438,7 @@ class UnixTimePkt(CBOR_Packet):
     CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 1, CBORF_INTEGER('ts', 0))
 
 pkt = UnixTimePkt()
-pkt.ts.val = 1700000000
+pkt.ts = 1700000000
 dec = cbor2.loads(bytes(pkt))
 isinstance(dec, datetime.datetime)
 
@@ -3451,10 +3451,10 @@ class TagRTPkt(CBOR_Packet):
     CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 1, CBORF_INTEGER('ts', 0))
 
 pkt = TagRTPkt()
-pkt.ts.val = 1700000000
+pkt.ts = 1700000000
 raw = bytes(pkt)
 pkt2 = TagRTPkt(raw)
-pkt2.ts.val == 1700000000
+pkt2.ts == 1700000000
 
 = CBORF_SEMANTIC_TAG: tag byte matches CBOR major type 6 encoding
 import cbor2
@@ -3465,7 +3465,7 @@ class TagBigNum(CBOR_Packet):
     CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 2, CBORF_BYTE_STRING('n', b''))
 
 pkt = TagBigNum()
-pkt.n.val = b'\x01\x00\x00\x00\x00\x00\x00\x00\x00'
+pkt.n = b'\x01\x00\x00\x00\x00\x00\x00\x00\x00'
 raw = bytes(pkt)
 raw[0:1] == b'\xc2'
 
@@ -3478,7 +3478,7 @@ class TagCmpPkt(CBOR_Packet):
     CBOR_root = CBORF_SEMANTIC_TAG('tag', None, 1, CBORF_INTEGER('ts', 0))
 
 pkt = TagCmpPkt()
-pkt.ts.val = 9999999
+pkt.ts = 9999999
 bytes(pkt) == cbor2.dumps(cbor2.CBORTag(1, 9999999))
 
 = CBORF_SEMANTIC_TAG inside CBORF_MAP: Scapy encode, cbor2 decode
@@ -3493,8 +3493,8 @@ class EventPkt(CBOR_Packet):
     )
 
 pkt = EventPkt()
-pkt.event_type.val = 'login'
-pkt.ts.val = 9999999
+pkt.event_type = 'login'
+pkt.ts = 9999999
 dec = cbor2.loads(bytes(pkt))
 isinstance(dec, dict) and dec.get('event_type') == 'login' and isinstance(dec.get('tag'), datetime.datetime)
 
@@ -3510,11 +3510,11 @@ class EventRTPkt(CBOR_Packet):
     )
 
 pkt = EventRTPkt()
-pkt.event_type.val = 'logout'
-pkt.ts.val = 1234567890
+pkt.event_type = 'logout'
+pkt.ts = 1234567890
 raw = bytes(pkt)
 pkt2 = EventRTPkt(raw)
-pkt2.event_type.val == 'logout' and pkt2.ts.val == 1234567890
+pkt2.event_type == 'logout' and pkt2.ts == 1234567890
 
 = CBORF_SEMANTIC_TAG inside CBORF_ARRAY: Scapy encode, cbor2 decode
 import cbor2, datetime
@@ -3528,8 +3528,8 @@ class TimedEventArr(CBOR_Packet):
     )
 
 pkt = TimedEventArr()
-pkt.evt.val = 'start'
-pkt.ts.val = 1700000000
+pkt.evt = 'start'
+pkt.ts = 1700000000
 dec = cbor2.loads(bytes(pkt))
 dec[0] == 'start' and isinstance(dec[1], datetime.datetime)
 
@@ -3550,7 +3550,7 @@ class EATToken(CBOR_Packet):
 
 raw = cbor2.dumps({'nonce': 12345, 'ueid': 'device-abc', 'boot_seed': b'\x00' * 16, 'hwver': 3})
 pkt = EATToken(raw)
-pkt.nonce.val == 12345 and pkt.ueid.val == 'device-abc' and pkt.boot_seed.val == b'\x00' * 16 and pkt.hwver.val == 3
+pkt.nonce == 12345 and pkt.ueid == 'device-abc' and pkt.boot_seed == b'\x00' * 16 and pkt.hwver == 3
 
 = Realistic model: EAT-like token Scapy encode, cbor2 decode
 import cbor2
@@ -3566,10 +3566,10 @@ class EATToken2(CBOR_Packet):
     )
 
 pkt = EATToken2()
-pkt.nonce.val = 99999
-pkt.ueid.val = 'iot-sensor-01'
-pkt.boot_seed.val = b'\xde\xad\xbe\xef' * 4
-pkt.hwver.val = 5
+pkt.nonce = 99999
+pkt.ueid = 'iot-sensor-01'
+pkt.boot_seed = b'\xde\xad\xbe\xef' * 4
+pkt.hwver = 5
 dec = cbor2.loads(bytes(pkt))
 dec.get('nonce') == 99999 and dec.get('ueid') == 'iot-sensor-01' and dec.get('boot_seed') == b'\xde\xad\xbe\xef' * 4 and dec.get('hwver') == 5
 
@@ -3592,11 +3592,11 @@ class SensorReport(CBOR_Packet):
     )
 
 reading = SensorData()
-reading.sensor_id.val = 3
-reading.temperature.val = 98.6
+reading.sensor_id = 3
+reading.temperature = 98.6
 rpt = SensorReport()
-rpt.station.val = 5
-rpt.unit.val = 'fahrenheit'
+rpt.station = 5
+rpt.unit = 'fahrenheit'
 rpt.reading = reading
 dec = cbor2.loads(bytes(rpt))
 dec.get('station') == 5 and dec.get('unit') == 'fahrenheit' and dec.get('reading') == [3, 98.6]
@@ -3622,7 +3622,7 @@ class SensorReport2(CBOR_Packet):
 raw = cbor2.dumps({'station': 9, 'unit': 'celsius', 'reading': [7, 36.5]})
 pkt = SensorReport2(raw)
 pkt2 = SensorReport2(bytes(pkt))
-pkt2.station.val == 9 and pkt2.unit.val == 'celsius' and pkt2.reading.sensor_id.val == 7
+pkt2.station == 9 and pkt2.unit == 'celsius' and pkt2.reading.sensor_id == 7
 
 = Realistic model: StatusList (CBORF_ARRAY_OF of CBOR_Packets) encode and decode
 import cbor2
@@ -3658,10 +3658,10 @@ class HttpResponse(CBOR_Packet):
     )
 
 pkt = HttpResponse()
-pkt.status.val = 200
-pkt.content_type.val = 'application/cbor'
-pkt.content_length.val = 4
-pkt.body.val = b'\x01\x02\x03\x04'
+pkt.status = 200
+pkt.content_type = 'application/cbor'
+pkt.content_length = 4
+pkt.body = b'\x01\x02\x03\x04'
 dec = cbor2.loads(bytes(pkt))
 dec.get('status') == 200 and dec.get('content_type') == 'application/cbor' and dec.get('body') == b'\x01\x02\x03\x04'
 
@@ -3681,7 +3681,7 @@ class HttpResponse2(CBOR_Packet):
 raw = cbor2.dumps({'status': 404, 'content_type': 'text/plain', 'content_length': 9, 'body': b'Not Found'})
 pkt = HttpResponse2(raw)
 pkt2 = HttpResponse2(bytes(pkt))
-pkt2.status.val == 404 and pkt2.content_type.val == 'text/plain' and pkt2.body.val == b'Not Found'
+pkt2.status == 404 and pkt2.content_type == 'text/plain' and pkt2.body == b'Not Found'
 
 = Realistic model: COSE-like header map with integer algorithm
 import cbor2
@@ -3729,10 +3729,10 @@ class MeasurementPkt(CBOR_Packet):
     )
 
 pkt = MeasurementPkt()
-pkt.seq.val = 42
-pkt.sensor.val = 'temp-01'
-pkt.value.val = 23.5
-pkt.raw.val = b'\x01\x02'
+pkt.seq = 42
+pkt.sensor = 'temp-01'
+pkt.value = 23.5
+pkt.raw = b'\x01\x02'
 raw1 = bytes(pkt)
 raw2 = bytes(MeasurementPkt(raw1))
 raw1 == raw2
@@ -3949,3 +3949,295 @@ for _ in range(50):
         pass
 
 roundtrip_count >= 45
+
+########### CBOR Field Regression (PR #5075) ###########################
+
++ CBOR_Packet assignment semantics
+
+= CBOR_Packet has no setfieldval override
+from scapy.cborpacket import CBOR_Packet
+assert "setfieldval" not in CBOR_Packet.__dict__
+
++ CBORF_CONDITIONAL serialization
+
+= CBORF_CONDITIONAL omits field bytes when condition is false
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_CONDITIONAL, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+def always_false(_pkt):
+    return False
+
+class CondPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("a", default=1),
+        CBORF_CONDITIONAL(
+            CBORF_UNSIGNED_INTEGER("b", default=2),
+            cond=always_false,
+        ),
+    )
+
+raw = bytes(CondPkt())
+assert raw == b"\x81\x01"
+
++ CBORF_ARRAY wire count enforcement
+
+= Extra wire elements in definite array raise CBOR_Decoding_Error
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class TwoFieldPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("a", default=0),
+        CBORF_UNSIGNED_INTEGER("b", default=0),
+    )
+
+wire = b"\x83\x01\x02\x03"
+try:
+    TwoFieldPkt(wire)
+    assert False
+except CBOR_Decoding_Error:
+    pass
+
+= Fewer wire elements than schema raise CBOR_Decoding_Error
+wire = b"\x81\x01"
+try:
+    TwoFieldPkt(wire)
+    assert False
+except CBOR_Decoding_Error:
+    pass
+
++ Indefinite CBORF_ARRAY break handling
+
+= Empty indefinite array with no fields decodes with a single break marker
+from scapy.cbor.cborfields import CBORF_ARRAY
+from scapy.cborpacket import CBOR_Packet
+
+class EmptyIndefPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY()
+
+pkt = EmptyIndefPkt(b"\x9f\xff")
+assert isinstance(pkt, EmptyIndefPkt)
+
+= Empty indefinite array before required field raises
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class ReqIndefPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("a", default=0),
+    )
+
+try:
+    ReqIndefPkt(b"\x9f\xff")
+    assert False
+except CBOR_Decoding_Error:
+    pass
+
+= Definite inner array inside indefinite outer decodes correctly
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class Outer(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("a", default=1),
+        CBORF_ARRAY(CBORF_UNSIGNED_INTEGER("b", default=2)),
+    )
+
+wire = b"\x9f\x01\x81\x02\xff"
+pkt = Outer(wire)
+assert pkt.getfieldval("a") == 1 and pkt.getfieldval("b") == 2
+
++ CBOR_decode_head additional-info 31
+
+= Unsigned integer with AI 31 is rejected
+from scapy.cbor.cborcodec import CBOR_decode_head, CBOR_Codec_Decoding_Error
+
+try:
+    CBOR_decode_head(b"\x1f")
+    assert False
+except CBOR_Codec_Decoding_Error:
+    pass
+
+= Negative integer with AI 31 is rejected
+try:
+    CBOR_decode_head(b"\x3f")
+    assert False
+except CBOR_Codec_Decoding_Error:
+    pass
+
+= Semantic tag with AI 31 is rejected
+try:
+    CBOR_decode_head(b"\xdf")
+    assert False
+except CBOR_Codec_Decoding_Error:
+    pass
+
+= Array indefinite head returns sentinel not None for range()
+from scapy.cbor.cborcodec import CBOR_decode_head
+
+major, count, _ = CBOR_decode_head(b"\x9f")
+assert major == 4
+assert count is not None
+
+= CBORF_ARRAY_OF rejects or decodes indefinite head safely
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class ArrOf(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("items", [], CBORF_UNSIGNED_INTEGER)
+
+try:
+    ArrOf(b"\x9f\x01\xff")
+    assert False
+except (CBOR_Decoding_Error, TypeError):
+    pass
+
++ CBORF_ANY encoding
+
+= CBORF_ANY encodes Python int 1
+from scapy.cbor.cborfields import CBORF_ANY
+from scapy.cborpacket import CBOR_Packet
+
+class AnyPkt(CBOR_Packet):
+    CBOR_root = CBORF_ANY("value", default=0)
+
+assert bytes(AnyPkt(value=1)) == b"\x01"
+
+= CBORF_ANY encodes heterogeneous Python values
+from scapy.cbor.cborfields import CBORF_ANY
+from scapy.cborpacket import CBOR_Packet
+from scapy.cbor import CBOR_UNSIGNED_INTEGER
+
+class AnyPkt(CBOR_Packet):
+    CBOR_root = CBORF_ANY("value", default=0)
+
+cases = [
+    (0, b"\x00"),
+    (1, b"\x01"),
+    (-1, b"\x20"),
+    (b"data", b"\x44data"),
+    ("text", b"\x64text"),
+    (True, b"\xf5"),
+    (False, b"\xf4"),
+    (None, b"\xf6"),
+]
+for val, expected in cases:
+    assert bytes(AnyPkt(value=val)) == expected
+
+= CBORF_ANY encodes already-wrapped CBOR_Object
+assert bytes(AnyPkt(value=CBOR_UNSIGNED_INTEGER(42))) == b"\x18\x2a"
+
++ Homogeneous container field encoding
+
+= CBORF_ARRAY_OF encodes Python int via field not bytes()
+from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class IntListPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("items", [], CBORF_UNSIGNED_INTEGER)
+
+assert bytes(IntListPkt(items=[1])) == b"\x81\x01"
+assert bytes(1) != b"\x01"
+
+= CBORF_SEQUENCE_OF encodes Python byte string with CBOR head
+from scapy.cbor.cborfields import CBORF_SEQUENCE_OF, CBORF_BYTE_STRING
+from scapy.cborpacket import CBOR_Packet
+
+class SeqOf(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF("items", [], CBORF_BYTE_STRING)
+
+raw = bytes(SeqOf(items=[b"abc"]))
+assert raw == b"\x43abc"
+
+= Parse-rebuild vs programmatic construction produce identical bytes
+from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class IntListPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("items", [], CBORF_UNSIGNED_INTEGER)
+
+prog = bytes(IntListPkt(items=[1, 2, 3]))
+parsed = IntListPkt(prog)
+rebuilt = bytes(parsed)
+assert prog == rebuilt
+
++ Required positional field omission
+
+= None required field is not silently dropped from definite array
+from scapy.cbor.cbor import CBOR_Encoding_Error
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class ReqPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("a", default=None),
+        CBORF_UNSIGNED_INTEGER("b", default=1),
+    )
+
+try:
+    bytes(ReqPkt())
+    assert False
+except (CBOR_Encoding_Error, ValueError, TypeError):
+    pass
+
++ Sequence decoder progress check
+
+= Non-progressing sequence decoder raises CBOR_Decoding_Error
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import CBORF_SEQUENCE_OF, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class StuckSeq(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF("items", [], CBORF_UNSIGNED_INTEGER)
+
+orig_m2i = CBORF_UNSIGNED_INTEGER.m2i
+
+def stuck_m2i(self, pkt, s):
+    obj, _ = orig_m2i(self, pkt, s)
+    return obj, s
+
+CBORF_UNSIGNED_INTEGER.m2i = stuck_m2i
+try:
+    StuckSeq(b"\x01\x02")
+    CBORF_UNSIGNED_INTEGER.m2i = orig_m2i
+    assert False
+except CBOR_Decoding_Error:
+    CBORF_UNSIGNED_INTEGER.m2i = orig_m2i
+
++ CBOR map optional pairs
+
+= CBORF_MAP omits optional None values from the pair count
+from scapy.cbor.cborfields import (
+    CBORF_MAP, CBORF_optional, CBORF_TEXT_STRING, CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class MapPkt(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_TEXT_STRING("k", default="a"),
+        CBORF_optional(CBORF_UNSIGNED_INTEGER("n", default=None)),
+    )
+
+assert bytes(MapPkt(k="a")) == b"\xa1\x61k\x61a"
+assert bytes(MapPkt(k="a", n=1)) == b"\xa2\x61k\x61a\x61n\x01"
+
++ CBORF_ANY undefined and tags
+
+= CBORF_ANY encodes null, undefined, and tagged values distinctly
+from scapy.cbor.cborfields import CBORF_ANY
+from scapy.cborpacket import CBOR_Packet
+from scapy.cbor import CBOR_UNDEFINED_VALUE, CBORTagValue
+
+class AnyPkt(CBOR_Packet):
+    CBOR_root = CBORF_ANY("value", default=0)
+
+assert bytes(AnyPkt(value=None)) == b"\xf6"
+assert bytes(AnyPkt(value=CBOR_UNDEFINED_VALUE)) == b"\xf7"
+assert bytes(AnyPkt(value=CBORTagValue(1, "hi"))) == b"\xc1\x62hi"
+pkt = AnyPkt(b"\xf7")
+assert pkt.getfieldval("value") is CBOR_UNDEFINED_VALUE
+pkt = AnyPkt(b"\xc1\x62hi")
+assert pkt.getfieldval("value") == CBORTagValue(1, "hi")

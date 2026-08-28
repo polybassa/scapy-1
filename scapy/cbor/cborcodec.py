@@ -35,6 +35,9 @@ from scapy.compat import chb
 from scapy.error import log_runtime
 
 
+MAX_CBOR_NESTING = 128
+
+
 ##################
 #  CBOR encoding #
 ##################
@@ -246,7 +249,7 @@ class CBORcodec_Object(Generic[_K], metaclass=CBORcodec_metaclass):
                ):
         # type: (...) -> Tuple[CBOR_Object[Any], bytes]
         """Decode CBOR data using automatic dispatch based on major type."""
-        return _decode_cbor_item(s, safe=safe)
+        return _decode_cbor_item(s, safe=safe, depth=_depth)
 
     @classmethod
     def dec(cls,
@@ -524,7 +527,7 @@ class CBORcodec_ARRAY(CBORcodec_Object[List[Any]]):
                     raise CBOR_Codec_Decoding_Error(
                         "Not enough items in array", remaining=s)
                 item, remainder = CBORcodec_Object.decode_cbor_item(
-                    remainder, safe=safe)
+                    remainder, safe=safe, depth=_depth + 1)
                 items.append(item)
         else:
             for _ in range(length):
@@ -532,7 +535,7 @@ class CBORcodec_ARRAY(CBORcodec_Object[List[Any]]):
                     raise CBOR_Codec_Decoding_Error(
                         "Not enough items in array", remaining=s)
                 item, remainder = CBORcodec_Object.decode_cbor_item(
-                    remainder, safe=safe)
+                    remainder, safe=safe, depth=_depth + 1)
                 items.append(item)
 
         return cls.cbor_object(items), remainder
@@ -578,12 +581,12 @@ class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
                     raise CBOR_Codec_Decoding_Error(
                         "Not enough key-value pairs in map", remaining=s)
                 key, remainder = CBORcodec_Object.decode_cbor_item(
-                    remainder, safe=safe)
+                    remainder, safe=safe, depth=_depth + 1)
                 if not remainder:
                     raise CBOR_Codec_Decoding_Error(
                         "Map key without value", remaining=s)
                 value, remainder = CBORcodec_Object.decode_cbor_item(
-                    remainder, safe=safe)
+                    remainder, safe=safe, depth=_depth + 1)
                 key_val = key.val if isinstance(key, CBOR_Object) else key
                 try:
                     hash(key_val)
@@ -602,12 +605,12 @@ class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
                     raise CBOR_Codec_Decoding_Error(
                         "Not enough key-value pairs in map", remaining=s)
                 key, remainder = CBORcodec_Object.decode_cbor_item(
-                    remainder, safe=safe)
+                    remainder, safe=safe, depth=_depth + 1)
                 if not remainder:
                     raise CBOR_Codec_Decoding_Error(
                         "Map key without value", remaining=s)
                 value, remainder = CBORcodec_Object.decode_cbor_item(
-                    remainder, safe=safe)
+                    remainder, safe=safe, depth=_depth + 1)
                 key_val = key.val if isinstance(key, CBOR_Object) else key
                 try:
                     hash(key_val)
@@ -661,7 +664,7 @@ class CBORcodec_SEMANTIC_TAG(CBORcodec_Object[Tuple[int, Any]]):
                 "Tag without following item", remaining=s)
 
         item, remainder = CBORcodec_Object.decode_cbor_item(
-            remainder, safe=safe)
+            remainder, safe=safe, depth=_depth + 1)
         return cls.cbor_object((tag_num, item)), remainder
 
 
@@ -867,9 +870,12 @@ def _encode_cbor_item(item):
             "Cannot encode type: %s" % type(item))
 
 
-def _decode_cbor_item(s, safe=False):
-    # type: (bytes, bool) -> Tuple[CBOR_Object[Any], bytes]
+def _decode_cbor_item(s, safe=False, depth=0):
+    # type: (bytes, bool, int) -> Tuple[CBOR_Object[Any], bytes]
     """Decode CBOR bytes to a CBOR_Object"""
+    if depth > MAX_CBOR_NESTING:
+        raise CBOR_Codec_Decoding_Error(
+            "Maximum CBOR nesting depth exceeded", remaining=s)
     if not s:
         raise CBOR_Codec_Decoding_Error("Empty CBOR data", remaining=s)
 
@@ -882,21 +888,21 @@ def _decode_cbor_item(s, safe=False):
 
     # Dispatch to appropriate codec based on major type
     if major_type == 0:
-        return CBORcodec_UNSIGNED_INTEGER.dec(s, safe=safe)
+        return CBORcodec_UNSIGNED_INTEGER.dec(s, safe=safe, _depth=depth)
     elif major_type == 1:
-        return CBORcodec_NEGATIVE_INTEGER.dec(s, safe=safe)
+        return CBORcodec_NEGATIVE_INTEGER.dec(s, safe=safe, _depth=depth)
     elif major_type == 2:
-        return CBORcodec_BYTE_STRING.dec(s, safe=safe)
+        return CBORcodec_BYTE_STRING.dec(s, safe=safe, _depth=depth)
     elif major_type == 3:
-        return CBORcodec_TEXT_STRING.dec(s, safe=safe)
+        return CBORcodec_TEXT_STRING.dec(s, safe=safe, _depth=depth)
     elif major_type == 4:
-        return CBORcodec_ARRAY.dec(s, safe=safe)
+        return CBORcodec_ARRAY.dec(s, safe=safe, _depth=depth)
     elif major_type == 5:
-        return CBORcodec_MAP.dec(s, safe=safe)
+        return CBORcodec_MAP.dec(s, safe=safe, _depth=depth)
     elif major_type == 6:
-        return CBORcodec_SEMANTIC_TAG.dec(s, safe=safe)
+        return CBORcodec_SEMANTIC_TAG.dec(s, safe=safe, _depth=depth)
     elif major_type == 7:
-        return CBORcodec_SIMPLE_AND_FLOAT.dec(s, safe=safe)
+        return CBORcodec_SIMPLE_AND_FLOAT.dec(s, safe=safe, _depth=depth)
     else:
         raise CBOR_Codec_Decoding_Error(
             "Invalid major type: %d" % major_type, remaining=s)

@@ -461,6 +461,68 @@ class CBOR_UNDEFINED(CBOR_Object[None]):
         super(CBOR_UNDEFINED, self).__init__(None)
 
 
+class CBORTagValue(object):
+    """Packet-field internal representation of a CBOR semantic tag."""
+    __slots__ = ("tag", "value")
+
+    def __init__(self, tag, value):
+        # type: (int, Any) -> None
+        self.tag = int(tag)
+        self.value = value
+
+    def __repr__(self):
+        # type: () -> str
+        return "CBORTagValue(tag=%r, value=%r)" % (self.tag, self.value)
+
+    def __eq__(self, other):
+        # type: (object) -> bool
+        return (
+            isinstance(other, CBORTagValue) and
+            self.tag == other.tag and
+            self.value == other.value
+        )
+
+    def __hash__(self):
+        # type: () -> int
+        return hash((self.tag, self.value))
+
+
+class CBORSimpleValue(object):
+    """Packet-field internal representation of a CBOR simple value."""
+    __slots__ = ("value",)
+
+    def __init__(self, value):
+        # type: (int) -> None
+        self.value = int(value)
+
+    def __repr__(self):
+        # type: () -> str
+        return "CBORSimpleValue(%r)" % self.value
+
+    def __eq__(self, other):
+        # type: (object) -> bool
+        return isinstance(other, CBORSimpleValue) and self.value == other.value
+
+    def __hash__(self):
+        # type: () -> int
+        return hash(self.value)
+
+
+class _CBORUndefined(object):
+    """Sentinel for CBOR undefined (distinct from Python ``None`` / null)."""
+
+    def __repr__(self):
+        # type: () -> str
+        return "CBOR_UNDEFINED"
+
+    def __bool__(self):
+        # type: () -> bool
+        return False
+
+
+CBOR_UNDEFINED_VALUE = _CBORUndefined()
+
+
 class CBOR_FLOAT(CBOR_Object[float]):
     """CBOR floating-point number (major type 7)"""
     tag = CBOR_MajorTypes.SIMPLE_AND_FLOAT

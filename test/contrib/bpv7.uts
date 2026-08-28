@@ -17,25 +17,19 @@ class TestPkt(CBOR_Packet):
     )
 
 pkt = TestPkt()
-pkt.show()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata == bytes.fromhex('820100')
 
 pkt = TestPkt(
     eid="dtn://n/s"
 )
-pkt.show()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata == bytes.fromhex('8201652F2F6E2F73')
 
 pkt = TestPkt(
     eid="ipn:1.2.3"
 )
-pkt.show()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata == bytes.fromhex('820283010203')
 
 
@@ -44,10 +38,8 @@ assert outdata == bytes.fromhex('820283010203')
 = Primary default
 from scapy.contrib.bpv7 import *
 pkt = PrimaryBlock()
-pkt.show()
 outdata = bytes(pkt)
-print(outdata.hex())
-assert outdata == bytes.fromhex('8a070000820100820100820100820000000000')
+assert outdata == bytes.fromhex('8807000082010082010082010082000000')
 
 = Canonical payload encode
 from scapy.contrib.bpv7 import *
@@ -56,9 +48,7 @@ pkt = CanonicalBlock(
   block_num=1,
   btsd=Raw(load=b""),
 )
-pkt.show()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata == bytes.fromhex('850101000040')
 
 = Canonical with CRC encode
@@ -69,21 +59,17 @@ pkt = CanonicalBlock(
   crc_type=2,
   btsd=Raw(load=b"hi"),
 )
-pkt.show()
-pkt.show2()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata == bytes.fromhex('8601010002426869441ff585a4')
 
 = Canonical empty decode
 from scapy.contrib.bpv7 import *
 pkt = CanonicalBlock(bytes.fromhex('850101000040'))
-pkt.show()
+assert pkt.type_code == 1
 
 = Canonical with CRC decode
 from scapy.contrib.bpv7 import *
 pkt = CanonicalBlock(bytes.fromhex('8601010002426869441ff585a4'))
-pkt.show()
 assert pkt.check_crc()
 
 
@@ -93,9 +79,7 @@ assert pkt.check_crc()
 from scapy.contrib.bpv7 import *
 pkt = BundleV7()
 assert pkt.primary.crc_type == 0
-pkt.show()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata[:1] == b'\x9f'
 assert outdata[-1:] == b'\xff'
 
@@ -120,9 +104,7 @@ pkt = BundleV7(
     ),
   ]
 )
-pkt.show()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata[:1] == b'\x9f'
 assert outdata[-1:] == b'\xff'
 
@@ -152,13 +134,10 @@ pkt = BundleV7(
     ),
   ]
 )
-pkt.show()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert len(outdata) > 5
 assert outdata[:1] == b'\x9f'
 assert outdata[-1:] == b'\xff'
-wrpcap('/tmp/foo.pcap', Ether()/IP()/UDP(sport=4556,dport=4556)/pkt)
 
 
 = decoding example from Appendix A.1.1.3 of RFC 9173
@@ -166,14 +145,12 @@ wrpcap('/tmp/foo.pcap', Ether()/IP()/UDP(sport=4556,dport=4556)/pkt)
 from scapy.contrib.bpv7 import *
 data = bytes.fromhex('9f88070000820282010282028202018202820201820018281a000f424085010100005823526561647920746f2067656e657261746520612033322d62797465207061796c6f6164ff')
 pkt = BundleV7(data)
-pkt.show()
 assert pkt.check_crc()
 assert pkt.primary.source == 'ipn:2.1'
 assert pkt.primary.destination == 'ipn:1.2'
 
 pkt.clear_cache()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata == data
 
 = decoding example from Appendix A.1.1.4 of RFC 9173
@@ -181,14 +158,12 @@ assert outdata == data
 from scapy.contrib.bpv7 import *
 data = bytes.fromhex('9f88070000820282010282028202018202820201820018281a000f424085070200004319012c85010100005823526561647920746f2067656e657261746520612033322d62797465207061796c6f6164ff')
 pkt = BundleV7(data)
-pkt.show()
 assert pkt.check_crc()
 assert pkt.primary.source == 'ipn:2.1'
 assert pkt.primary.destination == 'ipn:1.2'
 
 pkt.clear_cache()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata == data
 
 = decoding example from Appendix A.1.4 of RFC 9173
@@ -196,17 +171,12 @@ assert outdata == data
 from scapy.contrib.bpv7 import *
 data = bytes.fromhex('9f88070000820282010282028202018202820201820018281a000f4240850b0200005856810101018202820201828201078203008181820158403bdc69b3a34a2b5d3a8554368bd1e808f606219d2a10a846eae3886ae4ecc83c4ee550fdfb1cc636b904e2f1a73e303dcd4b6ccece003e95e8164dcc89a156e185010100005823526561647920746f2067656e657261746520612033322d62797465207061796c6f6164ff')
 pkt = BundleV7(data)
-pkt.show()
 assert pkt.check_crc()
 assert len(pkt.blocks) == 2
 assert pkt.blocks[0].type_code == 11
-#assert pkt.blocks[0].btsd.targets == [1]
-#assert pkt.blocks[0].btsd.context_id == 1
-#assert pkt.blocks[0].btsd.source == 'ipn:2.1'
 
 pkt.clear_cache()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata == data
 
 
@@ -215,7 +185,6 @@ assert outdata == data
 from scapy.contrib.bpv7 import *
 data = bytes.fromhex('9f880700008201692f2f6473742f7376638201692f2f7372632f7376638201662f2f7372632f821b000000bd51281400001a000f42408501010000466568656c6c6fff')
 pkt = BundleV7(data)
-pkt.show()
 assert pkt.check_crc()
 assert pkt.primary.source == 'dtn://src/svc'
 assert pkt.primary.destination == 'dtn://dst/svc'
@@ -224,7 +193,6 @@ assert pkt.blocks[0].type_code == 1
 
 pkt.clear_cache()
 outdata = bytes(pkt)
-print(outdata.hex())
 assert outdata == data
 
 
@@ -240,19 +208,12 @@ data = bytes.fromhex(
     "656c6c6f444ec359d2ff"
 )
 pkt = BundleV7(data)
-pkt.show()
 assert pkt.check_crc()
 assert pkt.primary.source == 'dtn://src/svc'
 assert pkt.primary.destination == 'dtn://dst/svc'
 assert len(pkt.blocks) == 2
 assert pkt.blocks[0].type_code == 11
-print(pkt.blocks[0].btsd.show())
 assert pkt.blocks[1].type_code == 1
-
-#pkt.clear_cache()
-#outdata = bytes(pkt)
-#print(outdata.hex())
-#assert outdata == data
 
 
 + BPv7 User API
@@ -263,13 +224,11 @@ from scapy.contrib.bpv7 import *
 pkt = PrimaryBlock(
     bundle_flags="PAYLOAD_ADMIN",
 )
-pkt.show()
 assert pkt.bundle_flags == PrimaryBlock.Flag.PAYLOAD_ADMIN
 
 pkt = PrimaryBlock(
     bundle_flags=0x004002,
 )
-pkt.show()
 assert pkt.bundle_flags == (
     PrimaryBlock.Flag.PAYLOAD_ADMIN | PrimaryBlock.Flag.REQ_RECEPTION_REPORT
 )
@@ -277,7 +236,286 @@ assert pkt.bundle_flags == (
 pkt = PrimaryBlock(
     bundle_flags="PAYLOAD_ADMIN+REQ_RECEPTION_REPORT",
 )
-pkt.show()
 assert pkt.bundle_flags == (
     PrimaryBlock.Flag.PAYLOAD_ADMIN | PrimaryBlock.Flag.REQ_RECEPTION_REPORT
 )
+
+= validate empty bundle
+from scapy.contrib.bpv7 import *
+pkt = BundleV7()
+issues = pkt.validate()
+assert any(issue.code == "missing-payload" for issue in issues)
+assert any(issue.code == "missing-canonical-blocks" for issue in issues)
+try:
+    pkt.assert_valid()
+    assert False, "empty bundle should not validate"
+except ValueError:
+    pass
+
++ Assignment parity
+
+= Post-construction bundle_flags assignment matches constructor
+from scapy.contrib.bpv7 import PrimaryBlock
+
+pkt_ctor = PrimaryBlock(bundle_flags="PAYLOAD_ADMIN")
+pkt_set = PrimaryBlock()
+pkt_set.bundle_flags = "PAYLOAD_ADMIN"
+assert int(pkt_ctor.bundle_flags) == int(pkt_set.bundle_flags) == int(PrimaryBlock.Flag.PAYLOAD_ADMIN)
+assert bytes(pkt_ctor) == bytes(pkt_set)
+
+= Post-construction crc_type assignment matches constructor
+from scapy.contrib.bpv7 import PrimaryBlock, CrcType
+
+pkt_ctor = PrimaryBlock(crc_type="CRC32")
+pkt_set = PrimaryBlock()
+pkt_set.crc_type = "CRC32"
+assert pkt_ctor.crc_type == pkt_set.crc_type == CrcType.CRC32
+assert bytes(pkt_ctor) == bytes(pkt_set)
+
++ Required field omission
+
+= Missing required CanonicalBlock type_code raises instead of shifting positions
+from scapy.contrib.bpv7 import CanonicalBlock
+from scapy.cbor.cbor import CBOR_Decoding_Error, CBOR_Encoding_Error
+from scapy.packet import Raw
+
+pkt = CanonicalBlock(
+    block_num=1,
+    btsd=Raw(load=b""),
+)
+try:
+    bytes(pkt)
+    assert False
+except (CBOR_Decoding_Error, CBOR_Encoding_Error, ValueError, TypeError):
+    pass
+
++ Import compatibility
+
+= bpv7 module imports on current Python
+import importlib
+mod = importlib.import_module("scapy.contrib.bpv7")
+assert mod.PrimaryBlock is not None
+
+= bpv7 source is import-safe on Python 3.7/3.8
+import sys
+import pathlib
+src = pathlib.Path("scapy/contrib/bpv7.py").read_text()
+header = "\n".join(src.split("\n", 10)[:10])
+if sys.version_info < (3, 9):
+    assert (
+        "from __future__ import annotations" in header
+        or "Dict[" in src and "from typing import" in src
+    )
+else:
+    import scapy.contrib.bpv7  # noqa: F401
+
++ DtnTimeField
+
+= String zero maps to DTN time 0
+from scapy.contrib.bpv7 import DtnTimeField, BundleTimestamp
+
+ts = BundleTimestamp(dtntime="zero")
+assert ts.getfieldval('dtntime') == 0
+
+= bytes ISO timestamp accepted
+import datetime
+from scapy.contrib.bpv7 import BundleTimestamp
+
+ts = BundleTimestamp(dtntime=b"2000-01-01T00:00:01+00:00")
+assert ts.getfieldval('dtntime') == 1000
+
+= Trailing Z ISO8601 accepted
+ts = BundleTimestamp(dtntime="2000-01-01T00:00:01Z")
+assert ts.getfieldval('dtntime') == 1000
+
+= Naive datetime rejected
+try:
+    BundleTimestamp(dtntime=datetime.datetime(2000, 1, 1, 0, 0, 1))
+    assert False
+except ValueError:
+    pass
+
+= Timezone-aware datetime accepted
+ts = BundleTimestamp(dtntime=datetime.datetime(2000, 1, 1, 0, 0, 1, tzinfo=datetime.timezone.utc))
+assert ts.getfieldval('dtntime') == 1000
+
+= Pre-epoch datetime rejected
+try:
+    BundleTimestamp(dtntime=datetime.datetime(1999, 1, 1, tzinfo=datetime.timezone.utc))
+    assert False
+except ValueError:
+    pass
+
+= DtnTimeField derives from unsigned integer field
+from scapy.cbor.cborfields import CBORF_UNSIGNED_INTEGER
+assert issubclass(DtnTimeField, CBORF_UNSIGNED_INTEGER)
+
++ CRC lifecycle
+
+= CRC recalculated after covered field mutation
+from scapy.contrib.bpv7 import CanonicalBlock, CrcType
+from scapy.packet import Raw
+
+pkt = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC32,
+    btsd=Raw(load=b"hi"),
+)
+first = bytes(pkt)
+assert pkt.getfieldval("crc_value") is None
+assert "crc_value" not in pkt.fields
+pkt.btsd = Raw(load=b"bye")
+second = bytes(pkt)
+assert first != second
+assert pkt.getfieldval("crc_value") is None
+assert CanonicalBlock(second).check_crc()
+
+= check_crc with wrong CRC returns False without AttributeError
+from scapy.contrib.bpv7 import CanonicalBlock, CrcType
+from scapy.packet import Raw
+from scapy.cbor import CBOR_BYTE_STRING
+
+pkt = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC32,
+    btsd=Raw(load=b"hi"),
+)
+bytes(pkt)
+pkt.crc_value = CBOR_BYTE_STRING(b"\x00\x00\x00\x00")
+result = pkt.check_crc()
+assert result is False
+
+= check_crc with missing CRC value returns False
+from scapy.contrib.bpv7 import CanonicalBlock, CrcType
+from scapy.packet import Raw
+
+pkt = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC32,
+    btsd=Raw(load=b"hi"),
+)
+assert pkt.check_crc() is False
+
+= freeze_crc stores an explicit CRC
+from scapy.contrib.bpv7 import CanonicalBlock, CrcType
+from scapy.packet import Raw
+
+pkt = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC32,
+    btsd=Raw(load=b"hi"),
+)
+pkt.freeze_crc()
+assert pkt.getfieldval("crc_value") is not None
+assert pkt.check_crc() is True
+pkt.crc_value = None
+assert pkt.check_crc() is False
+
++ Import side effects
+
+= Importing bpv7 does not enable global debug_dissector
+from scapy import config
+import importlib
+import sys
+
+modname = "scapy.contrib.bpv7"
+sys.modules.pop(modname, None)
+config.conf.debug_dissector = False
+import scapy.contrib.bpv7 as bpv7_mod  # noqa: F401
+assert config.conf.debug_dissector is False
+importlib.reload(bpv7_mod)
+assert config.conf.debug_dissector is False
+
+= bpv7 source does not call print()
+import pathlib
+src = pathlib.Path("scapy/contrib/bpv7.py").read_text()
+assert "print(" not in src
+
++ Specialized canonical block type codes
+
+= PreviousNodeBlock encodes type code 6 automatically
+from scapy.contrib.bpv7 import CanonicalBlock, PreviousNodeBlock
+
+pkt = CanonicalBlock(
+    block_num=2,
+    btsd=PreviousNodeBlock(node="dtn://n/s"),
+)
+raw = bytes(pkt)
+dec = CanonicalBlock(raw)
+assert dec.getfieldval("type_code") == 6
+assert isinstance(dec.btsd, PreviousNodeBlock)
+
++ BundleV7 semantic validity
+
+= Default BundleV7 without payload block is not protocol-conformant
+from scapy.contrib.bpv7 import BundleV7, PrimaryBlock
+
+bundle = BundleV7(primary=PrimaryBlock())
+assert len(bundle.blocks) == 0
+
++ BPSec scope (deferred)
+
+= BIB block type 11 is not registered
+from scapy.contrib.bpv7 import CanonicalBlock
+assert 11 not in CanonicalBlock._reg_types
+
+= BCB block type 12 is not registered
+assert 12 not in CanonicalBlock._reg_types
+
+= Incomplete BPSec class removed from public API
+import scapy.contrib.bpv7 as bpv7
+assert not hasattr(bpv7, "AbstractSecurityBock")
+assert not hasattr(bpv7, "AbstractSecurityBlock")
+
++ IPN EID normalization
+
+= Two-element and three-element IPN forms compare equal
+from scapy.contrib.bpv7 import EidStruct
+
+packed = EidStruct.from_text("ipn:1.2.3")
+explicit = EidStruct.from_cbor([2, [1, 2, 3]])
+assert packed == explicit
+
+= Two-element packed form splits allocator from node number
+from scapy.contrib.bpv7 import EidStruct
+
+fqnn = (1 << 32) | 2
+two_elem = EidStruct.from_cbor([2, [fqnn, 3]])
+assert two_elem.ssp.allocator == 1
+assert two_elem.ssp.node == 2
+assert two_elem.ssp.service == 3
+
+= Primary block sizes for fragment and CRC combinations
+from scapy.contrib.bpv7 import *
+
+assert bytes(PrimaryBlock())[0] == 0x88
+assert bytes(PrimaryBlock(crc_type=CrcType.CRC16))[0] == 0x89
+assert bytes(PrimaryBlock(bundle_flags="IS_FRAGMENT"))[0] == 0x8a
+assert bytes(PrimaryBlock(bundle_flags="IS_FRAGMENT", crc_type=CrcType.CRC16))[0] == 0x8b
+
+= Canonical block sizes with and without CRC
+from scapy.contrib.bpv7 import *
+from scapy.packet import Raw
+
+assert bytes(CanonicalBlock(type_code=1, block_num=1, btsd=Raw(load=b"")))[0] == 0x85
+assert bytes(CanonicalBlock(type_code=1, block_num=1, crc_type=CrcType.CRC32, btsd=Raw(load=b"")))[0] == 0x86
+
+= BundleAgeBlock and HopCountBlock infer type codes
+from scapy.contrib.bpv7 import *
+
+age = CanonicalBlock(block_num=2, btsd=BundleAgeBlock(age=100))
+assert CanonicalBlock(bytes(age)).getfieldval("type_code") == 7
+hop = CanonicalBlock(block_num=3, btsd=HopCountBlock(limit=10, count=1))
+assert CanonicalBlock(bytes(hop)).getfieldval("type_code") == 10
+
+= IPN negative allocator rejected
+from scapy.contrib.bpv7 import IpnSsp
+try:
+    IpnSsp(-1, 1, 2)
+    assert False
+except ValueError:
+    pass

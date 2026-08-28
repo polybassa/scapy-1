@@ -25,6 +25,8 @@ from functools import lru_cache
 from collections import defaultdict
 import itertools
 
+from typing import Any, List, Set, Tuple
+
 
 # Taken from https://en.wikipedia.org/wiki/Cyclic_redundancy_check
 # Only direct representation. Reversed, reciprocal,

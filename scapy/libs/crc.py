@@ -386,6 +386,7 @@ class CRC_32(CRC):
     reflect_output = True
     test_vectors = [(b"123456789", 0xcbf43926)]
 
+
 class CRC_32C(CRC):
     "aka Castagnoli"
     name = "CRC-32C"
@@ -408,6 +409,7 @@ class CRC_16_CCITT(CRC):
     reflect_input = True
     reflect_output = True
     test_vectors = [(b"\xcb\x37", 0x6b3e)]
+
 
 class CRC_16_X25(CRC):
     name = "CRC-16 X-25"

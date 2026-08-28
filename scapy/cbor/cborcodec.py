@@ -81,6 +81,12 @@ def CBOR_encode_head(major_type, value):
     if value is None:
         raise CBOR_Codec_Encoding_Error(
             "Indefinite length requires CBOR_encode_indefinite_head")
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise CBOR_Codec_Encoding_Error(
+            "CBOR head value must be an integer, got %r" % (value,))
+    if value < 0 or value > 0xFFFFFFFFFFFFFFFF:
+        raise CBOR_Codec_Encoding_Error(
+            "CBOR head value out of uint64 range: %r" % (value,))
     if value < 24:
         # Value fits in 5 bits
         return chb((major_type << 5) | value)
@@ -295,6 +301,9 @@ class CBORcodec_UNSIGNED_INTEGER(CBORcodec_Object[int]):
             raise CBOR_Codec_Encoding_Error(
                 "Cannot encode negative value as unsigned integer. "
                 "Use CBOR_NEGATIVE_INTEGER for negative values.")
+        if i > 0xFFFFFFFFFFFFFFFF:
+            raise CBOR_Codec_Encoding_Error(
+                "Unsigned integer exceeds uint64 range")
         return CBOR_encode_head(0, i)
 
     @classmethod
@@ -327,6 +336,9 @@ class CBORcodec_NEGATIVE_INTEGER(CBORcodec_Object[int]):
             raise CBOR_Codec_Encoding_Error(
                 "Cannot encode non-negative value as negative integer. "
                 "Use CBOR_UNSIGNED_INTEGER for non-negative values.")
+        if i < -(1 << 64):
+            raise CBOR_Codec_Encoding_Error(
+                "Negative integer below CBOR int64 range")
         # CBOR negative integer: -1 - n
         return CBOR_encode_head(1, -1 - i)
 
@@ -434,7 +446,7 @@ class CBORcodec_TEXT_STRING(CBORcodec_Object[str]):
                 "Expected major type 3 (text string), got %d" % major_type,
                 remaining=s)
         if length is CBOR_INDEFINITE:
-            chunks = []  # type: List[bytes]
+            decoded_chunks = []  # type: List[str]
             while True:
                 if cbor_is_break(remainder):
                     remainder = cbor_consume_break(remainder)
@@ -452,14 +464,15 @@ class CBORcodec_TEXT_STRING(CBORcodec_Object[str]):
                         "Not enough bytes for text string chunk: "
                         "expected %d, got %d" %
                         (chunk_len, len(remainder)), remaining=remainder)
-                chunks.append(remainder[:chunk_len])
+                chunk_bytes = remainder[:chunk_len]
                 remainder = remainder[chunk_len:]
-            try:
-                text = b"".join(chunks).decode('utf-8')
-            except UnicodeDecodeError as e:
-                raise CBOR_Codec_Decoding_Error(
-                    "Invalid UTF-8 in text string: %s" % str(e), remaining=s)
-            return cls.cbor_object(text), remainder
+                try:
+                    decoded_chunks.append(chunk_bytes.decode('utf-8'))
+                except UnicodeDecodeError as e:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Invalid UTF-8 in text string chunk: %s" % str(e),
+                        remaining=s)
+            return cls.cbor_object("".join(decoded_chunks)), remainder
         if len(remainder) < length:
             raise CBOR_Codec_Decoding_Error(
                 "Not enough bytes for text string: expected %d, got %d" %
@@ -571,10 +584,17 @@ class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
                         "Map key without value", remaining=s)
                 value, remainder = CBORcodec_Object.decode_cbor_item(
                     remainder, safe=safe)
-                if isinstance(key, CBOR_Object):
-                    key_val = key.val
-                else:
-                    key_val = key
+                key_val = key.val if isinstance(key, CBOR_Object) else key
+                try:
+                    hash(key_val)
+                except TypeError:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Unhashable CBOR map key: %r" % (key_val,),
+                        remaining=s)
+                if key_val in mapping:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Duplicate CBOR map key: %r" % (key_val,),
+                        remaining=s)
                 mapping[key_val] = value
         else:
             for _ in range(length):
@@ -588,11 +608,17 @@ class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
                         "Map key without value", remaining=s)
                 value, remainder = CBORcodec_Object.decode_cbor_item(
                     remainder, safe=safe)
-                # Convert key to hashable type if it's a CBOR object
-                if isinstance(key, CBOR_Object):
-                    key_val = key.val
-                else:
-                    key_val = key
+                key_val = key.val if isinstance(key, CBOR_Object) else key
+                try:
+                    hash(key_val)
+                except TypeError:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Unhashable CBOR map key: %r" % (key_val,),
+                        remaining=s)
+                if key_val in mapping:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Duplicate CBOR map key: %r" % (key_val,),
+                        remaining=s)
                 mapping[key_val] = value
 
         return cls.cbor_object(mapping), remainder
@@ -608,6 +634,9 @@ class CBORcodec_SEMANTIC_TAG(CBORcodec_Object[Tuple[int, Any]]):
         from scapy.cbor.cbor import CBOR_Object
         tagged_item = obj.val if isinstance(obj, CBOR_Object) else obj
         tag_num, item = tagged_item
+        if tag_num < 0 or tag_num > 0xFFFFFFFFFFFFFFFF:
+            raise CBOR_Codec_Encoding_Error(
+                "Semantic tag number out of uint64 range")
         result = CBOR_encode_head(6, tag_num)
         result += CBORcodec_Object.encode_cbor_item(item)
         return result
@@ -674,6 +703,8 @@ class CBORcodec_SIMPLE_AND_FLOAT(CBORcodec_Object[Union[int, float, bool, None]]
         elif isinstance(val, int) and 0 <= val <= 23:
             # Simple value 0-23
             return CBOR_encode_head(7, val)
+        elif isinstance(val, int) and 32 <= val <= 255:
+            return b"\xf8" + chb(val)
         else:
             raise CBOR_Codec_Encoding_Error(
                 "Cannot encode value as simple/float: %r" % val)
@@ -772,7 +803,13 @@ class CBORcodec_SIMPLE_AND_FLOAT(CBORcodec_Object[Union[int, float, bool, None]]
                 if len(s) < 2:
                     raise CBOR_Codec_Decoding_Error(
                         "Not enough bytes for simple value", remaining=s)
-                return CBOR_SIMPLE_VALUE(s[1]), s[2:]
+                simple = orb(s[1])
+                if simple < 32:
+                    raise CBOR_Codec_Decoding_Error(
+                        "Two-byte simple-value encoding below 32 "
+                        "is not well-formed",
+                        remaining=s)
+                return CBOR_SIMPLE_VALUE(simple), s[2:]
             else:
                 raise CBOR_Codec_Decoding_Error(
                     "Invalid additional info for major type 7: %d" % additional_info,

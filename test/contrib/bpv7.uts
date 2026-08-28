@@ -519,3 +519,107 @@ try:
     assert False
 except ValueError:
     pass
+
+########### Code review 5075 regressions ################################
+
++ Truncated canonical block
+
+= Canonical block truncated before btsd fails dissection
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.contrib.bpv7 import CanonicalBlock
+
+# [type_code, block_num, flags, crc_type] — missing btsd
+try:
+    CanonicalBlock(b"\x84\x01\x01\x00\x00")
+    assert False
+except CBOR_Decoding_Error:
+    pass
+
++ CRC build context and unsupported types
+
+= freeze_crc uses inferred type code for BundleAgeBlock
+from scapy.contrib.bpv7 import CanonicalBlock, BundleAgeBlock, CrcType
+
+blk = CanonicalBlock(block_num=2, crc_type=CrcType.CRC16, btsd=BundleAgeBlock(age=1))
+blk.freeze_crc()
+assert blk.crc_value is not None
+assert blk.check_crc()
+
+= Unsupported CRC type validates and fails build
+from scapy.cbor.cbor import CBOR_Encoding_Error
+from scapy.contrib.bpv7 import CanonicalBlock, CrcType
+from scapy.packet import Raw
+
+blk = CanonicalBlock(type_code=1, block_num=1, crc_type=99, btsd=Raw(load=b""))
+codes = [i.code for i in blk.validate()]
+assert "unsupported-crc-type" in codes
+try:
+    bytes(blk)
+    assert False
+except CBOR_Encoding_Error:
+    pass
+
++ DTN pre-epoch times
+
+= Sub-millisecond pre-epoch DTN times are rejected
+import datetime
+from scapy.contrib.bpv7 import DtnTimeField
+
+for us in (1, 999):
+    pre = datetime.datetime(
+        1999, 12, 31, 23, 59, 59, 1000000 - us, datetime.timezone.utc
+    )
+    try:
+        DtnTimeField.datetime_to_dtntime(pre)
+        assert False
+    except ValueError:
+        pass
+
+= Exact millisecond arithmetic at epoch
+import datetime
+from scapy.contrib.bpv7 import DtnTimeField
+
+assert DtnTimeField.datetime_to_dtntime(DtnTimeField.DTN_EPOCH) == 0
+one_ms = DtnTimeField.DTN_EPOCH + datetime.timedelta(milliseconds=1)
+assert DtnTimeField.datetime_to_dtntime(one_ms) == 1
+
++ EID service and DTN SSP
+
+= IPN service exceeding uint64 is rejected
+from scapy.contrib.bpv7 import IpnSsp
+
+try:
+    IpnSsp(0, 1, 2 ** 64)
+    assert False
+except ValueError:
+    pass
+
+= Unknown compressed DTN SSP is rejected from CBOR
+from scapy.contrib.bpv7 import EidStruct
+
+try:
+    EidStruct.from_cbor([1, 99])
+    assert False
+except ValueError:
+    pass
+
+= Known compressed DTN SSP renders without KeyError
+from scapy.contrib.bpv7 import EidStruct
+
+assert EidStruct.from_cbor([1, 0]).to_text() == "dtn:none"
+
++ Multi-payload validation code
+
+= Multiple payload blocks report bad-payload-count
+from scapy.contrib.bpv7 import BundleV7, PrimaryBlock, CanonicalBlock
+from scapy.packet import Raw
+
+bundle = BundleV7(
+    primary=PrimaryBlock(),
+    blocks=[
+        CanonicalBlock(type_code=1, block_num=1, btsd=Raw(load=b"a")),
+        CanonicalBlock(type_code=1, block_num=2, btsd=Raw(load=b"b")),
+    ],
+)
+codes = [i.code for i in bundle.validate()]
+assert "bad-payload-count" in codes

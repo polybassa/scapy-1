@@ -371,7 +371,8 @@ class CBOR_BYTE_STRING(CBOR_Object[bytes]):
 
     def __repr__(self):
         # type: () -> str
-        return "<%s[h'%s']>" % (self.__class__.__name__, self.val.hex() if self.val else '')
+        hexval = self.val.hex() if self.val else ''
+        return "<%s[h'%s']>" % (self.__class__.__name__, hexval)
 
 
 class CBOR_TEXT_STRING(CBOR_Object[str]):
@@ -521,6 +522,17 @@ class _CBORUndefined(object):
 
 
 CBOR_UNDEFINED_VALUE = _CBORUndefined()
+
+
+class _CBORNoItem(object):
+    """Structural sentinel: sequence ended without consuming input."""
+
+    def __repr__(self):
+        # type: () -> str
+        return "CBOR_NO_ITEM"
+
+
+CBOR_NO_ITEM = _CBORNoItem()
 
 
 class CBOR_FLOAT(CBOR_Object[float]):

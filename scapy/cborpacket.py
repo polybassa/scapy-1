@@ -40,6 +40,11 @@ class CBORPacket_metaclass(Packet_metaclass):
 class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
     CBOR_root = None  # type: Optional[Any]
 
+    def cbor_build_result(self):
+        # type: () -> Any
+        """Return the CBOR build result for this packet's root schema."""
+        return self.CBOR_root.build_result(self)
+
     def self_build(self):
         # type: () -> bytes
         """Build this CBOR packet to wire bytes using CBOR_root.

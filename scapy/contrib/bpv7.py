@@ -16,7 +16,7 @@ import struct
 from typing import Any, Callable, ClassVar, Iterator, Optional, Union, cast
 
 from scapy import volatile
-from scapy.cbor.cborcodec import CBOR_decode_head, CBOR_MajorTypes, cbor_is_break
+from scapy.cbor.cborcodec import cbor_is_break
 from scapy.cbor import (
     CBORF_field,
     CBORF_UNSIGNED_INTEGER,
@@ -34,6 +34,8 @@ from scapy.cbor import (
     CBOR_TEXT_STRING,
     CBOR_ARRAY,
     CBOR_Object,
+    CBOR_NO_ITEM,
+    CBOR_Encoding_Error,
 )
 from scapy.cborpacket import CBOR_Packet
 from scapy.error import log_runtime
@@ -89,8 +91,14 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
     def datetime_to_dtntime(val: Optional[datetime.datetime]) -> int:
         if val is None:
             return 0
+        if val < DtnTimeField.DTN_EPOCH:
+            raise ValueError("DTN time before epoch is not allowed")
         delta = val - DtnTimeField.DTN_EPOCH
-        return int(delta / datetime.timedelta(milliseconds=1))
+        return (
+            delta.days * 86400000
+            + delta.seconds * 1000
+            + delta.microseconds // 1000
+        )
 
     @staticmethod
     def dtntime_to_datetime(val: Any) -> Optional[datetime.datetime]:
@@ -127,10 +135,7 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
         if dt.tzinfo is None:
             raise ValueError("DTN time requires a timezone-aware datetime")
         dt = dt.astimezone(datetime.timezone.utc)
-        ms = DtnTimeField.datetime_to_dtntime(dt)
-        if ms < 0:
-            raise ValueError("DTN time before epoch is not allowed")
-        return ms
+        return DtnTimeField.datetime_to_dtntime(dt)
 
     def any2i(self, pkt, x):
         if x is None:
@@ -141,10 +146,7 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
             if x.tzinfo is None:
                 raise ValueError("DTN time requires a timezone-aware datetime")
             x = x.astimezone(datetime.timezone.utc)
-            ms = DtnTimeField.datetime_to_dtntime(x)
-            if ms < 0:
-                raise ValueError("DTN time before epoch is not allowed")
-            return ms
+            return DtnTimeField.datetime_to_dtntime(x)
         val = _native_int(x)
         if val < 0:
             raise ValueError("DTN time must be unsigned")
@@ -203,6 +205,8 @@ class IpnSsp:
             raise ValueError("allocator exceeds uint32")
         if self.node > 0xFFFFFFFF:
             raise ValueError("node exceeds uint32")
+        if self.service > 0xFFFFFFFFFFFFFFFF:
+            raise ValueError("service exceeds uint64")
 
     @classmethod
     def from_wire(cls, parts: list[int]) -> IpnSsp:
@@ -275,7 +279,10 @@ class EidStruct:
     def to_text(self) -> str:
         if self.scheme == EidScheme.dtn:
             if isinstance(self.ssp, int):
-                ssp = _DTN_WELL_KNOWN_SSP[self.ssp]
+                try:
+                    ssp = _DTN_WELL_KNOWN_SSP[self.ssp]
+                except KeyError:
+                    ssp = "!unknown-ssp-%d" % self.ssp
             else:
                 ssp = str(self.ssp)
             return "dtn:" + ssp
@@ -307,8 +314,18 @@ class EidStruct:
         if scheme == EidScheme.dtn:
             if isinstance(ssp_item, CBOR_UNSIGNED_INTEGER):
                 ssp = _native_int(ssp_item)
+                if ssp not in _DTN_WELL_KNOWN_SSP:
+                    raise ValueError(
+                        "Unknown compressed DTN SSP value: %r" % (ssp,)
+                    )
             elif isinstance(ssp_item, CBOR_TEXT_STRING):
                 ssp = str(ssp_item.val)
+            elif isinstance(ssp_item, int):
+                ssp = int(ssp_item)
+                if ssp not in _DTN_WELL_KNOWN_SSP:
+                    raise ValueError(
+                        "Unknown compressed DTN SSP value: %r" % (ssp,)
+                    )
             else:
                 ssp = ssp_item
         elif scheme == EidScheme.ipn:
@@ -433,15 +450,58 @@ class AbstractBlock:
         crc_type = self.getfieldval(self._crc_type_name)
         return _native_int(crc_type) != int(CrcType.NONE)
 
+    @contextmanager
+    def _effective_build_context(self) -> Iterator[None]:
+        """Hook for derived values needed during CRC-aware builds."""
+        yield
+
+    def _crc_definition(self) -> Optional[CrcInfo]:
+        value = _native_int(self.getfieldval(self._crc_type_name))
+        try:
+            return _CRC_DEFN[CrcType(value)]
+        except (ValueError, KeyError):
+            return None
+
     def _build_root_with_crc_value(self, crc_value: bytes) -> bytes:
-        with _temporary_internal_field(self, self._crc_value_name, crc_value):
-            return self.CBOR_root.build(self)
+        with self._effective_build_context():
+            with _temporary_internal_field(self, self._crc_value_name, crc_value):
+                return self.CBOR_root.build(self)
+
+    def cbor_build_result(self):
+        """Item accounting under the same context as CRC-aware ``self_build``."""
+        crc_type = _native_int(self.getfieldval(self._crc_type_name))
+        if crc_type == int(CrcType.NONE):
+            with self._effective_build_context():
+                return self.CBOR_root.build_result(self)
+        crc_value = self.getfieldval(self._crc_value_name)
+        if crc_value is not None and crc_value is not _MISSING:
+            with self._effective_build_context():
+                with _temporary_internal_field(
+                    self, self._crc_value_name, _crc_bytes(crc_value)
+                ):
+                    return self.CBOR_root.build_result(self)
+        defn = self._crc_definition()
+        if defn is None:
+            raise CBOR_Encoding_Error(
+                "Unsupported CRC type %d" % crc_type
+            )
+        # Placeholder CRC is enough for cardinality; SEQUENCE_OF uses wire
+        # bytes from ``bytes(item)`` / ``self_build`` separately.
+        with self._effective_build_context():
+            with _temporary_internal_field(
+                self, self._crc_value_name, defn.encode(0)
+            ):
+                return self.CBOR_root.build_result(self)
 
     def calculate_crc(self) -> Optional[bytes]:
         crc_type = _native_int(self.getfieldval(self._crc_type_name))
         if crc_type == int(CrcType.NONE):
             return None
-        defn = _CRC_DEFN[CrcType(crc_type)]
+        defn = self._crc_definition()
+        if defn is None:
+            raise CBOR_Encoding_Error(
+                "Unsupported CRC type %d" % crc_type
+            )
         pre_crc = self._build_root_with_crc_value(defn.encode(0))
         crc_int = defn.cls(pre_crc)
         return defn.encode(crc_int)
@@ -451,7 +511,8 @@ class AbstractBlock:
             return self.raw_packet_cache
         crc_type = _native_int(self.getfieldval(self._crc_type_name))
         if crc_type == int(CrcType.NONE):
-            return self.CBOR_root.build(self)
+            with self._effective_build_context():
+                return self.CBOR_root.build(self)
         crc_value = self.getfieldval(self._crc_value_name)
         if crc_value is not None and crc_value is not _MISSING:
             return self._build_root_with_crc_value(_crc_bytes(crc_value))
@@ -472,6 +533,9 @@ class AbstractBlock:
             expect = b""
             valid = actual == b""
         else:
+            defn = self._crc_definition()
+            if defn is None:
+                return False
             expect = self.calculate_crc() or b""
             valid = actual == expect
 
@@ -498,7 +562,15 @@ class AbstractBlock:
                 )
             )
         elif crc_type != int(CrcType.NONE):
-            if crc_value is None:
+            if self._crc_definition() is None:
+                issues.append(
+                    ValidationIssue(
+                        "unsupported-crc-type",
+                        path,
+                        "Unsupported CRC type %d" % crc_type,
+                    )
+                )
+            elif crc_value is None:
                 issues.append(
                     ValidationIssue(
                         "missing-crc",
@@ -559,6 +631,9 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
 
     def self_build(self):
         return self._self_build_with_crc()
+
+    def cbor_build_result(self):
+        return AbstractBlock.cbor_build_result(self)
 
     def validate(self, path: str = "") -> list[ValidationIssue]:
         issues = super().validate(path)
@@ -665,14 +740,22 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
     def extract_padding(self, s):
         return None, s
 
-    def self_build(self):
+    @contextmanager
+    def _effective_build_context(self) -> Iterator[None]:
         type_code = self.getfieldval("type_code")
         if type_code is None:
             effective = self.inferred_type_code()
             if effective is not None:
                 with _temporary_internal_field(self, "type_code", effective):
-                    return self._self_build_with_crc()
+                    yield
+                return
+        yield
+
+    def self_build(self):
         return self._self_build_with_crc()
+
+    def cbor_build_result(self):
+        return AbstractBlock.cbor_build_result(self)
 
     def validate(self, path: str = "") -> list[ValidationIssue]:
         issues = super().validate(path)
@@ -740,7 +823,7 @@ class BundleV7(CBOR_Packet):
 
     def _block_until_break(self, data: bytes):
         if cbor_is_break(data):
-            return None
+            return CBOR_NO_ITEM
         return CanonicalBlock
 
     CBOR_root = CBORF_ARRAY_INDEFINITE(
@@ -786,7 +869,10 @@ class BundleV7(CBOR_Packet):
                     )
                 else:
                     seen_nums[bnum] = index
-                if type_code != self.BLOCK_TYPE_PAYLOAD and bnum == self.BLOCK_NUM_PAYLOAD:
+                if (
+                    type_code != self.BLOCK_TYPE_PAYLOAD
+                    and bnum == self.BLOCK_NUM_PAYLOAD
+                ):
                     issues.append(
                         ValidationIssue(
                             "reserved-payload-block-num",
@@ -805,10 +891,18 @@ class BundleV7(CBOR_Packet):
                     "Bundle has no canonical blocks",
                 )
             )
-        if len(payload_blocks) != 1:
+        if len(payload_blocks) == 0:
             issues.append(
                 ValidationIssue(
                     "missing-payload",
+                    "blocks",
+                    "Bundle must contain exactly one payload block",
+                )
+            )
+        elif len(payload_blocks) > 1:
+            issues.append(
+                ValidationIssue(
+                    "bad-payload-count",
                     "blocks",
                     "Bundle must contain exactly one payload block",
                 )

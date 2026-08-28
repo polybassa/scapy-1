@@ -4241,3 +4241,296 @@ pkt = AnyPkt(b"\xf7")
 assert pkt.getfieldval("value") is CBOR_UNDEFINED_VALUE
 pkt = AnyPkt(b"\xc1\x62hi")
 assert pkt.getfieldval("value") == CBORTagValue(1, "hi")
+
+########### Code review 5075 regressions ################################
+
++ Required min_items ignores None defaults
+
+= Truncated definite array with required None-default fields fails
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class RequiredFields(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("first", None),
+        CBORF_UNSIGNED_INTEGER("second", None),
+    )
+
+try:
+    RequiredFields(b"\x81\x01")
+    assert False
+except CBOR_Decoding_Error:
+    pass
+
++ CBOR_NO_ITEM vs null
+
+= ARRAY_OF(CBORF_ANY) preserves CBOR null
+from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_ANY
+from scapy.cborpacket import CBOR_Packet
+
+class ArrAny(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("items", [], CBORF_ANY)
+
+assert ArrAny(b"\x82\xf6\x01").items == [None, 1]
+
+= ARRAY_OF(CBORF_NULL) preserves multiple nulls
+from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_NULL
+from scapy.cborpacket import CBOR_Packet
+
+class ArrNull(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("items", [], CBORF_NULL)
+
+assert ArrNull(b"\x82\xf6\xf6").items == [None, None]
+
+= SEQUENCE_OF(CBORF_ANY) continues after null
+from scapy.cbor.cborfields import CBORF_SEQUENCE_OF, CBORF_ANY
+from scapy.cborpacket import CBOR_Packet
+
+class SeqAny(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF("items", [], CBORF_ANY)
+
+assert SeqAny(b"\xf6\x01").items == [None, 1]
+
++ Semantic tag dissect_result
+
+= Semantic tag nested in array decodes tagged content
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY, CBORF_SEMANTIC_TAG, CBORF_INTEGER, CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class TagArr(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_SEMANTIC_TAG("t", None, 1, CBORF_INTEGER("v", 0)),
+        CBORF_UNSIGNED_INTEGER("n", 0),
+    )
+
+p = TagArr(b"\x82\xc1\x05\x02")
+assert p.t == 1 and p.v == 5 and p.n == 2
+
+= Semantic tag nested in map decodes tagged content
+from scapy.cbor.cborfields import (
+    CBORF_MAP, CBORF_SEMANTIC_TAG, CBORF_INTEGER, CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class TagMap(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_SEMANTIC_TAG("t", None, 1, CBORF_INTEGER("v", 0)),
+        CBORF_UNSIGNED_INTEGER("n", 0),
+    )
+
+p = TagMap(b"\xa2\x61t\xc1\x05\x61n\x02")
+assert p.t == 1 and p.v == 5 and p.n == 2
+
+= Wrong semantic tag number is rejected
+from scapy.cbor.cborfields import (
+    CBOR_Type_Mismatch, CBORF_ARRAY, CBORF_SEMANTIC_TAG, CBORF_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class TagOnly(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_SEMANTIC_TAG("t", None, 1, CBORF_INTEGER("v", 0)),
+    )
+
+try:
+    TagOnly(b"\x81\xc2\x05")
+    assert False
+except CBOR_Type_Mismatch:
+    pass
+
++ Packet child item counts
+
+= ARRAY_OF rejects packet child emitting multiple CBOR items
+from scapy.cbor.cbor import CBOR_Encoding_Error
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY_OF, CBORF_SEQUENCE, CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class TwoSeq(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_UNSIGNED_INTEGER("a", 1),
+        CBORF_UNSIGNED_INTEGER("b", 2),
+    )
+
+class BadParent(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("kids", [], TwoSeq)
+
+try:
+    bytes(BadParent(kids=[TwoSeq()]))
+    assert False
+except CBOR_Encoding_Error:
+    pass
+
+= SEQUENCE_OF sums packet child item counts
+from scapy.cbor.cborfields import (
+    CBORF_SEQUENCE_OF, CBORF_SEQUENCE, CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class TwoSeq(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_UNSIGNED_INTEGER("a", 1),
+        CBORF_UNSIGNED_INTEGER("b", 2),
+    )
+
+class ParentSeq(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF("kids", [], TwoSeq)
+
+assert ParentSeq(kids=[TwoSeq()]).cbor_build_result().items == 2
+assert bytes(ParentSeq(kids=[TwoSeq()])) == b"\x01\x02"
+
++ Optional cardinality is schema-based
+
+= Optional field with nonempty default may be omitted on the wire
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_optional, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class OptPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("a", 1),
+        CBORF_optional(CBORF_UNSIGNED_INTEGER("b", 5)),
+    )
+
+p = OptPkt(b"\x81\x01")
+assert p.a == 1
+
++ Scalar None assignment
+
+= TEXT and BOOLEAN any2i preserve None
+from scapy.cbor.cborfields import CBORF_TEXT_STRING, CBORF_BOOLEAN
+
+assert CBORF_TEXT_STRING("t", None).any2i(None, None) is None
+assert CBORF_BOOLEAN("b", None).any2i(None, None) is None
+
++ Required collections reject field-level None
+
+= ARRAY_OF None raises CBOR_Encoding_Error
+from scapy.cbor.cbor import CBOR_Encoding_Error
+from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class Coll(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("items", None, CBORF_UNSIGNED_INTEGER)
+
+try:
+    bytes(Coll())
+    assert False
+except CBOR_Encoding_Error:
+    pass
+
++ Codec map and UTF-8 policy
+
+= Indefinite text rejects UTF-8 code point split across chunks
+from scapy.cbor.cborcodec import CBORcodec_TEXT_STRING, CBOR_Codec_Decoding_Error
+
+try:
+    CBORcodec_TEXT_STRING.dec(b"\x7f\x61\xc3\x61\xa9\xff")
+    assert False
+except CBOR_Codec_Decoding_Error:
+    pass
+
+= Generic map rejects unhashable array key
+from scapy.cbor.cborcodec import CBORcodec_Object, CBOR_Codec_Decoding_Error
+
+try:
+    CBORcodec_Object.decode_cbor_item(b"\xa1\x80\x01")
+    assert False
+except CBOR_Codec_Decoding_Error:
+    pass
+
+= Generic map rejects duplicate keys
+from scapy.cbor.cborcodec import CBORcodec_Object, CBOR_Codec_Decoding_Error
+
+try:
+    CBORcodec_Object.decode_cbor_item(b"\xa2\x61a\x01\x61a\x02")
+    assert False
+except CBOR_Codec_Decoding_Error:
+    pass
+
+= CBORF_MAP rejects non-text keys
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class MapPkt(CBOR_Packet):
+    CBOR_root = CBORF_MAP(CBORF_UNSIGNED_INTEGER("n", 0))
+
+try:
+    MapPkt(b"\xa1\x01\x02")
+    assert False
+except CBOR_Decoding_Error:
+    pass
+
+= CBORF_MAP rejects duplicate field names
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class MapPkt(CBOR_Packet):
+    CBOR_root = CBORF_MAP(CBORF_UNSIGNED_INTEGER("n", 0))
+
+try:
+    MapPkt(b"\xa2\x61n\x01\x61n\x02")
+    assert False
+except CBOR_Decoding_Error:
+    pass
+
++ Simple values and integer ranges
+
+= Simple values 0, 19, 32, 100, 255 round-trip
+from scapy.cbor.cbor import CBOR_SIMPLE_VALUE
+from scapy.cbor.cborcodec import CBORcodec_SIMPLE_AND_FLOAT
+
+for v in (0, 19, 32, 100, 255):
+    enc = CBORcodec_SIMPLE_AND_FLOAT.enc(CBOR_SIMPLE_VALUE(v))
+    obj, rem = CBORcodec_SIMPLE_AND_FLOAT.dec(enc)
+    assert rem == b"" and obj.val == v
+
+= Two-byte simple values below 32 are rejected
+from scapy.cbor.cborcodec import CBORcodec_SIMPLE_AND_FLOAT, CBOR_Codec_Decoding_Error
+
+for b in range(32):
+    try:
+        CBORcodec_SIMPLE_AND_FLOAT.dec(bytes([0xf8, b]))
+        assert False
+    except CBOR_Codec_Decoding_Error:
+        pass
+
+= CBOR_encode_head rejects values above uint64
+from scapy.cbor.cborcodec import CBOR_encode_head, CBOR_Codec_Encoding_Error
+try:
+    CBOR_encode_head(0, 2 ** 64)
+    assert False
+except CBOR_Codec_Encoding_Error:
+    pass
+
+= Unsigned any2i rejects negative values
+from scapy.cbor.cbor import CBOR_Encoding_Error
+from scapy.cbor.cborfields import CBORF_UNSIGNED_INTEGER
+try:
+    CBORF_UNSIGNED_INTEGER("u", 0).any2i(None, -1)
+    assert False
+except CBOR_Encoding_Error:
+    pass
+
+= Integer any2i rejects values below -2**64
+from scapy.cbor.cbor import CBOR_Encoding_Error
+from scapy.cbor.cborfields import CBORF_INTEGER
+try:
+    CBORF_INTEGER("i", 0).any2i(None, -(1 << 64) - 1)
+    assert False
+except CBOR_Encoding_Error:
+    pass
+
++ CBORBuildResult dataclass fields
+
+= CBORBuildResult compares by data and items
+from scapy.cbor.cborfields import CBORBuildResult, CBORDissectResult
+
+assert CBORBuildResult(b"ab", 2) == CBORBuildResult(b"ab", 2)
+assert CBORBuildResult(b"ab", 2) != CBORBuildResult(b"ab", 1)
+assert CBORDissectResult(b"x", 1) != CBORDissectResult(b"y", 1)

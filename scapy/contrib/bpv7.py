@@ -12,7 +12,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import datetime
 import enum
-import struct
 from typing import Any, Callable, ClassVar, Iterator, Optional, Union, cast
 
 from scapy import volatile
@@ -91,6 +90,9 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
     def datetime_to_dtntime(val: Optional[datetime.datetime]) -> int:
         if val is None:
             return 0
+        if val.tzinfo is None:
+            raise ValueError("DTN time requires a timezone-aware datetime")
+        val = val.astimezone(datetime.timezone.utc)
         if val < DtnTimeField.DTN_EPOCH:
             raise ValueError("DTN time before epoch is not allowed")
         delta = val - DtnTimeField.DTN_EPOCH
@@ -132,9 +134,6 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
         if text.endswith("Z"):
             text = text[:-1] + "+00:00"
         dt = datetime.datetime.fromisoformat(text)
-        if dt.tzinfo is None:
-            raise ValueError("DTN time requires a timezone-aware datetime")
-        dt = dt.astimezone(datetime.timezone.utc)
         return DtnTimeField.datetime_to_dtntime(dt)
 
     def any2i(self, pkt, x):
@@ -143,9 +142,6 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
         if isinstance(x, (str, bytes)):
             return self._parse_text(x)
         if isinstance(x, datetime.datetime):
-            if x.tzinfo is None:
-                raise ValueError("DTN time requires a timezone-aware datetime")
-            x = x.astimezone(datetime.timezone.utc)
             return DtnTimeField.datetime_to_dtntime(x)
         val = _native_int(x)
         if val < 0:
@@ -406,25 +402,22 @@ class CrcType(enum.IntEnum):
     CRC32 = 2
 
 
-@dataclass
+@dataclass(frozen=True)
 class CrcInfo:
     """
     Processing for a specific :class:`CrcType`
     """
 
     cls: type[CRC]
-    encode: Callable[[int], bytes]
+    width: int
+
+    def encode(self, value: int) -> bytes:
+        return value.to_bytes(self.width, "big")
 
 
 _CRC_DEFN: dict[CrcType, CrcInfo] = {
-    CrcType.CRC16: CrcInfo(
-        cls=CRC_16_X25,
-        encode=lambda val: struct.pack(">H", val),
-    ),
-    CrcType.CRC32: CrcInfo(
-        cls=CRC_32C,
-        encode=lambda val: struct.pack(">L", val),
-    ),
+    CrcType.CRC16: CrcInfo(cls=CRC_16_X25, width=2),
+    CrcType.CRC32: CrcInfo(cls=CRC_32C, width=4),
 }
 
 
@@ -507,15 +500,26 @@ class AbstractBlock:
         return defn.encode(crc_int)
 
     def _self_build_with_crc(self) -> bytes:
-        if self.raw_packet_cache is not None:
-            return self.raw_packet_cache
+        if self._raw_packet_cache_is_valid():  # type: ignore[attr-defined]
+            return self.raw_packet_cache  # type: ignore[return-value]
         crc_type = _native_int(self.getfieldval(self._crc_type_name))
         if crc_type == int(CrcType.NONE):
             with self._effective_build_context():
                 return self.CBOR_root.build(self)
         crc_value = self.getfieldval(self._crc_value_name)
         if crc_value is not None and crc_value is not _MISSING:
-            return self._build_root_with_crc_value(_crc_bytes(crc_value))
+            actual = _crc_bytes(crc_value)
+            defn = self._crc_definition()
+            if defn is None:
+                raise CBOR_Encoding_Error(
+                    "Unsupported CRC type %d" % crc_type
+                )
+            if len(actual) != defn.width:
+                raise CBOR_Encoding_Error(
+                    "CRC value length %d does not match type %s"
+                    % (len(actual), CrcType(crc_type).name)
+                )
+            return self._build_root_with_crc_value(actual)
         computed = self.calculate_crc()
         return self._build_root_with_crc_value(computed)
 
@@ -525,6 +529,22 @@ class AbstractBlock:
             self.setfieldval(self._crc_value_name, None)
         else:
             self.setfieldval(self._crc_value_name, self.calculate_crc())
+
+    def _crc_over_received_or_built(self, defn: CrcInfo, actual: bytes) -> bytes:
+        """CRC over exact received bytes when available; else rebuilt form."""
+        raw = self.raw_packet_cache
+        if raw is not None and actual:
+            from scapy.cbor.cborcodec import CBOR_encode_head
+            head = CBOR_encode_head(2, len(actual))
+            needle = head + actual
+            idx = raw.rfind(needle)
+            if idx >= 0:
+                zeroed = bytearray(raw)
+                content_off = idx + len(head)
+                for i in range(len(actual)):
+                    zeroed[content_off + i] = 0
+                return defn.encode(defn.cls(bytes(zeroed)))
+        return self.calculate_crc() or b""
 
     def check_crc(self) -> bool:
         crc_type = _native_int(self.getfieldval(self._crc_type_name))
@@ -536,7 +556,7 @@ class AbstractBlock:
             defn = self._crc_definition()
             if defn is None:
                 return False
-            expect = self.calculate_crc() or b""
+            expect = self._crc_over_received_or_built(defn, actual)
             valid = actual == expect
 
         if not valid:
@@ -553,7 +573,8 @@ class AbstractBlock:
         issues = []
         crc_type = _native_int(self.getfieldval(self._crc_type_name))
         crc_value = self.getfieldval(self._crc_value_name)
-        if crc_type == int(CrcType.NONE) and _crc_bytes(crc_value):
+        actual = _crc_bytes(crc_value)
+        if crc_type == int(CrcType.NONE) and actual:
             issues.append(
                 ValidationIssue(
                     "unexpected-crc",
@@ -562,7 +583,8 @@ class AbstractBlock:
                 )
             )
         elif crc_type != int(CrcType.NONE):
-            if self._crc_definition() is None:
+            defn = self._crc_definition()
+            if defn is None:
                 issues.append(
                     ValidationIssue(
                         "unsupported-crc-type",
@@ -570,19 +592,30 @@ class AbstractBlock:
                         "Unsupported CRC type %d" % crc_type,
                     )
                 )
-            elif crc_value is None:
-                issues.append(
-                    ValidationIssue(
-                        "missing-crc",
-                        path,
-                        "CRC value missing for enabled CRC type",
-                        severity="warning",
+            else:
+                expect_len = defn.width
+                if crc_value is None:
+                    issues.append(
+                        ValidationIssue(
+                            "missing-crc",
+                            path,
+                            "CRC value missing for enabled CRC type",
+                            severity="warning",
+                        )
                     )
-                )
-            elif not self.check_crc():
-                issues.append(
-                    ValidationIssue("crc-mismatch", path, "CRC check failed")
-                )
+                elif len(actual) != expect_len:
+                    issues.append(
+                        ValidationIssue(
+                            "bad-crc-length",
+                            path,
+                            "CRC value length %d does not match type %s"
+                            % (len(actual), CrcType(crc_type).name),
+                        )
+                    )
+                elif not self.check_crc():
+                    issues.append(
+                        ValidationIssue("crc-mismatch", path, "CRC check failed")
+                    )
         return issues
 
 
@@ -625,7 +658,8 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
             CBORF_UNSIGNED_INTEGER("total_app_data_len", default=0), cond=is_fragment
         ),
         CBORF_CONDITIONAL(
-            CBORF_BYTE_STRING("crc_value", default=None), cond=AbstractBlock.has_crc
+            CBORF_BYTE_STRING("crc_value", default=None, definite_only=True),
+            cond=AbstractBlock.has_crc
         ),
     )
 
@@ -706,10 +740,7 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
         btsd = self.getfieldval("btsd")
         if btsd is None:
             return None
-        for cls in type(btsd).mro():
-            if cls in self._reg_codes:
-                return self._reg_codes[cls]
-        return None
+        return getattr(type(btsd), "BPV7_BLOCK_TYPE", None)
 
     def _effective_type_code(self) -> Optional[int]:
         type_code = self.getfieldval("type_code")
@@ -731,9 +762,12 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
         CBORF_UNSIGNED_INTEGER("block_num", default=None),
         CBORF_UNSIGNED_FLAGS("block_flags", default=0, size=64, names=_enum_dict(Flag)),
         CBORF_UNSIGNED_ENUM("crc_type", default=CrcType.NONE, enum=CrcType),
-        CBORF_BYTE_STRING_PACKET("btsd", default=None, cls_cb=btsd_class),
+        CBORF_BYTE_STRING_PACKET(
+            "btsd", default=None, cls_cb=btsd_class, definite_only=True
+        ),
         CBORF_CONDITIONAL(
-            CBORF_BYTE_STRING("crc_value", default=None), cond=AbstractBlock.has_crc
+            CBORF_BYTE_STRING("crc_value", default=None, definite_only=True),
+            cond=AbstractBlock.has_crc
         ),
     )
 
@@ -777,6 +811,8 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
                             % (effective, inferred),
                         )
                     )
+                if hasattr(btsd, "validate"):
+                    issues.extend(btsd.validate(path + ".btsd"))
         if self.getfieldval("block_num") is None:
             issues.append(
                 ValidationIssue("missing-block-num", path, "Block number is missing")
@@ -809,17 +845,34 @@ class HopCountBlock(CBOR_Packet):
         CBORF_UNSIGNED_INTEGER("count", default=0),
     )
 
+    def validate(self, path: str = "") -> list[ValidationIssue]:
+        issues = []  # type: list[ValidationIssue]
+        limit = self.getfieldval("limit")
+        if limit is None or _native_int(limit) < 1 or _native_int(limit) > 255:
+            issues.append(
+                ValidationIssue(
+                    "bad-hop-limit",
+                    path,
+                    "Hop Count limit must be in 1..255",
+                )
+            )
+        return issues
+
 
 class BundleV7(CBOR_Packet):
-    """An entire decoded bundle contents.
-
-    Bundles with administrative records are handled specially in that the
-    AdminRecord object will be made a (scapy) payload of the "payload block"
-    which is block type code 1.
-    """
+    """An entire decoded BPv7 bundle (primary block plus canonical blocks)."""
 
     BLOCK_TYPE_PAYLOAD = 1
     BLOCK_NUM_PAYLOAD = 1
+    BLOCK_TYPE_PREVIOUS_NODE = 6
+    BLOCK_TYPE_BUNDLE_AGE = 7
+    BLOCK_TYPE_HOP_COUNT = 10
+    STATUS_REPORT_FLAGS = (
+        int(PrimaryBlock.Flag.REQ_DELETION_REPORT)
+        | int(PrimaryBlock.Flag.REQ_DELIVERY_REPORT)
+        | int(PrimaryBlock.Flag.REQ_FORWARDING_REPORT)
+        | int(PrimaryBlock.Flag.REQ_RECEPTION_REPORT)
+    )
 
     def _block_until_break(self, data: bytes):
         if cbor_is_break(data):
@@ -836,8 +889,9 @@ class BundleV7(CBOR_Packet):
 
     def validate(self) -> list[ValidationIssue]:
         issues = []
-        if self.primary is not None:
-            issues.extend(self.primary.validate("primary"))
+        primary = self.primary
+        if primary is not None:
+            issues.extend(primary.validate("primary"))
         else:
             issues.append(
                 ValidationIssue(
@@ -847,17 +901,84 @@ class BundleV7(CBOR_Packet):
                 )
             )
 
+        flags = 0
+        source_text = ""
+        create_dtntime = 0
+        is_admin = False
+        is_anonymous = False
+        if primary is not None:
+            flags = int(primary.getfieldval("bundle_flags") or 0)
+            crc_type = _native_int(primary.getfieldval("crc_type"))
+            if crc_type == int(CrcType.NONE):
+                issues.append(
+                    ValidationIssue(
+                        "primary-crc-required",
+                        "primary",
+                        "Primary block requires a nonzero CRC type "
+                        "without BPSec BIB protection",
+                    )
+                )
+            source = primary.getfieldval("source")
+            if hasattr(source, "to_text"):
+                source_text = source.to_text()
+            else:
+                source_text = str(source)
+            is_anonymous = source_text == "dtn:none"
+            is_admin = bool(flags & int(PrimaryBlock.Flag.PAYLOAD_ADMIN))
+            if is_anonymous and not (flags & int(PrimaryBlock.Flag.NO_FRAGMENT)):
+                issues.append(
+                    ValidationIssue(
+                        "anonymous-source-must-not-fragment",
+                        "primary",
+                        "Anonymous source must set must-not-fragment",
+                    )
+                )
+            if is_anonymous and (flags & self.STATUS_REPORT_FLAGS):
+                issues.append(
+                    ValidationIssue(
+                        "anonymous-source-status-flags",
+                        "primary",
+                        "Anonymous source must not request status reports",
+                    )
+                )
+            if is_admin and (flags & self.STATUS_REPORT_FLAGS):
+                issues.append(
+                    ValidationIssue(
+                        "admin-record-status-flags",
+                        "primary",
+                        "Administrative records must not request status reports",
+                    )
+                )
+            create_ts = primary.getfieldval("create_ts")
+            if create_ts is not None:
+                create_dtntime = _native_int(create_ts.getfieldval("dtntime") or 0)
+
         payload_blocks = []
         seen_nums: dict[int, int] = {}
+        type_counts: dict[int, int] = {}
         for index, blk in enumerate(self.blocks):
             path = "blocks[%d]" % index
-            issues.extend(blk.validate(path))
+            if isinstance(blk, CanonicalBlock):
+                issues.extend(blk.validate(path))
+                btsd = blk.getfieldval("btsd")
+                if btsd is not None and hasattr(btsd, "validate"):
+                    issues.extend(btsd.validate(path + ".btsd"))
             type_code = None
             if isinstance(blk, CanonicalBlock):
                 type_code = blk._effective_type_code()
+            if type_code is not None:
+                type_counts[type_code] = type_counts.get(type_code, 0) + 1
             block_num = blk.getfieldval("block_num")
             if block_num is not None:
                 bnum = _native_int(block_num)
+                if bnum == 0:
+                    issues.append(
+                        ValidationIssue(
+                            "canonical-block-uses-primary-number",
+                            path,
+                            "Canonical block number 0 is reserved",
+                        )
+                    )
                 if bnum in seen_nums:
                     issues.append(
                         ValidationIssue(
@@ -882,6 +1003,52 @@ class BundleV7(CBOR_Packet):
                     )
             if type_code == self.BLOCK_TYPE_PAYLOAD:
                 payload_blocks.append((index, block_num))
+            if isinstance(blk, CanonicalBlock):
+                block_flags = int(blk.getfieldval("block_flags") or 0)
+                if block_flags & int(CanonicalBlock.Flag.STATUS_IF_NO_PROCESS):
+                    if is_anonymous or is_admin:
+                        issues.append(
+                            ValidationIssue(
+                                "forbidden-block-status-report",
+                                path,
+                                "Block status-report flag forbidden for "
+                                "anonymous or administrative bundles",
+                            )
+                        )
+
+        if type_counts.get(self.BLOCK_TYPE_PREVIOUS_NODE, 0) > 1:
+            issues.append(
+                ValidationIssue(
+                    "duplicate-previous-node",
+                    "blocks",
+                    "At most one Previous Node block is allowed",
+                )
+            )
+        age_count = type_counts.get(self.BLOCK_TYPE_BUNDLE_AGE, 0)
+        if create_dtntime == 0 and age_count != 1:
+            issues.append(
+                ValidationIssue(
+                    "bundle-age-required",
+                    "blocks",
+                    "Zero creation time requires exactly one Bundle Age block",
+                )
+            )
+        if age_count > 1:
+            issues.append(
+                ValidationIssue(
+                    "duplicate-bundle-age",
+                    "blocks",
+                    "At most one Bundle Age block is allowed",
+                )
+            )
+        if type_counts.get(self.BLOCK_TYPE_HOP_COUNT, 0) > 1:
+            issues.append(
+                ValidationIssue(
+                    "duplicate-hop-count",
+                    "blocks",
+                    "At most one Hop Count block is allowed",
+                )
+            )
 
         if not self.blocks:
             issues.append(

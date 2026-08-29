@@ -1,0 +1,349 @@
+% CBOR PR 5075 additional review regressions
+
++ CBORF_SEQUENCE_OF packet item cardinality
+
+= CBORF_SEQUENCE_OF rejects a packet element that consumes two top-level items
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import (
+    CBORF_SEQUENCE,
+    CBORF_SEQUENCE_OF,
+    CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class TwoItemSequenceDecodeElement(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_UNSIGNED_INTEGER("first", 0),
+        CBORF_UNSIGNED_INTEGER("second", 0),
+    )
+
+class PacketSequenceDecode(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF(
+        "elements",
+        [],
+        TwoItemSequenceDecodeElement,
+    )
+
+try:
+    PacketSequenceDecode(b"\x01\x02")
+    assert False, "SEQUENCE_OF accepted two CBOR items as one packet element"
+except CBOR_Decoding_Error:
+    pass
+
++ Optional lookahead distinguishes absence from malformed presence
+
+= An outer major-type mismatch means that an optional semantic tag is absent
+from scapy.cbor.cborfields import (
+    CBORF_ANY,
+    CBORF_ARRAY,
+    CBORF_SEMANTIC_TAG,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_optional,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptionalTaggedThenFallback(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(
+            CBORF_SEMANTIC_TAG(
+                "tag_number",
+                None,
+                1,
+                CBORF_UNSIGNED_INTEGER("tagged_value", None),
+            )
+        ),
+        CBORF_ANY("fallback", None),
+    )
+
+pkt = OptionalTaggedThenFallback(b"\x81\x07")
+assert pkt.tag_number is None
+assert pkt.tagged_value is None
+assert pkt.fallback == 7
+
+= A matching optional semantic tag with the wrong inner type is malformed
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import (
+    CBORF_SEQUENCE,
+    CBORF_SEMANTIC_TAG,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_optional,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptionalTaggedUnsigned(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(
+            CBORF_SEMANTIC_TAG(
+                "tag_number",
+                None,
+                1,
+                CBORF_UNSIGNED_INTEGER("tagged_value", None),
+            )
+        )
+    )
+
+pkt = OptionalTaggedUnsigned()
+try:
+    OptionalTaggedUnsigned.CBOR_root.dissect_result(
+        pkt,
+        b"\xc1\x61x",
+    )
+    assert False, "A present tag with malformed content was treated as absent"
+except CBOR_Decoding_Error:
+    pass
+
+= A matching optional semantic tag with truncated content is malformed
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import (
+    CBORF_SEQUENCE,
+    CBORF_SEMANTIC_TAG,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_optional,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptionalTruncatedTaggedUnsigned(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(
+            CBORF_SEMANTIC_TAG(
+                "tag_number",
+                None,
+                1,
+                CBORF_UNSIGNED_INTEGER("tagged_value", None),
+            )
+        )
+    )
+
+pkt = OptionalTruncatedTaggedUnsigned()
+try:
+    OptionalTruncatedTaggedUnsigned.CBOR_root.dissect_result(pkt, b"\xc1")
+    assert False, "A truncated present tag was treated as an absent field"
+except CBOR_Decoding_Error:
+    pass
+
+= A malformed optional value cannot migrate into a following CBORF_ANY field
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import (
+    CBORF_ANY,
+    CBORF_ARRAY,
+    CBORF_SEMANTIC_TAG,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_optional,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptionalTaggedBeforeAny(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(
+            CBORF_SEMANTIC_TAG(
+                "tag_number",
+                None,
+                1,
+                CBORF_UNSIGNED_INTEGER("tagged_value", None),
+            )
+        ),
+        CBORF_ANY("fallback", None),
+    )
+
+try:
+    OptionalTaggedBeforeAny(b"\x81\xc1\x61x")
+    assert False, "Malformed tagged data migrated into the fallback field"
+except CBOR_Decoding_Error:
+    pass
+
++ Optional CBOR null presence
+
+= Optional CBORF_ANY preserves a present null after another field is mutated
+from scapy.cbor.cborfields import (
+    CBORF_ANY,
+    CBORF_ARRAY,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_optional,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptionalAnyWithTail(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_ANY("value", None)),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+pkt = OptionalAnyWithTail(b"\x82\xf6\x01")
+assert pkt.value is None
+assert pkt.tail == 1
+
+# Mutating another field invalidates Scapy's raw-packet cache. The rebuilt
+# packet must still contain the explicitly present CBOR null item.
+pkt.tail = 2
+assert bytes(pkt) == b"\x82\xf6\x02"
+
++ Nested CBOR packet dissection lifecycle
+
+= CBORF_PACKET runs child dissection hooks and retains the exact child bytes
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_PACKET,
+    CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class LifecycleDirectChild(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(CBORF_UNSIGNED_INTEGER("value", 0))
+    events = []
+    def pre_dissect(self, data):
+        type(self).events.append("pre")
+        return data
+    def do_dissect(self, data):
+        type(self).events.append("do")
+        return super().do_dissect(data)
+    def post_dissect(self, data):
+        type(self).events.append("post")
+        return data
+
+class LifecycleDirectParent(CBOR_Packet):
+    CBOR_root = CBORF_PACKET("child", None, LifecycleDirectChild)
+
+LifecycleDirectChild.events[:] = []
+pkt = LifecycleDirectParent(b"\x81\x01\xff")
+child = pkt.child
+assert LifecycleDirectChild.events == ["pre", "do", "post"]
+assert child.original == b"\x81\x01"
+assert child.raw_packet_cache == b"\x81\x01"
+
+= Packet-valued CBORF_ARRAY_OF runs child hooks and retains each item span
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_ARRAY_OF,
+    CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class LifecycleArrayChild(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(CBORF_UNSIGNED_INTEGER("value", 0))
+    events = []
+    def pre_dissect(self, data):
+        type(self).events.append("pre")
+        return data
+    def do_dissect(self, data):
+        type(self).events.append("do")
+        return super().do_dissect(data)
+    def post_dissect(self, data):
+        type(self).events.append("post")
+        return data
+
+class LifecycleArrayParent(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("items", [], LifecycleArrayChild)
+
+LifecycleArrayChild.events[:] = []
+pkt = LifecycleArrayParent(b"\x81\x81\x01")
+child = pkt.items[0]
+assert LifecycleArrayChild.events == ["pre", "do", "post"]
+assert child.original == b"\x81\x01"
+assert child.raw_packet_cache == b"\x81\x01"
+
+= Packet-valued CBORF_SEQUENCE_OF runs child hooks and retains each item span
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_SEQUENCE_OF,
+    CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class LifecycleSequenceChild(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(CBORF_UNSIGNED_INTEGER("value", 0))
+    events = []
+    def pre_dissect(self, data):
+        type(self).events.append("pre")
+        return data
+    def do_dissect(self, data):
+        type(self).events.append("do")
+        return super().do_dissect(data)
+    def post_dissect(self, data):
+        type(self).events.append("post")
+        return data
+
+class LifecycleSequenceParent(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF("items", [], LifecycleSequenceChild)
+
+LifecycleSequenceChild.events[:] = []
+pkt = LifecycleSequenceParent(b"\x81\x01")
+child = pkt.items[0]
+assert LifecycleSequenceChild.events == ["pre", "do", "post"]
+assert child.original == b"\x81\x01"
+assert child.raw_packet_cache == b"\x81\x01"
+
+= Nested field edits invalidate parent raw_packet_cache on rebuild
+from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_PACKET
+from scapy.cborpacket import CBOR_Packet
+
+class CacheChild(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(CBORF_INTEGER("val", 0))
+
+class CacheParent(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(CBORF_PACKET("child", None, CacheChild))
+
+raw = bytes(CacheParent(child=CacheChild(val=7)))
+pkt = CacheParent(raw)
+assert pkt.raw_packet_cache is not None
+assert pkt.child.val == 7
+pkt.child.val = 9
+assert pkt.child.raw_packet_cache is None
+rebuilt = bytes(pkt)
+assert rebuilt != raw
+assert CacheParent(rebuilt).child.val == 9
+
++ Fixed-map conditional field ordering
+
+= A fixed map decodes conditional members independently of wire key order
+from scapy.cbor.cborfields import (
+    CBORF_CONDITIONAL,
+    CBORF_MAP,
+    CBORF_TEXT_STRING,
+    CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class ConditionalMap(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("kind", 0),
+        CBORF_CONDITIONAL(
+            CBORF_TEXT_STRING("name", None),
+            lambda pkt: pkt.getfieldval("kind") == 1,
+        ),
+    )
+
+kind_first = b"\xa2\x64kind\x01\x64name\x61x"
+name_first = b"\xa2\x64name\x61x\x64kind\x01"
+
+first = ConditionalMap(kind_first)
+second = ConditionalMap(name_first)
+assert first.kind == second.kind == 1
+assert first.getfieldval("name") == second.getfieldval("name") == "x"
+
++ Generic CBOR map key identity
+
+= Generic CBOR maps preserve integer 1 and boolean true as distinct keys
+from scapy.cbor import CBOR_Codecs
+
+wire = b"\xa2\x01\x61a\xf5\x61b"
+obj, remaining = CBOR_Codecs.CBOR.dec(wire)
+assert remaining == b""
+assert obj.enc() == wire
+
+= Generic CBOR maps round-trip a map-valued key
+from scapy.cbor import CBOR_Codecs
+
+wire = b"\xa1\xa1\x01\x02\x03"
+obj, remaining = CBOR_Codecs.CBOR.dec(wire)
+assert remaining == b""
+assert obj.enc() == wire
+
+= Generic CBOR maps still reject duplicate data-item keys
+from scapy.cbor import CBOR_Codecs
+from scapy.cbor.cborcodec import CBOR_Codec_Decoding_Error
+
+try:
+    CBOR_Codecs.CBOR.dec(b"\xa2\x01\x00\x01\x01")
+    assert False, "A generic map accepted a duplicate integer key"
+except CBOR_Codec_Decoding_Error:
+    pass

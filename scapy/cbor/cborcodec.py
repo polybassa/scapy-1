@@ -497,10 +497,12 @@ class CBORcodec_ARRAY(CBORcodec_Object[List[Any]]):
         # type: (Union[List[Any], CBOR_Object[List[Any]]]) -> bytes
         from scapy.cbor.cbor import CBOR_Object
         array = obj.val if isinstance(obj, CBOR_Object) else obj
-        result = CBOR_encode_head(4, len(array))
-        for item in array:
-            result += CBORcodec_Object.encode_cbor_item(item)
-        return result
+        parts = [CBOR_encode_head(4, len(array))]
+        parts.extend(
+            CBORcodec_Object.encode_cbor_item(item)
+            for item in array
+        )
+        return b"".join(parts)
 
     @classmethod
     def do_dec(cls,
@@ -541,20 +543,31 @@ class CBORcodec_ARRAY(CBORcodec_Object[List[Any]]):
         return cls.cbor_object(items), remainder
 
 
-class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
-    """CBOR map codec (major type 5)"""
+class CBORcodec_MAP(CBORcodec_Object[Any]):
+    """CBOR map codec (major type 5).
+
+    Maps are stored as an ordered list of ``(key, value)`` CBOR objects so
+    that unhashable keys and distinct CBOR items that collide under Python
+    equality (``1`` vs ``True``) round-trip faithfully.
+    """
     tag = CBOR_MajorTypes.MAP
 
     @classmethod
     def enc(cls, obj):
-        # type: (Union[Dict[Any, Any], CBOR_Object[Dict[Any, Any]]]) -> bytes
-        from scapy.cbor.cbor import CBOR_Object
+        # type: (Any) -> bytes
+        from scapy.cbor.cbor import CBOR_Object, CBORMapData
         mapping = obj.val if isinstance(obj, CBOR_Object) else obj
-        result = CBOR_encode_head(5, len(mapping))
-        for key, value in mapping.items():
-            result += CBORcodec_Object.encode_cbor_item(key)
-            result += CBORcodec_Object.encode_cbor_item(value)
-        return result
+        if isinstance(mapping, CBORMapData):
+            pairs = mapping.cbor_pairs()
+        elif isinstance(mapping, dict):
+            pairs = list(mapping.items())
+        else:
+            pairs = list(mapping)
+        parts = [CBOR_encode_head(5, len(pairs))]
+        for key, value in pairs:
+            parts.append(CBORcodec_Object.encode_cbor_item(key))
+            parts.append(CBORcodec_Object.encode_cbor_item(value))
+        return b"".join(parts)
 
     @classmethod
     def do_dec(cls,
@@ -563,7 +576,8 @@ class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
                safe=False,  # type: bool
                _depth=0,  # type: int
                ):
-        # type: (...) -> Tuple[CBOR_Object[Dict[Any, Any]], bytes]
+        # type: (...) -> Tuple[CBOR_Object[Any], bytes]
+        from scapy.cbor.cbor import CBORMapData
         cls.check_string(s)
         major_type, length, remainder = CBOR_decode_head(s)
         if major_type != 5:
@@ -571,7 +585,19 @@ class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
                 "Expected major type 5 (map), got %d" % major_type,
                 remaining=s)
 
-        mapping = {}
+        pairs = []  # type: List[Tuple[Any, Any]]
+        seen_keys = set()  # type: set[bytes]
+
+        def _add_pair(key, value):
+            # type: (Any, Any) -> None
+            key_wire = CBORcodec_Object.encode_cbor_item(key)
+            if key_wire in seen_keys:
+                raise CBOR_Codec_Decoding_Error(
+                    "Duplicate CBOR map key: %r" % (key,),
+                    remaining=s)
+            seen_keys.add(key_wire)
+            pairs.append((key, value))
+
         if length is CBOR_INDEFINITE:
             while True:
                 if cbor_is_break(remainder):
@@ -587,18 +613,7 @@ class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
                         "Map key without value", remaining=s)
                 value, remainder = CBORcodec_Object.decode_cbor_item(
                     remainder, safe=safe, depth=_depth + 1)
-                key_val = key.val if isinstance(key, CBOR_Object) else key
-                try:
-                    hash(key_val)
-                except TypeError:
-                    raise CBOR_Codec_Decoding_Error(
-                        "Unhashable CBOR map key: %r" % (key_val,),
-                        remaining=s)
-                if key_val in mapping:
-                    raise CBOR_Codec_Decoding_Error(
-                        "Duplicate CBOR map key: %r" % (key_val,),
-                        remaining=s)
-                mapping[key_val] = value
+                _add_pair(key, value)
         else:
             for _ in range(length):
                 if not remainder:
@@ -611,20 +626,9 @@ class CBORcodec_MAP(CBORcodec_Object[Dict[Any, Any]]):
                         "Map key without value", remaining=s)
                 value, remainder = CBORcodec_Object.decode_cbor_item(
                     remainder, safe=safe, depth=_depth + 1)
-                key_val = key.val if isinstance(key, CBOR_Object) else key
-                try:
-                    hash(key_val)
-                except TypeError:
-                    raise CBOR_Codec_Decoding_Error(
-                        "Unhashable CBOR map key: %r" % (key_val,),
-                        remaining=s)
-                if key_val in mapping:
-                    raise CBOR_Codec_Decoding_Error(
-                        "Duplicate CBOR map key: %r" % (key_val,),
-                        remaining=s)
-                mapping[key_val] = value
+                _add_pair(key, value)
 
-        return cls.cbor_object(mapping), remainder
+        return cls.cbor_object(CBORMapData(pairs)), remainder
 
 
 class CBORcodec_SEMANTIC_TAG(CBORcodec_Object[Tuple[int, Any]]):
@@ -640,9 +644,10 @@ class CBORcodec_SEMANTIC_TAG(CBORcodec_Object[Tuple[int, Any]]):
         if tag_num < 0 or tag_num > 0xFFFFFFFFFFFFFFFF:
             raise CBOR_Codec_Encoding_Error(
                 "Semantic tag number out of uint64 range")
-        result = CBOR_encode_head(6, tag_num)
-        result += CBORcodec_Object.encode_cbor_item(item)
-        return result
+        return (
+            CBOR_encode_head(6, tag_num)
+            + CBORcodec_Object.encode_cbor_item(item)
+        )
 
     @classmethod
     def do_dec(cls,

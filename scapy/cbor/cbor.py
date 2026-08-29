@@ -395,14 +395,107 @@ class CBOR_ARRAY(CBOR_Object[List[Any]]):
         return s
 
 
-class CBOR_MAP(CBOR_Object[Dict[Any, Any]]):
-    """CBOR map (major type 5)"""
+class CBORMapData(object):
+    """Ordered CBOR map pairs with dict-like access for scalar keys.
+
+    Preserves full CBOR key objects for faithful ``enc()`` round-trips while
+    still supporting ``map_data['name']`` / ``'name' in map_data`` for the
+    common scalar-key cases used by existing tests.
+    """
+
+    __slots__ = ("_pairs",)
+
+    def __init__(self, pairs=None):
+        # type: (Optional[List[Tuple[Any, Any]]]) -> None
+        self._pairs = list(pairs or [])
+
+    def cbor_pairs(self):
+        # type: () -> List[Tuple[Any, Any]]
+        return list(self._pairs)
+
+    def __len__(self):
+        # type: () -> int
+        return len(self._pairs)
+
+    def __iter__(self):
+        # type: () -> Any
+        return iter(self.keys())
+
+    def keys(self):
+        # type: () -> List[Any]
+        out = []  # type: List[Any]
+        for key, _value in self._pairs:
+            out.append(key.val if isinstance(key, CBOR_Object) else key)
+        return out
+
+    def values(self):
+        # type: () -> List[Any]
+        return [value for _key, value in self._pairs]
+
+    def items(self):
+        # type: () -> List[Tuple[Any, Any]]
+        return [
+            (key.val if isinstance(key, CBOR_Object) else key, value)
+            for key, value in self._pairs
+        ]
+
+    def __contains__(self, key):
+        # type: (Any) -> bool
+        try:
+            self[key]
+            return True
+        except KeyError:
+            return False
+
+    def __getitem__(self, key):
+        # type: (Any) -> Any
+        for map_key, value in self._pairs:
+            native = map_key.val if isinstance(map_key, CBOR_Object) else map_key
+            if native == key or map_key == key:
+                return value
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        # type: (Any, Any) -> Any
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def __eq__(self, other):
+        # type: (Any) -> bool
+        if isinstance(other, dict):
+            try:
+                return dict(self.items()) == other
+            except TypeError:
+                return False
+        if isinstance(other, CBORMapData):
+            return self._pairs == other._pairs
+        return NotImplemented
+
+    def __repr__(self):
+        # type: () -> str
+        return "CBORMapData(%r)" % (self.items(),)
+
+
+class CBOR_MAP(CBOR_Object[Any]):
+    """CBOR map (major type 5).
+
+    Decoded maps use :class:`CBORMapData` (ordered pairs). Manually
+    constructed maps may still use a plain ``dict``.
+    """
     tag = CBOR_MajorTypes.MAP
 
     def strshow(self, lvl=0):
         # type: (int) -> str
         s = ("  " * lvl) + ("# CBOR_MAP:") + "\n"
-        for k, v in self.val.items():
+        if isinstance(self.val, CBORMapData):
+            items = self.val.cbor_pairs()
+        elif isinstance(self.val, dict):
+            items = list(self.val.items())
+        else:
+            items = list(self.val)
+        for k, v in items:
             s += ("  " * (lvl + 1)) + "Key: "
             if hasattr(k, 'strshow'):
                 s += k.strshow(0).strip() + "\n"

@@ -823,7 +823,7 @@ isinstance(obj, CBOR_ARRAY) and isinstance(obj.val, list)
 from scapy.cbor import RandCBORObject, CBOR_MAP
 rand = RandCBORObject(objlist=[CBOR_MAP])
 obj = rand._fix()
-isinstance(obj, CBOR_MAP) and isinstance(obj.val, dict)
+isinstance(obj, CBOR_MAP) and hasattr(obj.val, "items")
 
 = Generate random CBOR boolean (false)
 from scapy.cbor import RandCBORObject, CBOR_FALSE
@@ -3033,7 +3033,7 @@ class OffsetPkt(CBOR_Packet):
     )
 
 pkt = OffsetPkt(cbor2.dumps({'name': 'delta', 'offset': -1024, 'count': 512}))
-pkt.name == 'delta' and pkt.offset == -1024 and pkt.count == 512
+pkt.getfieldval('name') == 'delta' and pkt.offset == -1024 and pkt.count == 512
 
 + CBOR_Packet - nested CBORF_PACKET structures
 
@@ -3320,20 +3320,46 @@ dec.get('source') == 'sensor-1' and dec.get('count') == 2 and dec.get('log') == 
 
 + CBOR_Packet - CBORF_optional extended tests
 
-= CBORF_optional: type mismatch in CBORF_ARRAY sets field to None
-import cbor2
-from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_INTEGER, CBORF_TEXT_STRING, CBORF_optional
+= CBORF_optional: absent trailing field uses a shorter definite array
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_INTEGER,
+    CBORF_TEXT_STRING,
+    CBORF_optional,
+)
 from scapy.cborpacket import CBOR_Packet
 
 class TwoFieldPkt(CBOR_Packet):
     CBOR_root = CBORF_ARRAY(
-        CBORF_INTEGER('version', 0),
-        CBORF_optional(CBORF_TEXT_STRING('description', 'none')),
+        CBORF_INTEGER("version", 0),
+        CBORF_optional(CBORF_TEXT_STRING("description", None)),
     )
 
-raw = cbor2.dumps([7, 99])
-pkt = TwoFieldPkt(raw)
-pkt.version == 7 and pkt.description is None
+pkt = TwoFieldPkt(b"\x81\x07")
+assert pkt.version == 7
+assert pkt.description is None
+
+= CBORF_optional: mismatched trailing item is rejected
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_INTEGER,
+    CBORF_TEXT_STRING,
+    CBORF_optional,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class TwoFieldPktWithExtraItem(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER("version", 0),
+        CBORF_optional(CBORF_TEXT_STRING("description", None)),
+    )
+
+try:
+    TwoFieldPktWithExtraItem(b"\x82\x07\x18\x63")
+    assert False, "Unexpected array item was accepted as an absent optional"
+except CBOR_Decoding_Error:
+    pass
 
 = CBORF_optional: correct type present is decoded normally
 import cbor2
@@ -3779,7 +3805,7 @@ isinstance(obj, CBOR_ARRAY) and isinstance(obj.val, list)
 from scapy.cbor import RandCBORObject, CBOR_MAP
 rand = RandCBORObject(objlist=[CBOR_MAP])
 obj = rand._fix()
-isinstance(obj, CBOR_MAP) and isinstance(obj.val, dict)
+isinstance(obj, CBOR_MAP) and hasattr(obj.val, "items")
 
 = Generate random CBOR boolean (false)
 from scapy.cbor import RandCBORObject, CBOR_FALSE
@@ -4364,7 +4390,8 @@ try:
 except CBOR_Encoding_Error:
     pass
 
-= SEQUENCE_OF sums packet child item counts
+= SEQUENCE_OF rejects packet child emitting multiple CBOR items
+from scapy.cbor.cbor import CBOR_Encoding_Error
 from scapy.cbor.cborfields import (
     CBORF_SEQUENCE_OF, CBORF_SEQUENCE, CBORF_UNSIGNED_INTEGER,
 )
@@ -4379,8 +4406,11 @@ class TwoSeq(CBOR_Packet):
 class ParentSeq(CBOR_Packet):
     CBOR_root = CBORF_SEQUENCE_OF("kids", [], TwoSeq)
 
-assert ParentSeq(kids=[TwoSeq()]).cbor_build_result().items == 2
-assert bytes(ParentSeq(kids=[TwoSeq()])) == b"\x01\x02"
+try:
+    bytes(ParentSeq(kids=[TwoSeq()]))
+    assert False, "SEQUENCE_OF accepted a child emitting two CBOR items"
+except CBOR_Encoding_Error:
+    pass
 
 + Optional cardinality is schema-based
 
@@ -4432,14 +4462,13 @@ try:
 except CBOR_Codec_Decoding_Error:
     pass
 
-= Generic map rejects unhashable array key
-from scapy.cbor.cborcodec import CBORcodec_Object, CBOR_Codec_Decoding_Error
+= Generic map round-trips an array-valued key
+from scapy.cbor.cborcodec import CBORcodec_Object
 
-try:
-    CBORcodec_Object.decode_cbor_item(b"\xa1\x80\x01")
-    assert False
-except CBOR_Codec_Decoding_Error:
-    pass
+wire = b"\xa1\x81\x01\x02"
+obj, remaining = CBORcodec_Object.decode_cbor_item(wire)
+assert remaining == b""
+assert obj.enc() == wire
 
 = Generic map rejects duplicate keys
 from scapy.cbor.cborcodec import CBORcodec_Object, CBOR_Codec_Decoding_Error

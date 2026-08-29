@@ -10,7 +10,6 @@ structures as packet fields.  Modelled after scapy/asn1fields.py.
 import copy
 
 from dataclasses import dataclass
-from functools import reduce
 
 from scapy.cbor.cbor import (
     CBOR_Decoding_Error,
@@ -116,6 +115,20 @@ class CBORValueDissectResult(object):
     items: int = 0
 
 
+# Sentinel for an optional field that was not present on the wire.
+# Distinct from Python ``None``, which encodes CBOR null for CBORF_ANY.
+CBOR_ABSENT = object()
+
+
+def cbor_item_span(s):
+    # type: (bytes) -> Tuple[bytes, bytes]
+    """Split *s* into the first well-formed CBOR item and the remainder."""
+    _obj, remain = CBORcodec_Object.decode_cbor_item(s)
+    if remain:
+        return s[:-len(remain)], remain
+    return s, b""
+
+
 def cbor_object_to_python(obj):
     # type: (Any) -> Any
     """Convert a :class:`CBOR_Object` tree to native Python values."""
@@ -126,6 +139,19 @@ def cbor_object_to_python(obj):
     if isinstance(obj, CBOR_ARRAY):
         return [cbor_object_to_python(item) for item in obj.val]
     if isinstance(obj, CBOR_MAP):
+        # Preserve CBOR map pair order; keys may be unhashable or collide
+        # under Python equality (e.g. 1 vs True).
+        from scapy.cbor.cbor import CBORMapData
+        if isinstance(obj.val, CBORMapData):
+            return [
+                (cbor_object_to_python(k), cbor_object_to_python(v))
+                for k, v in obj.val.cbor_pairs()
+            ]
+        if isinstance(obj.val, list):
+            return [
+                (cbor_object_to_python(k), cbor_object_to_python(v))
+                for k, v in obj.val
+            ]
         return {
             cbor_object_to_python(key): cbor_object_to_python(value)
             for key, value in obj.val.items()
@@ -278,7 +304,10 @@ class CBORF_field(CBORF_element, Generic[_I]):
 
     def build_value_result(self, pkt, value):
         # type: (CBOR_Packet, Any) -> CBORValueBuildResult
-        return CBORValueBuildResult(self.encode_value(value), 1)
+        # Normalize wrappers (CBOR_Object) the same way field assignment does.
+        return CBORValueBuildResult(
+            self.encode_value(self.any2i(pkt, value)), 1
+        )
 
     def build(self, pkt):
         # type: (CBOR_Packet) -> bytes
@@ -314,7 +343,22 @@ class CBORF_field(CBORF_element, Generic[_I]):
 
     def is_empty(self, pkt):
         # type: (CBOR_Packet) -> bool
-        return pkt.getfieldval(self.name) is None
+        val = pkt.getfieldval(self.name)
+        return val is None or val is CBOR_ABSENT
+
+    def matches_next_item(self, pkt, s):
+        # type: (CBOR_Packet, bytes) -> bool
+        """Return True if the next CBOR item matches this field's outer type."""
+        if not s or cbor_is_break(s):
+            return False
+        try:
+            major_type, _info, _rem = CBOR_decode_head(s)
+        except CBOR_Codec_Decoding_Error:
+            return False
+        tag = self.CBOR_tag
+        if tag is None:
+            return True
+        return major_type == int(tag)
 
     def get_fields_list(self):
         # type: () -> List[CBORF_field[Any]]
@@ -336,9 +380,26 @@ class CBORF_field(CBORF_element, Generic[_I]):
 class CBORF_ANY(CBORF_field[Any]):
     """Represent any well-formed CBOR value, including recursion."""
 
+    def is_empty(self, pkt):
+        # type: (CBOR_Packet) -> bool
+        # Python None is CBOR null; only CBOR_ABSENT means "no item".
+        return pkt.getfieldval(self.name) is CBOR_ABSENT
+
+    def matches_next_item(self, pkt, s):
+        # type: (CBOR_Packet, bytes) -> bool
+        if not s or cbor_is_break(s):
+            return False
+        try:
+            CBOR_decode_head(s)
+        except CBOR_Codec_Decoding_Error:
+            return False
+        return True
+
     def build_result(self, pkt):
         # type: (CBOR_Packet) -> CBORBuildResult
         val = pkt.getfieldval(self.name)
+        if val is CBOR_ABSENT:
+            return CBORBuildResult(b"", 0)
         return CBORBuildResult(self.encode_value(val), 1)
 
     def m2i(self, pkt, s):
@@ -348,6 +409,8 @@ class CBORF_ANY(CBORF_field[Any]):
 
     def encode_value(self, x):
         # type: (Any) -> bytes
+        if x is CBOR_ABSENT:
+            return b""
         if isinstance(x, CBOR_Object):
             x = cbor_object_to_python(x)
         return CBORcodec_Object.encode_cbor_item(x)
@@ -426,6 +489,16 @@ class CBORF_NEGATIVE_INTEGER(CBORF_field[int]):
 class CBORF_INTEGER(CBORF_field[int]):
     """CBOR integer field handling both positive and negative values."""
 
+    def matches_next_item(self, pkt, s):
+        # type: (CBOR_Packet, bytes) -> bool
+        if not s or cbor_is_break(s):
+            return False
+        try:
+            major_type, _info, _rem = CBOR_decode_head(s)
+        except CBOR_Codec_Decoding_Error:
+            return False
+        return major_type in (0, 1)
+
     def any2i(self, pkt, x):
         # type: (CBOR_Packet, Any) -> int
         if isinstance(x, CBOR_Object):
@@ -468,6 +541,15 @@ class CBORF_BYTE_STRING(CBORF_field[bytes]):
     """CBOR byte string field (major type 2)."""
     CBOR_tag = CBOR_MajorTypes.BYTE_STRING
 
+    def __init__(self,
+                 name,  # type: str
+                 default,  # type: Optional[bytes]
+                 definite_only=False,  # type: bool
+                 ):
+        # type: (...) -> None
+        super(CBORF_BYTE_STRING, self).__init__(name, default)
+        self.definite_only = definite_only
+
     def any2i(self, pkt, x):
         # type: (CBOR_Packet, Any) -> bytes
         if isinstance(x, CBOR_Object):
@@ -478,6 +560,17 @@ class CBORF_BYTE_STRING(CBORF_field[bytes]):
 
     def m2i(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> Tuple[bytes, bytes]
+        if self.definite_only:
+            try:
+                major_type, length, _rem = CBOR_decode_head(s)
+            except CBOR_Codec_Decoding_Error as e:
+                raise CBOR_Decoding_Error(str(e))
+            if major_type != 2:
+                raise CBOR_Type_Mismatch(
+                    "Expected byte string, got major type %d" % major_type)
+            if length is CBOR_INDEFINITE:
+                raise CBOR_Decoding_Error(
+                    "Indefinite-length byte string not allowed here")
         obj, remain = CBORcodec_BYTE_STRING.dec(s)
         if not isinstance(obj, CBOR_BYTE_STRING):
             raise CBOR_Type_Mismatch(
@@ -486,7 +579,11 @@ class CBORF_BYTE_STRING(CBORF_field[bytes]):
 
     def encode_value(self, x):
         # type: (Any) -> bytes
-        return CBORcodec_BYTE_STRING.enc(bytes(x))
+        data = bytes(x)
+        if self.definite_only:
+            # Always emit definite form (codec already does).
+            pass
+        return CBORcodec_BYTE_STRING.enc(data)
 
     def randval(self):
         # type: () -> RandString
@@ -506,6 +603,7 @@ class CBORF_BYTE_STRING_PACKET(CBORF_field[Packet]):
                  default,  # type: Optional[Packet]
                  pkt_cls=None,  # type: Optional[Type[Packet]]
                  cls_cb=None,  # type: Optional[Callable[[Packet, bytes], Optional[Type[Packet]]]]  # noqa: E501
+                 definite_only=False,  # type: bool
                  ):
         # type: (...) -> None
         if pkt_cls is None and cls_cb is None:
@@ -513,47 +611,62 @@ class CBORF_BYTE_STRING_PACKET(CBORF_field[Packet]):
         super(CBORF_BYTE_STRING_PACKET, self).__init__(name, default)
         self.pkt_cls = pkt_cls
         self.cls_cb = cls_cb
+        self.definite_only = definite_only
+
+    def _resolve_packet_class(self, pkt, data):
+        # type: (CBOR_Packet, bytes) -> Tuple[Optional[Type[Packet]], bool]
+        if self.pkt_cls is not None:
+            return self.pkt_cls, True
+        if self.cls_cb is not None:
+            pkt_cls = self.cls_cb(pkt, data)
+            return pkt_cls, pkt_cls is not None
+        return None, False
+
+    def _decode_packet_value(self, pkt, data):
+        # type: (CBOR_Packet, bytes) -> Packet
+        pkt_cls, registered = self._resolve_packet_class(pkt, data)
+        if pkt_cls is None:
+            return packet.Raw(data, _underlayer=pkt)  # type: ignore
+        try:
+            return pkt_cls(data, _underlayer=pkt)
+        except Exception as exc:
+            if registered:
+                raise CBOR_Decoding_Error(
+                    "Failed to decode registered block-type-specific data: %s"
+                    % exc
+                )
+            log_runtime.exception(
+                "Failed to decode byte string content to %s", pkt_cls)
+            return packet.Raw(data, _underlayer=pkt)  # type: ignore
 
     def any2i(self, pkt, x):
         # type: (CBOR_Packet, Any) -> Packet
         if isinstance(x, CBOR_BYTE_STRING):
             x = x.val
         if isinstance(x, (bytes, bytearray)):
-            pkt_cls = self.pkt_cls or packet.Raw
-            try:
-                return pkt_cls(bytes(x), _underlayer=pkt)
-            except Exception:
-                log_runtime.exception(
-                    "Failed to decode byte string content to %s", pkt_cls)
-                return packet.Raw(bytes(x), _underlayer=pkt)  # type: ignore
+            return self._decode_packet_value(pkt, bytes(x))
         if hasattr(x, "add_underlayer"):
             x.add_underlayer(pkt)
         return cast(Packet, x)
 
     def m2i(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> Tuple[Packet, bytes]
+        if self.definite_only:
+            try:
+                major_type, length, _rem = CBOR_decode_head(s)
+            except CBOR_Codec_Decoding_Error as e:
+                raise CBOR_Decoding_Error(str(e))
+            if major_type != 2:
+                raise CBOR_Type_Mismatch(
+                    "Expected byte string, got major type %d" % major_type)
+            if length is CBOR_INDEFINITE:
+                raise CBOR_Decoding_Error(
+                    "Indefinite-length byte string not allowed here")
         obj, remain = CBORcodec_BYTE_STRING.dec(s)
         if not isinstance(obj, CBOR_BYTE_STRING):
             raise CBOR_Type_Mismatch(
                 "Expected byte string, got %r" % obj)
-
-        if self.pkt_cls is not None:
-            pkt_cls = self.pkt_cls
-        elif self.cls_cb is not None:
-            pkt_cls = self.cls_cb(pkt, obj.val)
-        else:
-            pkt_cls = None
-        if pkt_cls is None:
-            pkt_cls = packet.Raw
-
-        try:
-            sub = pkt_cls(obj.val, _underlayer=pkt)
-        except Exception:
-            log_runtime.exception(
-                "Failed to decode byte string content to %s", pkt_cls)
-            sub = packet.Raw(obj.val, _underlayer=pkt)  # type: ignore
-
-        return sub, remain
+        return self._decode_packet_value(pkt, obj.val), remain
 
     def encode_value(self, x):
         # type: (Any) -> bytes
@@ -814,8 +927,11 @@ class _CBORF_compound(CBORF_element):
 
     def get_fields_list(self):
         # type: () -> List[CBORF_field[Any]]
-        return reduce(lambda x, y: x + y.get_fields_list(),
-                      self.seq, [])
+        return [
+            child
+            for field in self.seq
+            for child in field.get_fields_list()
+        ]
 
     def _build_children(self, pkt):
         # type: (CBOR_Packet) -> Tuple[bytes, int]
@@ -1051,6 +1167,14 @@ class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
             raise ValueError("cls must be a CBORF_field or CBOR_Packet")
         super(CBORF_SEQUENCE_OF, self).__init__(name, default)
 
+    def any2i(self, pkt, x):
+        # type: (CBOR_Packet, Any) -> List[Any]
+        if x is None:
+            return None  # type: ignore
+        if self.holds_packets:
+            return list(x)
+        return [self.item_field.any2i(pkt, item) for item in x]
+
     def _decode_items(self, pkt, data, max_items=None):
         # type: (CBOR_Packet, bytes, Optional[int]) -> Tuple[List[Any], bytes, int]
         """Decode zero or more immediate CBOR items; do not consume break."""
@@ -1067,20 +1191,19 @@ class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
                     pkt_cls = self.cls_cb(pkt, remaining)
                     if pkt_cls is CBOR_NO_ITEM or pkt_cls is None:
                         break
-                child = pkt_cls()
-                result = child.CBOR_root.dissect_result(child, remaining)
-                if result.items != 1:
-                    raise CBOR_Decoding_Error(
-                        "SEQUENCE_OF packet elements must consume "
-                        "exactly one CBOR item, got %d" % result.items
-                    )
-                if len(result.remaining) >= before_len:
+                item_bytes, next_remaining = cbor_item_span(remaining)
+                if len(next_remaining) >= before_len:
                     raise CBOR_Decoding_Error(
                         "Sequence decoder did not consume input")
-                child.add_underlayer(pkt)
+                try:
+                    child = pkt_cls(item_bytes, _underlayer=pkt)
+                except CBOR_Decoding_Error:
+                    raise
+                except Exception as exc:
+                    raise CBOR_Decoding_Error(str(exc))
                 values.append(child)
                 consumed += 1
-                remaining = result.remaining
+                remaining = next_remaining
             else:
                 result = self.item_field.dissect_value_result(pkt, remaining)
                 if result.items != 1:
@@ -1187,16 +1310,21 @@ class CBORF_ARRAY_OF(CBORF_field[List[Any]]):
                 self.item_field = cls("_item", None)  # type: ignore
             else:
                 self.item_field = cls
-            self._extract_item = lambda s, pkt: self.item_field.m2i(pkt, s)
             self.holds_packets = 0
         elif hasattr(cls, "CBOR_root") or callable(cls):
             self.cls = cast("Type[CBOR_Packet]", cls)
-            self._extract_item = lambda s, pkt: self.extract_packet(
-                self.cls, s, _underlayer=pkt)
             self.holds_packets = 1
         else:
             raise ValueError("cls must be a CBORF_field or CBOR_Packet")
         super(CBORF_ARRAY_OF, self).__init__(name, default)
+
+    def any2i(self, pkt, x):
+        # type: (CBOR_Packet, Any) -> List[Any]
+        if x is None:
+            return None  # type: ignore
+        if self.holds_packets:
+            return list(x)
+        return [self.item_field.any2i(pkt, item) for item in x]
 
     def m2i(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> Tuple[List[Any], bytes]
@@ -1213,16 +1341,14 @@ class CBORF_ARRAY_OF(CBORF_field[List[Any]]):
         lst = []  # type: List[Any]
         for _ in range(count):
             if self.holds_packets:
-                child = self.cls()
-                result = child.CBOR_root.dissect_result(child, s)
-                if result.items != 1:
-                    raise CBOR_Decoding_Error(
-                        "ARRAY_OF packet elements must consume exactly "
-                        "one CBOR item, got %d" % result.items
-                    )
-                child.add_underlayer(pkt)
+                item_bytes, s = cbor_item_span(s)
+                try:
+                    child = self.cls(item_bytes, _underlayer=pkt)
+                except CBOR_Decoding_Error:
+                    raise
+                except Exception as exc:
+                    raise CBOR_Decoding_Error(str(exc))
                 lst.append(child)
-                s = result.remaining
             else:
                 result = self.item_field.dissect_value_result(pkt, s)
                 if result.items != 1:
@@ -1300,6 +1426,18 @@ class CBORF_MAP(CBORF_element):
     def __init__(self, *seq, **kwargs):
         # type: (*Any, **Any) -> None
         self.seq = seq
+        field_by_name = {}  # type: Dict[str, Any]
+        encoded_keys = {}  # type: Dict[str, bytes]
+        for fld in seq:
+            name = fld.name
+            if name in field_by_name:
+                raise ValueError(
+                    "Duplicate CBOR map field name: %r" % (name,)
+                )
+            field_by_name[name] = fld
+            encoded_keys[name] = CBORcodec_TEXT_STRING.enc(name)
+        self._field_by_name = field_by_name
+        self._encoded_keys = encoded_keys
 
     def __repr__(self):
         # type: () -> str
@@ -1311,8 +1449,11 @@ class CBORF_MAP(CBORF_element):
 
     def get_fields_list(self):
         # type: () -> List[CBORF_field[Any]]
-        return reduce(lambda x, y: x + y.get_fields_list(),
-                      self.seq, [])
+        return [
+            child
+            for field in self.seq
+            for child in field.get_fields_list()
+        ]
 
     def build_result(self, pkt):
         # type: (CBOR_Packet) -> CBORBuildResult
@@ -1327,7 +1468,7 @@ class CBORF_MAP(CBORF_element):
                     "CBOR map value for %r must emit exactly one item"
                     % fld.name
                 )
-            parts.append(CBORcodec_TEXT_STRING.enc(fld.name))
+            parts.append(self._encoded_keys[fld.name])
             parts.append(value_result.data)
             pair_count += 1
         data = CBOR_encode_head(5, pair_count) + b"".join(parts)
@@ -1343,9 +1484,10 @@ class CBORF_MAP(CBORF_element):
             raise CBOR_Type_Mismatch(
                 "Expected major type 5 (map), got %d" % major_type)
 
-        field_map = {f.name: f for f in self.seq}
+        field_map = self._field_by_name
         seen_keys = set()  # type: set[str]
         seen_fields = set()  # type: set[str]
+        pair_values = {}  # type: Dict[str, bytes]
 
         def _map_text_key(key_obj):
             # type: (Any) -> str
@@ -1362,47 +1504,62 @@ class CBORF_MAP(CBORF_element):
             seen_keys.add(key)
             return key
 
-        def _dissect_map_value(fld, remaining):
-            # type: (Any, bytes) -> bytes
-            # Present keys must have exactly one valid value (no soft-skip).
-            if isinstance(fld, CBORF_optional):
-                value_fld = fld._field
-            else:
-                value_fld = fld
-            result = value_fld.dissect_result(pkt, remaining)
-            if result.items != 1:
-                raise CBOR_Decoding_Error(
-                    "Map value for %r must contain exactly one item"
-                    % getattr(fld, "name", fld)
-                )
-            seen_fields.add(fld.name)
-            return result.remaining
+        def _collect_pair():
+            # type: () -> None
+            nonlocal remaining
+            key_obj, remaining = CBORcodec_Object.decode_cbor_item(remaining)
+            key = _map_text_key(key_obj)
+            val_bytes, remaining = cbor_item_span(remaining)
+            if key in field_map:
+                pair_values[key] = val_bytes
 
         if count is CBOR_INDEFINITE:
             while True:
                 if cbor_is_break(remaining):
                     remaining = cbor_consume_break(remaining)
                     break
-                key_obj, remaining = CBORcodec_Object.decode_cbor_item(
-                    remaining)
-                key = _map_text_key(key_obj)
-                fld = field_map.get(key)
-                if fld is not None:
-                    remaining = _dissect_map_value(fld, remaining)
-                else:
-                    _unknown, remaining = CBORcodec_Object.decode_cbor_item(
-                        remaining)
+                _collect_pair()
         else:
             for _ in range(count):
-                key_obj, remaining = CBORcodec_Object.decode_cbor_item(
-                    remaining)
-                key = _map_text_key(key_obj)
-                fld = field_map.get(key)
-                if fld is not None:
-                    remaining = _dissect_map_value(fld, remaining)
-                else:
-                    _unknown, remaining = CBORcodec_Object.decode_cbor_item(
-                        remaining)
+                _collect_pair()
+
+        def _dissect_value_bytes(fld, val_bytes):
+            # type: (Any, bytes) -> None
+            if isinstance(fld, CBORF_optional):
+                value_fld = fld._field
+            elif isinstance(fld, CBORF_CONDITIONAL):
+                value_fld = fld.fld
+            else:
+                value_fld = fld
+            result = value_fld.dissect_result(pkt, val_bytes)
+            if result.items != 1 or result.remaining:
+                raise CBOR_Decoding_Error(
+                    "Map value for %r must contain exactly one item"
+                    % getattr(value_fld, "name", value_fld)
+                )
+            seen_fields.add(value_fld.name)
+
+        # Phase 1: unconditional members (order-independent).
+        for fld in self.seq:
+            if isinstance(fld, CBORF_CONDITIONAL):
+                continue
+            name = fld.name
+            if name not in pair_values:
+                continue
+            _dissect_value_bytes(fld, pair_values[name])
+
+        # Phase 2: conditionals after discriminators are populated.
+        for fld in self.seq:
+            if not isinstance(fld, CBORF_CONDITIONAL):
+                continue
+            name = fld.fld.name
+            if name not in pair_values:
+                continue
+            if not fld._evalcond(pkt):
+                raise CBOR_Decoding_Error(
+                    "Map field %r present but condition is false" % name
+                )
+            _dissect_value_bytes(fld, pair_values[name])
 
         for fld in self.seq:
             if fld.min_items(pkt) > 0 and fld.name not in seen_fields:
@@ -1461,8 +1618,8 @@ class CBORF_SEMANTIC_TAG(CBORF_field[int]):
         self.inner_field = inner_field
         super(CBORF_SEMANTIC_TAG, self).__init__(name, tag_num)
 
-    def m2i(self, pkt, s):
-        # type: (CBOR_Packet, bytes) -> Tuple[int, bytes]
+    def _parse_tag_head(self, s, require_match=True):
+        # type: (bytes, bool) -> Tuple[int, bytes]
         try:
             major_type, tag_num, remaining = CBOR_decode_head(s)
         except CBOR_Codec_Decoding_Error as e:
@@ -1470,20 +1627,32 @@ class CBORF_SEMANTIC_TAG(CBORF_field[int]):
         if major_type != 6:
             raise CBOR_Type_Mismatch(
                 "Expected major type 6 (semantic tag), got %d" % major_type)
+        if require_match and tag_num != self.tag_num:
+            raise CBOR_Type_Mismatch(
+                "Expected tag %d, got %d" % (self.tag_num, tag_num))
         return tag_num, remaining
+
+    def _encode_tagged(self, inner_data):
+        # type: (bytes) -> bytes
+        return CBOR_encode_head(6, self.tag_num) + inner_data
+
+    def m2i(self, pkt, s):
+        # type: (CBOR_Packet, bytes) -> Tuple[int, bytes]
+        return self._parse_tag_head(s, require_match=False)
+
+    def matches_next_item(self, pkt, s):
+        # type: (CBOR_Packet, bytes) -> bool
+        if not s or cbor_is_break(s):
+            return False
+        try:
+            major_type, tag_num, _rem = CBOR_decode_head(s)
+        except CBOR_Codec_Decoding_Error:
+            return False
+        return major_type == 6 and tag_num == self.tag_num
 
     def dissect_result(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> CBORDissectResult
-        try:
-            major_type, tag_num, remaining = CBOR_decode_head(s)
-        except CBOR_Codec_Decoding_Error as e:
-            raise CBOR_Decoding_Error(str(e))
-        if major_type != 6:
-            raise CBOR_Type_Mismatch(
-                "Expected major type 6 (semantic tag), got %d" % major_type)
-        if tag_num != self.tag_num:
-            raise CBOR_Type_Mismatch(
-                "Expected tag %d, got %d" % (self.tag_num, tag_num))
+        tag_num, remaining = self._parse_tag_head(s)
         inner = self.inner_field.dissect_result(pkt, remaining)
         if inner.items != 1:
             raise CBOR_Decoding_Error(
@@ -1501,21 +1670,11 @@ class CBORF_SEMANTIC_TAG(CBORF_field[int]):
         if inner.items != 1:
             raise CBOR_Encoding_Error(
                 "Semantic tag content must be exactly one CBOR item")
-        data = CBOR_encode_head(6, self.tag_num) + inner.data
-        return CBORBuildResult(data, 1)
+        return CBORBuildResult(self._encode_tagged(inner.data), 1)
 
     def dissect_value_result(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> CBORValueDissectResult
-        try:
-            major_type, tag_num, remaining = CBOR_decode_head(s)
-        except CBOR_Codec_Decoding_Error as e:
-            raise CBOR_Decoding_Error(str(e))
-        if major_type != 6:
-            raise CBOR_Type_Mismatch(
-                "Expected major type 6 (semantic tag), got %d" % major_type)
-        if tag_num != self.tag_num:
-            raise CBOR_Type_Mismatch(
-                "Expected tag %d, got %d" % (self.tag_num, tag_num))
+        _tag_num, remaining = self._parse_tag_head(s)
         inner = self.inner_field.dissect_value_result(pkt, remaining)
         if inner.items != 1:
             raise CBOR_Decoding_Error(
@@ -1528,8 +1687,7 @@ class CBORF_SEMANTIC_TAG(CBORF_field[int]):
         if inner.items != 1:
             raise CBOR_Encoding_Error(
                 "Semantic tag content must be exactly one CBOR item")
-        data = CBOR_encode_head(6, self.tag_num) + inner.data
-        return CBORValueBuildResult(data, 1)
+        return CBORValueBuildResult(self._encode_tagged(inner.data), 1)
 
     def get_fields_list(self):
         # type: () -> List[CBORF_field[Any]]
@@ -1548,8 +1706,9 @@ class CBORF_optional(CBORF_element):
     """
     Wrapper making a :class:`CBORF_field` optional.
 
-    During decoding, if the next CBOR item does not match the expected major
-    type, the field value is set to ``None`` and the stream is left unchanged.
+    Absence is detected by outer-type / tag lookahead via
+    ``matches_next_item``.  If the next item matches but decoding fails, the
+    error propagates (the value is present but malformed).
     """
 
     def __init__(self, field):
@@ -1568,12 +1727,13 @@ class CBORF_optional(CBORF_element):
 
     def dissect_result(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> CBORDissectResult
-        try:
-            return self._field.dissect_result(pkt, s)
-        except (CBOR_Type_Mismatch, CBOR_Decoding_Error,
-                CBOR_Codec_Decoding_Error):
-            self._field.set_val(pkt, None)
+        if not self._field.matches_next_item(pkt, s):
+            if isinstance(self._field, CBORF_ANY):
+                self._field.set_val(pkt, CBOR_ABSENT)
+            else:
+                self._field.set_val(pkt, None)
             return CBORDissectResult(s, 0)
+        return self._field.dissect_result(pkt, s)
 
     def build(self, pkt):
         # type: (CBOR_Packet) -> bytes
@@ -1705,17 +1865,15 @@ class CBORF_PACKET(CBORF_field['CBOR_Packet']):
 
     def dissect_result(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> CBORDissectResult
-        child = self.cls()
-        result = child.CBOR_root.dissect_result(child, s)
-        if result.items != 1:
-            raise CBOR_Decoding_Error(
-                "%s must consume exactly one top-level CBOR item, "
-                "but consumed %d"
-                % (self.cls.__name__, result.items)
-            )
-        child.add_underlayer(pkt)
+        item_bytes, remain = cbor_item_span(s)
+        try:
+            child = self.cls(item_bytes, _underlayer=pkt)
+        except CBOR_Decoding_Error:
+            raise
+        except Exception as exc:
+            raise CBOR_Decoding_Error(str(exc))
         self.set_val(pkt, child)
-        return CBORDissectResult(result.remaining, 1)
+        return CBORDissectResult(remain, 1)
 
     def randval(self):  # type: ignore
         # type: () -> CBOR_Packet

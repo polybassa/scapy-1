@@ -8,11 +8,10 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 import datetime
 import enum
-from typing import Any, Callable, ClassVar, Iterator, Optional, Union, cast
+from typing import Any, Callable, ClassVar, Optional, Union, cast
 
 from scapy import volatile
 from scapy.cbor.cborcodec import (
@@ -22,26 +21,29 @@ from scapy.cbor.cborcodec import (
     CBOR_INDEFINITE,
 )
 from scapy.cbor import (
+    CBORResult,
+    CBORUIntField,
+    CBORBytesField,
+    CBOREnumField,
+    CBORFlagsField,
+    CBORArray,
+    CBORIndefiniteArray,
+    CBORConditionalField,
+    CBORPacketField,
+    CBORPacketLenField,
+    CBORPacketListField,
     CBORF_field,
-    CBORF_UNSIGNED_INTEGER,
-    CBORF_ARRAY,
-    CBORF_ARRAY_INDEFINITE,
-    CBORF_BYTE_STRING,
-    CBORF_CONDITIONAL,
-    CBORF_SEQUENCE_OF,
-    CBORF_PACKET,
-    CBORF_BYTE_STRING_PACKET,
-    CBORF_UNSIGNED_ENUM,
-    CBORF_UNSIGNED_FLAGS,
     CBORcodec_ARRAY,
-    CBOR_UNSIGNED_INTEGER,
-    CBOR_TEXT_STRING,
     CBOR_ARRAY,
-    CBOR_Object,
     CBOR_NO_ITEM,
     CBOR_Encoding_Error,
+    CBOR_Object,
 )
-from scapy.cborpacket import CBOR_Packet
+from scapy.cbor.cborfields import (
+    CBORBuildResult,
+    cbor_object_to_python,
+)
+from scapy.cborpacket import CBOR_Packet, _cbor_raw_cache_is_valid
 from scapy.error import log_runtime
 from scapy.libs.crc import CRC, CRC_16_X25, CRC_32C
 from scapy.packet import Packet
@@ -49,37 +51,61 @@ from scapy.packet import Packet
 _MISSING = object()
 
 
-@contextmanager
-def _temporary_internal_field(pkt: Packet, name: str, value: Any) -> Iterator[None]:
-    """Temporarily set a field value via the internal fields dict."""
-    fields = pkt.fields
-    had = name in fields
-    old = fields.get(name, _MISSING)
-    fields[name] = value
-    try:
-        yield
-    finally:
-        if had:
-            fields[name] = old
-        else:
-            fields.pop(name, None)
-
-
-def _native_int(val: Any) -> int:
-    if isinstance(val, CBOR_Object):
-        return int(val.val)
+def _as_int(val: Any) -> int:
+    """Coerce a BPv7 numeric field value (always a Python int at rest)."""
     return int(val)
 
 
-def _crc_bytes(val: Any) -> bytes:
+def _as_bytes(val: Any) -> bytes:
     if val is None or val is _MISSING:
         return b""
-    if isinstance(val, CBOR_Object):
-        return cast(bytes, val.val)
     return cast(bytes, val)
 
 
-class DtnTimeField(CBORF_UNSIGNED_INTEGER):
+class BlockTypeField(CBORUIntField):
+    """Canonical block type code; ``None`` means infer from BTSD on build."""
+
+    def build_result(self, pkt):
+        val = pkt.getfieldval(self.name)
+        if val is None:
+            inferred = getattr(pkt, "inferred_type_code", lambda: None)()
+            if inferred is None:
+                raise CBOR_Encoding_Error(
+                    "Block type_code is None and cannot be inferred from BTSD"
+                )
+            val = inferred
+        return CBORBuildResult(self.encode_value(val), 1)
+
+
+class CrcBytesField(CBORBytesField):
+    """CRC content octets; ``None`` means compute automatically on build."""
+
+    def build_result(self, pkt):
+        override = getattr(pkt, "_cbor_crc_override", _MISSING)
+        if override is not _MISSING:
+            val = override
+        else:
+            val = pkt.getfieldval(self.name)
+            if val is None:
+                # Zero placeholder sized for the selected CRC type.
+                defn = (
+                    pkt._crc_definition()
+                    if hasattr(pkt, "_crc_definition") else None
+                )
+                if defn is None:
+                    raise CBOR_Encoding_Error(
+                        "CRC field present but CRC type is unsupported"
+                    )
+                val = defn.encode(0)
+        return CBORBuildResult(self.encode_value(val), 1)
+
+
+class CrcTypeField(CBOREnumField):
+    """Human-friendly CRC type enumeration."""
+    pass
+
+
+class DtnTimeField(CBORUIntField):
     """A DTN time value representing number of milliseconds from the
     DTN epoch 2000-01-01T00:00:00Z.
 
@@ -111,7 +137,7 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
     def dtntime_to_datetime(val: Any) -> Optional[datetime.datetime]:
         if val is None:
             return None
-        ival = _native_int(val)
+        ival = _as_int(val)
         if ival == 0:
             return None
         delta = datetime.timedelta(milliseconds=ival)
@@ -120,12 +146,12 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
     def i2h(self, pkt, x):
         if x is None:
             return None
-        if _native_int(x) == 0:
+        if _as_int(x) == 0:
             return "zero"
         try:
             dtval = DtnTimeField.dtntime_to_datetime(x)
         except OverflowError:
-            return "dtntime:%d" % _native_int(x)
+            return "dtntime:%d" % _as_int(x)
         if dtval is None:
             return "zero"
         return dtval.isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -153,7 +179,7 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
             return self._parse_text(x)
         if isinstance(x, datetime.datetime):
             return DtnTimeField.datetime_to_dtntime(x)
-        val = _native_int(x)
+        val = _as_int(x)
         if val < 0:
             raise ValueError("DTN time must be unsigned")
         if val > 0xFFFFFFFFFFFFFFFF:
@@ -171,9 +197,9 @@ class BundleTimestamp(CBOR_Packet):
     :py:cls:`datetime.datetime` object and text.
     """
 
-    CBOR_root = CBORF_ARRAY(
+    CBOR_root = CBORArray(
         DtnTimeField("dtntime", default=0),
-        CBORF_UNSIGNED_INTEGER("seqno", default=0),
+        CBORUIntField("seqno", default=0),
     )
 
 
@@ -428,37 +454,31 @@ class EidStruct:
     @staticmethod
     def _wire_parts(ssp_item: Any) -> list[int]:
         if isinstance(ssp_item, CBOR_ARRAY):
-            return [_native_int(item) for item in ssp_item.val]
-        return [_native_int(item) for item in ssp_item]
+            ssp_item = ssp_item.val
+        return [_as_int(getattr(item, "val", item)) for item in ssp_item]
 
     @staticmethod
-    def from_cbor(item: Union[CBOR_ARRAY, list[Any]]) -> EidStruct:
-        if isinstance(item, CBOR_ARRAY):
-            scheme_id, ssp_item = item.val
-        elif isinstance(item, (list, tuple)):
-            scheme_id, ssp_item = item
-        else:
-            raise TypeError(f"Need an array, have {item}")
+    def from_cbor(item: Any) -> EidStruct:
+        # Normalize codec wrappers to Python natives at the field boundary.
+        if isinstance(item, CBOR_Object):
+            item = cbor_object_to_python(item)
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            raise TypeError("Need a 2-element EID array, have %r" % (item,))
+        scheme_id, ssp_item = item
         try:
-            scheme = EidScheme(_native_int(scheme_id))
+            scheme = EidScheme(_as_int(scheme_id))
         except ValueError:
             raise ValueError(f"BP EID scheme {scheme_id} not understood")
 
         if scheme == EidScheme.dtn:
-            if isinstance(ssp_item, CBOR_UNSIGNED_INTEGER):
-                ssp = _native_int(ssp_item)
+            if isinstance(ssp_item, int):
+                ssp = ssp_item
                 if ssp not in _DTN_WELL_KNOWN_SSP:
                     raise ValueError(
                         "Unknown compressed DTN SSP value: %r" % (ssp,)
                     )
-            elif isinstance(ssp_item, CBOR_TEXT_STRING):
-                ssp = str(ssp_item.val)
-            elif isinstance(ssp_item, int):
-                ssp = int(ssp_item)
-                if ssp not in _DTN_WELL_KNOWN_SSP:
-                    raise ValueError(
-                        "Unknown compressed DTN SSP value: %r" % (ssp,)
-                    )
+            elif isinstance(ssp_item, str):
+                ssp = ssp_item
             else:
                 ssp = ssp_item
         elif scheme == EidScheme.ipn:
@@ -583,32 +603,32 @@ class AbstractBlock:
 
     def has_crc(self) -> bool:
         crc_type = self.getfieldval(self._crc_type_name)
-        return _native_int(crc_type) != int(CrcType.NONE)
-
-    @contextmanager
-    def _effective_build_context(self) -> Iterator[None]:
-        """Hook for derived values needed during CRC-aware builds."""
-        yield
+        return _as_int(crc_type) != int(CrcType.NONE)
 
     def _crc_definition(self) -> Optional[CrcInfo]:
-        value = _native_int(self.getfieldval(self._crc_type_name))
+        value = _as_int(self.getfieldval(self._crc_type_name))
         try:
             return _CRC_DEFN[CrcType(value)]
         except (ValueError, KeyError):
             return None
 
     def _build_root_with_crc_value(self, crc_value: bytes) -> bytes:
-        with self._effective_build_context():
-            with _temporary_internal_field(self, self._crc_value_name, crc_value):
-                return self.CBOR_root.build(self)
+        # CrcBytesField reads ``_cbor_crc_override`` instead of mutating fields.
+        self._cbor_crc_override = crc_value  # type: ignore[attr-defined]
+        try:
+            return self.CBOR_root.build(self)
+        finally:
+            try:
+                del self._cbor_crc_override  # type: ignore[attr-defined]
+            except AttributeError:
+                pass
 
     def cbor_build_result(self):
         """Return final wire bytes and cardinality in one schema traversal."""
-        from scapy.cbor.cborfields import CBORBuildResult
-        return CBORBuildResult(self.self_build(), 1)
+        return CBORResult(data=self.self_build(), items=1)
 
     def calculate_crc(self) -> Optional[bytes]:
-        crc_type = _native_int(self.getfieldval(self._crc_type_name))
+        crc_type = _as_int(self.getfieldval(self._crc_type_name))
         if crc_type == int(CrcType.NONE):
             return None
         defn = self._crc_definition()
@@ -621,15 +641,14 @@ class AbstractBlock:
         return defn.encode(defn.cls(pre_crc))
 
     def _self_build_with_crc(self) -> bytes:
-        if self._raw_packet_cache_is_valid():  # type: ignore[attr-defined]
+        if _cbor_raw_cache_is_valid(self):
             return self.raw_packet_cache  # type: ignore[return-value]
-        crc_type = _native_int(self.getfieldval(self._crc_type_name))
+        crc_type = _as_int(self.getfieldval(self._crc_type_name))
         if crc_type == int(CrcType.NONE):
-            with self._effective_build_context():
-                return self.CBOR_root.build(self)
+            return self.CBOR_root.build(self)
         crc_value = self.getfieldval(self._crc_value_name)
         if crc_value is not None and crc_value is not _MISSING:
-            actual = _crc_bytes(crc_value)
+            actual = _as_bytes(crc_value)
             defn = self._crc_definition()
             if defn is None:
                 raise CBOR_Encoding_Error(
@@ -641,7 +660,7 @@ class AbstractBlock:
                     % (len(actual), CrcType(crc_type).name)
                 )
             return self._build_root_with_crc_value(actual)
-        # Single schema traversal: build once with a zero CRC, then patch.
+        # None means auto: build once with a zero CRC, then patch.
         defn = self._crc_definition()
         if defn is None:
             raise CBOR_Encoding_Error(
@@ -654,14 +673,13 @@ class AbstractBlock:
             raise CBOR_Encoding_Error("CRC width mismatch during patch")
         idx = pre_crc.rfind(zero)
         if idx < 0:
-            # Fall back to a second build if the placeholder was not unique.
             return self._build_root_with_crc_value(crc_bytes)
         patched = bytearray(pre_crc)
         patched[idx:idx + len(zero)] = crc_bytes
         return bytes(patched)
 
     def freeze_crc(self) -> None:
-        crc_type = _native_int(self.getfieldval(self._crc_type_name))
+        crc_type = _as_int(self.getfieldval(self._crc_type_name))
         if crc_type == int(CrcType.NONE):
             self.setfieldval(self._crc_value_name, None)
         else:
@@ -670,8 +688,7 @@ class AbstractBlock:
     def _crc_over_received_or_built(self, defn: CrcInfo, actual: bytes) -> bytes:
         """CRC over exact received bytes when available; else rebuilt form."""
         # Nested mutations must invalidate a dissected raw cache first.
-        if hasattr(self, "_raw_packet_cache_is_valid"):
-            self._raw_packet_cache_is_valid()
+        _cbor_raw_cache_is_valid(self)
         raw = self.raw_packet_cache
         if raw is not None and actual:
             span = getattr(self, "_crc_content_span", None)
@@ -712,8 +729,8 @@ class AbstractBlock:
         return self.calculate_crc() or b""
 
     def check_crc(self) -> bool:
-        crc_type = _native_int(self.getfieldval(self._crc_type_name))
-        actual = _crc_bytes(self.getfieldval(self._crc_value_name))
+        crc_type = _as_int(self.getfieldval(self._crc_type_name))
+        actual = _as_bytes(self.getfieldval(self._crc_value_name))
         if crc_type == int(CrcType.NONE):
             expect = b""
             valid = actual == b""
@@ -736,9 +753,9 @@ class AbstractBlock:
 
     def validate(self, path: str = "") -> list[ValidationIssue]:
         issues = []
-        crc_type = _native_int(self.getfieldval(self._crc_type_name))
+        crc_type = _as_int(self.getfieldval(self._crc_type_name))
         crc_value = self.getfieldval(self._crc_value_name)
-        actual = _crc_bytes(crc_value)
+        actual = _as_bytes(crc_value)
         if crc_type == int(CrcType.NONE) and actual:
             issues.append(
                 ValidationIssue(
@@ -760,14 +777,8 @@ class AbstractBlock:
             else:
                 expect_len = defn.width
                 if crc_value is None:
-                    issues.append(
-                        ValidationIssue(
-                            "missing-crc",
-                            path,
-                            "CRC value missing for enabled CRC type",
-                            severity="warning",
-                        )
-                    )
+                    # None means "compute on build" — not a protocol error.
+                    pass
                 elif len(actual) != expect_len:
                     issues.append(
                         ValidationIssue(
@@ -821,31 +832,36 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
         IS_FRAGMENT = 0x000001
 
     def is_fragment(self) -> bool:
-        flags = _native_int(self.getfieldval("bundle_flags"))
+        flags = _as_int(self.getfieldval("bundle_flags"))
         return bool(flags & PrimaryBlock.Flag.IS_FRAGMENT)
 
-    CBOR_root = CBORF_ARRAY(
-        CBORF_UNSIGNED_INTEGER("version", default=7),
-        CBORF_UNSIGNED_FLAGS(
+    CBOR_root = CBORArray(
+        CBORUIntField("version", default=7),
+        CBORFlagsField(
             "bundle_flags", default=0, size=64, names=_enum_dict(Flag)
         ),
-        CBORF_UNSIGNED_ENUM("crc_type", default=CrcType.NONE, enum=CrcType),
+        CrcTypeField("crc_type", default=CrcType.NONE, enum=CrcType),
         BundleEidField("destination", default="dtn:none"),
         BundleEidField("source", default="dtn:none"),
         BundleEidField("report_to", default="dtn:none"),
-        CBORF_PACKET("create_ts", default=BundleTimestamp(), cls=BundleTimestamp),
-        CBORF_UNSIGNED_INTEGER("lifetime", default=0),
-        CBORF_CONDITIONAL(
-            CBORF_UNSIGNED_INTEGER("fragment_offset", default=0), cond=is_fragment
+        CBORPacketField("create_ts", default=BundleTimestamp(), cls=BundleTimestamp),
+        CBORUIntField("lifetime", default=0),
+        CBORConditionalField(
+            CBORUIntField("fragment_offset", default=0), cond=is_fragment
         ),
-        CBORF_CONDITIONAL(
-            CBORF_UNSIGNED_INTEGER("total_app_data_len", default=0), cond=is_fragment
+        CBORConditionalField(
+            CBORUIntField("total_app_data_len", default=0), cond=is_fragment
         ),
-        CBORF_CONDITIONAL(
-            CBORF_BYTE_STRING("crc_value", default=None, definite_only=True),
+        CBORConditionalField(
+            CrcBytesField("crc_value", default=None, definite_only=True),
             cond=AbstractBlock.has_crc
         ),
     )
+
+    def mysummary(self):
+        return self.sprintf(
+            "BPv7 Primary %source% > %destination% crc=%crc_type%"
+        )
 
     def self_build(self):
         return self._self_build_with_crc()
@@ -858,7 +874,7 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
         _append_non_deterministic_issues(
             issues, self.raw_packet_cache, path
         )
-        if _native_int(self.getfieldval("version")) != 7:
+        if _as_int(self.getfieldval("version")) != 7:
             issues.append(
                 ValidationIssue(
                     "bad-version",
@@ -906,19 +922,7 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
     @classmethod
     def register_type(cls, type_code: int) -> Callable[[type[Packet]], type[Packet]]:
         def reg(pkt_cls: type[Packet]) -> type[Packet]:
-            if type_code in cls._reg_types and cls._reg_types[type_code] is not pkt_cls:
-                raise ValueError(
-                    "Block type code %d already registered to %s"
-                    % (type_code, cls._reg_types[type_code].__name__)
-                )
-            if pkt_cls in cls._reg_codes and cls._reg_codes[pkt_cls] != type_code:
-                raise ValueError(
-                    "Block class %s already registered as type %d"
-                    % (pkt_cls.__name__, cls._reg_codes[pkt_cls])
-                )
-            cls._reg_types[type_code] = pkt_cls
-            cls._reg_codes[pkt_cls] = type_code
-            pkt_cls.BPV7_BLOCK_TYPE = type_code
+            bind_bpv7_block(type_code, pkt_cls)
             return pkt_cls
 
         return reg
@@ -932,7 +936,7 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
     def _effective_type_code(self) -> Optional[int]:
         type_code = self.getfieldval("type_code")
         if type_code is not None:
-            return _native_int(type_code)
+            return _as_int(type_code)
         return self.inferred_type_code()
 
     def btsd_class(self, data: bytes):
@@ -944,16 +948,16 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
                 pass
         return None
 
-    CBOR_root = CBORF_ARRAY(
-        CBORF_UNSIGNED_INTEGER("type_code", default=None),
-        CBORF_UNSIGNED_INTEGER("block_num", default=None),
-        CBORF_UNSIGNED_FLAGS("block_flags", default=0, size=64, names=_enum_dict(Flag)),
-        CBORF_UNSIGNED_ENUM("crc_type", default=CrcType.NONE, enum=CrcType),
-        CBORF_BYTE_STRING_PACKET(
+    CBOR_root = CBORArray(
+        BlockTypeField("type_code", default=None),
+        CBORUIntField("block_num", default=None),
+        CBORFlagsField("block_flags", default=0, size=64, names=_enum_dict(Flag)),
+        CrcTypeField("crc_type", default=CrcType.NONE, enum=CrcType),
+        CBORPacketLenField(
             "btsd", default=None, cls_cb=btsd_class, definite_only=True
         ),
-        CBORF_CONDITIONAL(
-            CBORF_BYTE_STRING("crc_value", default=None, definite_only=True),
+        CBORConditionalField(
+            CrcBytesField("crc_value", default=None, definite_only=True),
             cond=AbstractBlock.has_crc
         ),
     )
@@ -961,22 +965,16 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
     def extract_padding(self, s):
         return None, s
 
-    @contextmanager
-    def _effective_build_context(self) -> Iterator[None]:
-        type_code = self.getfieldval("type_code")
-        if type_code is None:
-            effective = self.inferred_type_code()
-            if effective is not None:
-                with _temporary_internal_field(self, "type_code", effective):
-                    yield
-                return
-        yield
-
     def self_build(self):
         return self._self_build_with_crc()
 
     def cbor_build_result(self):
         return AbstractBlock.cbor_build_result(self)
+
+    def mysummary(self):
+        return self.sprintf(
+            "BPv7 Block #%block_num% type=%type_code% crc=%crc_type%"
+        )
 
     def validate(self, path: str = "") -> list[ValidationIssue]:
         issues = super().validate(path)
@@ -1021,6 +1019,42 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
         return issues
 
 
+def bind_bpv7_block(type_code: int, pkt_cls: type[Packet]) -> type[Packet]:
+    """Register a BTSD packet class for a canonical block type code.
+
+    Analogous to ``bind_layers()``, but for embedded BTSD content rather than
+    Scapy payload stacking.
+    """
+    existing = CanonicalBlock._reg_types.get(type_code)
+    if existing is not None and existing is not pkt_cls:
+        raise ValueError(
+            "Block type code %d already registered to %s"
+            % (type_code, existing.__name__)
+        )
+    prior = CanonicalBlock._reg_codes.get(pkt_cls)
+    if prior is not None and prior != type_code:
+        raise ValueError(
+            "Block class %s already registered as type %d"
+            % (pkt_cls.__name__, prior)
+        )
+    CanonicalBlock._reg_types[type_code] = pkt_cls
+    CanonicalBlock._reg_codes[pkt_cls] = type_code
+    pkt_cls.BPV7_BLOCK_TYPE = type_code
+    return pkt_cls
+
+
+def split_bpv7_block(type_code: int) -> None:
+    """Unregister a previously bound BPv7 block type code."""
+    pkt_cls = CanonicalBlock._reg_types.pop(type_code, None)
+    if pkt_cls is not None:
+        CanonicalBlock._reg_codes.pop(pkt_cls, None)
+        if getattr(pkt_cls, "BPV7_BLOCK_TYPE", None) == type_code:
+            try:
+                delattr(pkt_cls, "BPV7_BLOCK_TYPE")
+            except AttributeError:
+                pass
+
+
 @CanonicalBlock.register_type(6)
 class PreviousNodeBlock(CBOR_Packet):
     """Block data content from Section 4.4.1 of RFC 9171."""
@@ -1032,23 +1066,23 @@ class PreviousNodeBlock(CBOR_Packet):
 class BundleAgeBlock(CBOR_Packet):
     """Block data content from Section 4.4.2 of RFC 9171."""
 
-    CBOR_root = CBORF_UNSIGNED_INTEGER("age", default=None)
+    CBOR_root = CBORUIntField("age", default=None)
 
 
 @CanonicalBlock.register_type(10)
 class HopCountBlock(CBOR_Packet):
     """Block data content from Section 4.4.3 of RFC 9171."""
 
-    CBOR_root = CBORF_ARRAY(
-        CBORF_UNSIGNED_INTEGER("limit", default=None),
-        CBORF_UNSIGNED_INTEGER("count", default=0),
+    CBOR_root = CBORArray(
+        CBORUIntField("limit", default=None),
+        CBORUIntField("count", default=0),
     )
 
     def validate(self, path: str = "") -> list[ValidationIssue]:
         issues = []  # type: list[ValidationIssue]
         limit = self.getfieldval("limit")
         count = self.getfieldval("count")
-        if limit is None or _native_int(limit) < 1 or _native_int(limit) > 255:
+        if limit is None or _as_int(limit) < 1 or _as_int(limit) > 255:
             issues.append(
                 ValidationIssue(
                     "bad-hop-limit",
@@ -1056,7 +1090,7 @@ class HopCountBlock(CBOR_Packet):
                     "Hop Count limit must be in 1..255",
                 )
             )
-        elif count is not None and _native_int(count) > _native_int(limit):
+        elif count is not None and _as_int(count) > _as_int(limit):
             issues.append(
                 ValidationIssue(
                     "hop-count-exceeds-limit",
@@ -1087,10 +1121,18 @@ class BundleV7(CBOR_Packet):
             return CBOR_NO_ITEM
         return CanonicalBlock
 
-    CBOR_root = CBORF_ARRAY_INDEFINITE(
-        CBORF_PACKET("primary", default=PrimaryBlock(), cls=PrimaryBlock),
-        CBORF_SEQUENCE_OF("blocks", default=[], cls_cb=_block_until_break),
+    CBOR_root = CBORIndefiniteArray(
+        CBORPacketField("primary", default=PrimaryBlock(), cls=PrimaryBlock),
+        CBORPacketListField("blocks", default=[], cls_cb=_block_until_break),
     )
+
+    def mysummary(self):
+        nblocks = len(self.blocks or [])
+        return "BPv7 %s > %s (%d blocks)" % (
+            self.primary.source if self.primary else "?",
+            self.primary.destination if self.primary else "?",
+            nblocks,
+        )
 
     def check_crc(self) -> bool:
         return self.primary.check_crc() and all(blk.check_crc() for blk in self.blocks)
@@ -1135,7 +1177,7 @@ class BundleV7(CBOR_Packet):
         is_anonymous = False
         if primary is not None:
             flags = int(primary.getfieldval("bundle_flags") or 0)
-            crc_type = _native_int(primary.getfieldval("crc_type"))
+            crc_type = _as_int(primary.getfieldval("crc_type"))
             if crc_type == int(CrcType.NONE) and not primary_integrity_protected:
                 issues.append(
                     ValidationIssue(
@@ -1187,7 +1229,7 @@ class BundleV7(CBOR_Packet):
                 )
             create_ts = primary.getfieldval("create_ts")
             if create_ts is not None:
-                create_dtntime = _native_int(create_ts.getfieldval("dtntime") or 0)
+                create_dtntime = _as_int(create_ts.getfieldval("dtntime") or 0)
 
         payload_blocks = []
         seen_nums: dict[int, int] = {}
@@ -1203,7 +1245,7 @@ class BundleV7(CBOR_Packet):
                 type_counts[type_code] = type_counts.get(type_code, 0) + 1
             block_num = blk.getfieldval("block_num")
             if block_num is not None:
-                bnum = _native_int(block_num)
+                bnum = _as_int(block_num)
                 if bnum == 0:
                     issues.append(
                         ValidationIssue(
@@ -1317,7 +1359,7 @@ class BundleV7(CBOR_Packet):
             )
         elif (
             payload_blocks[0][1] is None
-            or _native_int(payload_blocks[0][1]) != self.BLOCK_NUM_PAYLOAD
+            or _as_int(payload_blocks[0][1]) != self.BLOCK_NUM_PAYLOAD
         ):
             issues.append(
                 ValidationIssue(

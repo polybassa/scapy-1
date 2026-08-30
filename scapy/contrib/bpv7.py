@@ -122,7 +122,12 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
             return None
         if _native_int(x) == 0:
             return "zero"
-        dtval = DtnTimeField.dtntime_to_datetime(x)
+        try:
+            dtval = DtnTimeField.dtntime_to_datetime(x)
+        except OverflowError:
+            return "dtntime:%d" % _native_int(x)
+        if dtval is None:
+            return "zero"
         return dtval.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
     def i2repr(self, pkt, x):
@@ -184,6 +189,19 @@ _DTN_WELL_KNOWN_SSP = {
     0: "none",
 }
 """Compressed SSP encoding."""
+
+
+_IPN_LOCALNODE = 0xFFFFFFFF
+
+
+def _parse_ipn_component(text: str) -> int:
+    if text == "!":
+        return _IPN_LOCALNODE
+    if not text or not text.isdigit():
+        raise ValueError("Invalid IPN numeric component: %r" % text)
+    if len(text) > 1 and text[0] == "0":
+        raise ValueError("IPN components must not have leading zeros: %r" % text)
+    return int(text, 10)
 
 
 @dataclass(frozen=True)
@@ -254,11 +272,26 @@ class IpnSsp:
             and self.service == other.service
         )
 
+    def is_null_endpoint(self) -> bool:
+        # RFC 9758: allocator 0 and node 0 is the Null Endpoint for any service.
+        return self.allocator == 0 and self.node == 0
+
     def to_text(self) -> str:
+        def _fmt_node(node: int) -> str:
+            return "!" if node == _IPN_LOCALNODE else "%d" % node
+
+        if self.wire_elements == 2 and self.allocator == 0:
+            return "ipn:%s.%d" % (_fmt_node(self.node), self.service)
+        if self.allocator == 0 and self.node == _IPN_LOCALNODE:
+            return "ipn:!.%d" % self.service
         if self.allocator == 0 and self.wire_elements == 2:
             return "ipn:{:d}.{:d}".format(self.node, self.service)
-        return "ipn:{:d}.{:d}.{:d}".format(
-            self.allocator, self.node, self.service
+        alloc = "!" if self.allocator == _IPN_LOCALNODE else "%d" % self.allocator
+        # Prefer ! for LocalNode in the node component of three-element text.
+        return "ipn:%s.%s.%d" % (
+            alloc,
+            _fmt_node(self.node),
+            self.service,
         )
 
 
@@ -289,7 +322,10 @@ class EidStruct:
                 ssp = ssp_text
 
         elif scheme == EidScheme.ipn:
-            parts = [int(part, 10) for part in ssp_text.split(".")]
+            parts = [
+                _parse_ipn_component(part)
+                for part in ssp_text.split(".")
+            ]
             if len(parts) == 2:
                 ssp = IpnSsp(0, parts[0], parts[1], wire_elements=2)
             elif len(parts) == 3:
@@ -319,6 +355,41 @@ class EidStruct:
                 return self.ssp.to_text()
             return IpnSsp.from_wire(list(self.ssp)).to_text()
         raise ValueError("Invalid scheme state")
+
+    def is_null_endpoint(self) -> bool:
+        """Return True for the BPv7 Null Endpoint (dtn:none / ipn:0.*)."""
+        if self.scheme == EidScheme.dtn:
+            return self.ssp == 0 or self.ssp == "none"
+        if self.scheme == EidScheme.ipn:
+            if isinstance(self.ssp, IpnSsp):
+                return self.ssp.is_null_endpoint()
+            return IpnSsp.from_wire(list(self.ssp)).is_null_endpoint()
+        return False
+
+    def same_endpoint(self, other: object) -> bool:
+        """Return True when *other* denotes the same logical endpoint."""
+        if not isinstance(other, EidStruct):
+            return False
+        if self.scheme != other.scheme:
+            return False
+        if self.scheme == EidScheme.dtn:
+            return self.semantic_key() == other.semantic_key()
+        if self.scheme == EidScheme.ipn:
+            left = self.ssp if isinstance(self.ssp, IpnSsp) else IpnSsp.from_wire(list(self.ssp))
+            right = other.ssp if isinstance(other.ssp, IpnSsp) else IpnSsp.from_wire(list(other.ssp))
+            return left.same_endpoint(right)
+        return False
+
+    def semantic_key(self) -> tuple[Any, ...]:
+        """Stable logical identity key independent of wire arity / text form."""
+        if self.scheme == EidScheme.dtn:
+            if self.ssp == 0 or self.ssp == "none":
+                return ("dtn", "none")
+            return ("dtn", self.ssp)
+        if self.scheme == EidScheme.ipn:
+            ssp = self.ssp if isinstance(self.ssp, IpnSsp) else IpnSsp.from_wire(list(self.ssp))
+            return ("ipn", ssp.allocator, ssp.node, ssp.service)
+        return ("unknown",)
 
     @staticmethod
     def _wire_parts(ssp_item: Any) -> list[int]:
@@ -382,6 +453,11 @@ class BundleEidField(CBORF_field[EidStruct]):
     a single field.
     The EID is a two-item array of (scheme ID, scheme-specific part).
     """
+
+    def __init__(self, name, default=None):
+        if isinstance(default, str):
+            default = EidStruct.from_text(default)
+        super(BundleEidField, self).__init__(name, default)
 
     def i2h(self, _pkt, x):
         if x is None:
@@ -564,16 +640,41 @@ class AbstractBlock:
             self._raw_packet_cache_is_valid()
         raw = self.raw_packet_cache
         if raw is not None and actual:
+            span = getattr(self, "_crc_content_span", None)
+            if span is not None:
+                content_len, remain_after, _head_len = span
+                if content_len == len(actual) and remain_after <= len(raw):
+                    start = len(raw) - remain_after - content_len
+                    if start >= 0 and raw[start:start + content_len] == actual:
+                        zeroed = bytearray(raw)
+                        for i in range(content_len):
+                            zeroed[start + i] = 0
+                        return defn.encode(defn.cls(bytes(zeroed)))
+            # Fall back: locate content after any legal definite byte-string head.
             from scapy.cbor.cborcodec import CBOR_encode_head
-            head = CBOR_encode_head(2, len(actual))
-            needle = head + actual
-            idx = raw.rfind(needle)
-            if idx >= 0:
-                zeroed = bytearray(raw)
-                content_off = idx + len(head)
-                for i in range(len(actual)):
-                    zeroed[content_off + i] = 0
-                return defn.encode(defn.cls(bytes(zeroed)))
+            import struct as _struct
+            n = len(actual)
+            heads = [CBOR_encode_head(2, n)]
+            if n < 256:
+                heads.append(b"\x58" + bytes([n]))
+            if n < 65536:
+                heads.append(b"\x59" + _struct.pack(">H", n))
+            if n < 2**32:
+                heads.append(b"\x5a" + _struct.pack(">I", n))
+            heads.append(b"\x5b" + _struct.pack(">Q", n))
+            seen = set()
+            for head in heads:
+                if head in seen:
+                    continue
+                seen.add(head)
+                needle = head + actual
+                idx = raw.rfind(needle)
+                if idx >= 0:
+                    zeroed = bytearray(raw)
+                    content_off = idx + len(head)
+                    for i in range(len(actual)):
+                        zeroed[content_off + i] = 0
+                    return defn.encode(defn.cls(bytes(zeroed)))
         return self.calculate_crc() or b""
 
     def check_crc(self) -> bool:
@@ -875,7 +976,8 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
             issues, self.raw_packet_cache, path
         )
         btsd = self.getfieldval("btsd")
-        if btsd is not None:
+        # Only scan BTSD contents when the block-type data is itself CBOR.
+        if isinstance(btsd, CBOR_Packet):
             btsd_raw = getattr(btsd, "raw_packet_cache", None)
             if not btsd_raw and hasattr(btsd, "original"):
                 btsd_raw = btsd.original
@@ -978,7 +1080,8 @@ class BundleV7(CBOR_Packet):
                     )
             except Exception:
                 pass
-            _append_non_deterministic_issues(issues, raw, "")
+            # Do not scan the whole bundle here: primary/canonical validates
+            # already cover nested spans and would duplicate diagnostics.
         primary = self.primary
         if primary is not None:
             issues.extend(primary.validate("primary"))
@@ -1009,11 +1112,20 @@ class BundleV7(CBOR_Packet):
                     )
                 )
             source = primary.getfieldval("source")
-            if hasattr(source, "to_text"):
+            if isinstance(source, EidStruct):
+                is_anonymous = source.is_null_endpoint()
                 source_text = source.to_text()
+            elif hasattr(source, "to_text"):
+                source_text = source.to_text()
+                is_anonymous = source_text in (
+                    "dtn:none", "ipn:0.0", "ipn:0.0.0"
+                )
             else:
                 source_text = str(source)
-            is_anonymous = source_text == "dtn:none"
+                try:
+                    is_anonymous = EidStruct.from_text(source_text).is_null_endpoint()
+                except Exception:
+                    is_anonymous = source_text == "dtn:none"
             is_admin = bool(flags & int(PrimaryBlock.Flag.PAYLOAD_ADMIN))
             if is_anonymous and not (flags & int(PrimaryBlock.Flag.NO_FRAGMENT)):
                 issues.append(

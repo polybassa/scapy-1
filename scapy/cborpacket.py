@@ -42,7 +42,19 @@ class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
 
     def cbor_build_result(self):
         # type: () -> Any
-        """Return the CBOR build result for this packet's root schema."""
+        """Return the CBOR build result for this packet's root schema.
+
+        Prefer a still-valid raw packet cache so nested rebuilds preserve the
+        exact received representation of untouched children.
+        """
+        from scapy.cbor.cborfields import CBORBuildResult
+        if self._raw_packet_cache_is_valid():
+            # Cardinality matches a single top-level item for framed roots;
+            # unframed SEQUENCE roots report via a fresh build_result.
+            root = self.CBOR_root
+            if getattr(root, "CBOR_tag", None) is None and hasattr(root, "seq"):
+                return root.build_result(self)
+            return CBORBuildResult(self.raw_packet_cache, 1)
         return self.CBOR_root.build_result(self)
 
     def _snapshot_raw_packet_cache_fields(self):

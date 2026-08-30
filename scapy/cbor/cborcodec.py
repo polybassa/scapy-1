@@ -234,6 +234,82 @@ def cbor_argument_is_shortest(additional_info, value):
     return additional_info == 31
 
 
+def _cbor_float_from_bits(ai, bits):
+    # type: (int, int) -> float
+    if ai == 25:
+        sign = (bits >> 15) & 0x1
+        exponent = (bits >> 10) & 0x1f
+        fraction = bits & 0x3ff
+        if exponent == 0:
+            if fraction == 0:
+                return -0.0 if sign else 0.0
+            return ((-1) ** sign) * (fraction / 1024.0) * (2 ** -14)
+        if exponent == 31:
+            return float("nan") if fraction else (
+                float("-inf") if sign else float("inf")
+            )
+        return ((-1) ** sign) * (1.0 + fraction / 1024.0) * (2 ** (exponent - 15))
+    if ai == 26:
+        return struct.unpack(">f", struct.pack(">I", bits))[0]
+    return struct.unpack(">d", struct.pack(">Q", bits))[0]
+
+
+def _cbor_float_to_half_bits(value):
+    # type: (float) -> Optional[int]
+    """Return IEEE binary16 bits when *value* round-trips exactly."""
+    import math
+    if math.isnan(value):
+        return 0x7E00
+    sign = 0x8000 if math.copysign(1.0, value) < 0 else 0
+    if math.isinf(value):
+        return sign | 0x7C00
+    if value == 0.0:
+        return sign
+    value = abs(value)
+    bits64, = struct.unpack(">Q", struct.pack(">d", value))
+    exp64 = ((bits64 >> 52) & 0x7FF) - 1023
+    mant64 = bits64 & ((1 << 52) - 1)
+    if exp64 > 15:
+        return None
+    if exp64 < -14:
+        # Subnormal half
+        shift = -14 - exp64 + 42  # 52 - 10
+        if shift > 52:
+            return None
+        mant = ((mant64 | (1 << 52)) >> shift) if exp64 != -1023 else 0
+        half = mant & 0x3FF
+        if _cbor_float_from_bits(25, sign | half) != math.copysign(value, -1 if sign else 1):
+            # Compare absolute then restore sign via copysign on left side
+            decoded = _cbor_float_from_bits(25, sign | half)
+            if decoded != (math.copysign(abs(value), -1.0 if sign else 1.0)):
+                return None
+        return sign | half
+    half_exp = exp64 + 15
+    half_mant = mant64 >> 42
+    # Reject if discarded mantissa bits are nonzero (not exact).
+    if mant64 & ((1 << 42) - 1):
+        return None
+    bits = sign | (half_exp << 10) | half_mant
+    decoded = _cbor_float_from_bits(25, bits)
+    if decoded != math.copysign(abs(value), -1.0 if sign else 1.0):
+        return None
+    return bits
+
+
+def _cbor_preferred_float_ai(value):
+    # type: (float) -> int
+    """Return the preferred float AI (25/26/27) for *value*."""
+    import math
+    if math.isnan(value):
+        return 25
+    if _cbor_float_to_half_bits(value) is not None:
+        return 25
+    single = struct.unpack(">f", struct.pack(">f", value))[0]
+    if single == value or (math.isinf(single) and math.isinf(value)):
+        return 26
+    return 27
+
+
 def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
     # type: (bytes, bool, int) -> List[Tuple[int, str]]
     """Scan *s* for non-shortest CBOR argument encodings.
@@ -287,8 +363,17 @@ def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
                 "Invalid additional info: %d" % ai, remaining=s[start:])
         index[0] = pos
 
-        # Major type 7 AI 20-27 are simple/float literals, not length args.
+        # Major type 7: simple values and floats. Check float preferred width.
         if major == 7:
+            if ai in (25, 26, 27) and value is not CBOR_INDEFINITE:
+                float_val = _cbor_float_from_bits(ai, int(value))
+                preferred = _cbor_preferred_float_ai(float_val)
+                if preferred is not None and preferred < ai:
+                    issues.append((
+                        base_offset + start,
+                        "Non-shortest CBOR float encoding (AI=%d, preferred AI=%d)"
+                        % (ai, preferred),
+                    ))
             return
 
         if value is CBOR_INDEFINITE:
@@ -346,9 +431,17 @@ def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
                 _walk()
             return
         if major == 5:
+            key_encodings = []  # type: List[bytes]
             for _ in range(int(value)):
+                key_start = index[0]
                 _walk()
+                key_encodings.append(bytes(s[key_start:index[0]]))
                 _walk()
+            if key_encodings != sorted(key_encodings):
+                issues.append((
+                    base_offset + start,
+                    "CBOR map keys are not in bytewise lexicographic order",
+                ))
             return
         if major == 6:
             _walk()

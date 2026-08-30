@@ -48,11 +48,15 @@ class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
     def _snapshot_raw_packet_cache_fields(self):
         # type: () -> None
         """Record mutable/nested field values used to invalidate the raw cache."""
+        from scapy.cbor.cborfields import CBOR_ABSENT
         self.raw_packet_cache_fields = {}
         for f in self.fields_desc:
             if f.name not in self.fields:
                 continue
             fval = self.fields[f.name]
+            if fval is CBOR_ABSENT:
+                self.raw_packet_cache_fields[f.name] = CBOR_ABSENT
+                continue
             if getattr(f, "isconditional", False) and fval is None:
                 continue
             if (
@@ -62,6 +66,37 @@ class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
             ) and fval is not None:
                 self.raw_packet_cache_fields[f.name] = \
                     self._raw_packet_cache_field_value(f, fval, copy=True)
+
+    def do_init_cached_fields(self, for_dissect_only=False):
+        # type: (bool) -> None
+        super(CBOR_Packet, self).do_init_cached_fields(
+            for_dissect_only=for_dissect_only
+        )
+        if for_dissect_only:
+            return
+        # Packet uses shallow .copy() for list defaults; deepen ismutable ones.
+        for f in self.fields_desc:
+            if getattr(f, "ismutable", False) and f.name in self.fields:
+                self.fields[f.name] = f.do_copy(self.fields[f.name])
+
+    def getfield_and_val(self, attr):
+        # type: (str) -> Tuple[Any, Any]
+        # __getattr__ uses this path; isolate mutable defaults per instance.
+        if attr not in self.fields and attr in self.default_fields:
+            fld = self.get_field(attr)
+            if fld is not None and getattr(fld, "ismutable", False):
+                self.fields[attr] = fld.do_copy(self.default_fields[attr])
+                return fld, self.fields[attr]
+        return super(CBOR_Packet, self).getfield_and_val(attr)
+
+    def getfieldval(self, attr):
+        # type: (str) -> Any
+        if attr not in self.fields and attr in self.default_fields:
+            fld = self.get_field(attr)
+            if fld is not None and getattr(fld, "ismutable", False):
+                self.fields[attr] = fld.do_copy(self.default_fields[attr])
+                return self.fields[attr]
+        return super(CBOR_Packet, self).getfieldval(attr)
 
     def _raw_packet_cache_is_valid(self):
         # type: () -> bool

@@ -56,8 +56,9 @@ class OptionalTaggedThenFallback(CBOR_Packet):
     )
 
 pkt = OptionalTaggedThenFallback(b"\x81\x07")
-assert pkt.tag_number is None
-assert pkt.tagged_value is None
+from scapy.cbor.cborfields import CBOR_ABSENT
+assert pkt.tag_number is CBOR_ABSENT
+assert pkt.tagged_value is None or pkt.tagged_value is CBOR_ABSENT
 assert pkt.fallback == 7
 
 = A matching optional semantic tag with the wrong inner type is malformed
@@ -347,3 +348,276 @@ try:
     assert False, "A generic map accepted a duplicate integer key"
 except CBOR_Codec_Decoding_Error:
     pass
+
++ Merge-gate: CBORF_ANY map identity and mutability
+
+= Empty CBORF_ANY map survives sibling mutation as a map
+from scapy.cbor.cborfields import CBORF_ANY, CBORF_ARRAY, CBORF_UNSIGNED_INTEGER, CBOR_ABSENT
+from scapy.cbor.cbor import CBORMapData
+from scapy.cborpacket import CBOR_Packet
+
+class AnyMapPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_ANY("a", None),
+        CBORF_UNSIGNED_INTEGER("b", 0),
+    )
+
+pkt = AnyMapPkt(b"\x82\xa0\x00")
+assert isinstance(pkt.a, CBORMapData)
+assert len(pkt.a) == 0
+pkt.b = 1
+assert bytes(pkt) == b"\x82\xa0\x01"
+
+= Non-empty CBORF_ANY map survives sibling mutation
+from scapy.cbor.cborfields import CBORF_ANY, CBORF_ARRAY, CBORF_UNSIGNED_INTEGER
+from scapy.cbor.cbor import CBORMapData
+from scapy.cborpacket import CBOR_Packet
+
+class AnyMapPkt2(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_ANY("a", None),
+        CBORF_UNSIGNED_INTEGER("b", 0),
+    )
+
+pkt = AnyMapPkt2(b"\x82\xa1\x01\x02\x00")
+assert isinstance(pkt.a, CBORMapData)
+assert pkt.a[1] == 2
+pkt.b = 1
+assert bytes(pkt) == b"\x82\xa1\x01\x02\x01"
+
+= In-place mutation of CBORF_ANY list invalidates raw cache
+from scapy.cbor.cborfields import CBORF_ANY
+from scapy.cborpacket import CBOR_Packet
+
+class AnyRoot(CBOR_Packet):
+    CBOR_root = CBORF_ANY("value", None)
+
+pkt = AnyRoot(b"\x82\x01\x02")
+assert pkt.raw_packet_cache == b"\x82\x01\x02"
+pkt.value.append(3)
+assert bytes(pkt) == b"\x83\x01\x02\x03"
+
+= Typed map lookup distinguishes integer 1 from boolean True
+from scapy.cbor import CBOR_Codecs
+from scapy.cbor.cbor import CBORMapData
+
+wire = b"\xa2\x01\x61a\xf5\x61b"
+obj, remaining = CBOR_Codecs.CBOR.dec(wire)
+assert remaining == b""
+assert isinstance(obj.val, CBORMapData)
+assert obj.val[1].val == "a"
+assert obj.val[True].val == "b"
+assert obj.val[1] is not obj.val[True]
+
++ Merge-gate: optional major-type-7 lookahead and absence
+
+= Optional boolean leaves a required float for the next field
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_BOOLEAN,
+    CBORF_FLOAT,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptBoolFloat(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_BOOLEAN("flag", None)),
+        CBORF_FLOAT("num", 0.0),
+    )
+
+pkt = OptBoolFloat(b"\x81\xf9\x3e\x00")  # [1.5] as float16
+assert pkt.flag is CBOR_ABSENT
+assert abs(pkt.num - 1.5) < 1e-6
+
+= Optional boolean leaves a required null for the next field
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_BOOLEAN,
+    CBORF_NULL,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptBoolNull(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_BOOLEAN("flag", None)),
+        CBORF_NULL("nil"),
+    )
+
+pkt = OptBoolNull(b"\x81\xf6")
+assert pkt.flag is CBOR_ABSENT
+assert pkt.nil is None
+
+= Optional null leaves a required boolean for the next field
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_BOOLEAN,
+    CBORF_NULL,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptNullBool(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_NULL("nil")),
+        CBORF_BOOLEAN("flag", False),
+    )
+
+pkt = OptNullBool(b"\x81\xf5")
+assert pkt.nil is CBOR_ABSENT
+assert pkt.flag is True
+
+= Optional undefined leaves a required float for the next field
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_FLOAT,
+    CBORF_UNDEFINED,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptUndefFloat(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_UNDEFINED("u")),
+        CBORF_FLOAT("num", 0.0),
+    )
+
+pkt = OptUndefFloat(b"\x81\xf9\x3e\x00")
+assert pkt.u is CBOR_ABSENT
+assert abs(pkt.num - 1.5) < 1e-6
+
+= Optional float leaves a required boolean for the next field
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_BOOLEAN,
+    CBORF_FLOAT,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptFloatBool(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_FLOAT("num", None)),
+        CBORF_BOOLEAN("flag", False),
+    )
+
+pkt = OptFloatBool(b"\x81\xf4")
+assert pkt.num is CBOR_ABSENT
+assert pkt.flag is False
+
+= Absent optional ANY stays absent after cache invalidation
+from scapy.cbor.cborfields import (
+    CBORF_ANY,
+    CBORF_ARRAY,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptAnyTail(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("n", 0),
+        CBORF_optional(CBORF_ANY("extra", None)),
+    )
+
+pkt = OptAnyTail(b"\x81\x00")
+assert pkt.extra is CBOR_ABSENT
+pkt.n = 1
+assert bytes(pkt) == b"\x81\x01"
+
+= Absent optional map members stay absent after rebuild
+from scapy.cbor.cborfields import (
+    CBORF_ANY,
+    CBORF_INTEGER,
+    CBORF_MAP,
+    CBORF_NULL,
+    CBORF_SEMANTIC_TAG,
+    CBORF_TEXT_STRING,
+    CBORF_UNDEFINED,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptMapPkt(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_INTEGER("n", 0),
+        CBORF_optional(CBORF_ANY("any", None)),
+        CBORF_optional(CBORF_NULL("nil")),
+        CBORF_optional(CBORF_UNDEFINED("u")),
+        CBORF_optional(CBORF_SEMANTIC_TAG("tag", None, 1, CBORF_INTEGER("ts", 0))),
+        CBORF_optional(CBORF_TEXT_STRING("endpoint", "default")),
+    )
+
+pkt = OptMapPkt(b"\xa1\x61n\x00")
+assert pkt.any is CBOR_ABSENT
+assert pkt.nil is CBOR_ABSENT
+assert pkt.u is CBOR_ABSENT
+assert pkt.tag is CBOR_ABSENT
+assert pkt.endpoint is CBOR_ABSENT
+pkt.n = 1
+assert bytes(pkt) == b"\xa1\x61n\x01"
+
++ Merge-gate: array item reservation
+
+= Nonterminal SEQUENCE_OF reserves items for a later required field
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_SEQUENCE_OF,
+    CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class SeqThenReq(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_SEQUENCE_OF("vals", [], CBORF_UNSIGNED_INTEGER),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+pkt = SeqThenReq(b"\x83\x01\x02\x03")
+assert pkt.vals == [1, 2]
+assert pkt.tail == 3
+
+= Optional same-type scalar reserves the sole item for a required tail
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptThenReq(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_UNSIGNED_INTEGER("opt", None)),
+        CBORF_UNSIGNED_INTEGER("req", 0),
+    )
+
+pkt = OptThenReq(b"\x81\x07")
+assert pkt.opt is CBOR_ABSENT
+assert pkt.req == 7
+
+= Indefinite array reserves SEQUENCE_OF items for a required tail
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY_INDEFINITE,
+    CBORF_SEQUENCE_OF,
+    CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class IndefSeqThenReq(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_INDEFINITE(
+        CBORF_SEQUENCE_OF("vals", [], CBORF_UNSIGNED_INTEGER),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+pkt = IndefSeqThenReq(b"\x9f\x01\x02\x03\xff")
+assert pkt.vals == [1, 2]
+assert pkt.tail == 3

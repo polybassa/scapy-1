@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import datetime
 import enum
 from typing import Any, Callable, ClassVar, Iterator, Optional, Union, cast
@@ -192,12 +192,12 @@ _DTN_WELL_KNOWN_SSP = {
 
 
 _IPN_LOCALNODE = 0xFFFFFFFF
+_IPN_ASCII_DIGITS = frozenset("0123456789")
 
 
-def _parse_ipn_component(text: str) -> int:
-    if text == "!":
-        return _IPN_LOCALNODE
-    if not text or not text.isdigit():
+def _parse_ipn_ascii_uint(text: str) -> int:
+    """Parse an RFC 9758 DIGIT (%x30-39) decimal component."""
+    if not text or not _IPN_ASCII_DIGITS.issuperset(text):
         raise ValueError("Invalid IPN numeric component: %r" % text)
     if len(text) > 1 and text[0] == "0":
         raise ValueError("IPN components must not have leading zeros: %r" % text)
@@ -219,6 +219,9 @@ class IpnSsp:
     service: int
     # 2 = packed [fqnn, service]; 3 = explicit [allocator, node, service]
     wire_elements: int = 3
+    # When True, allow received allocator=0/node=0/service!=0 (treat as Null).
+    # Newly composed values must not use that form (RFC 9758).
+    allow_invalid_null: bool = field(default=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -236,6 +239,15 @@ class IpnSsp:
             raise ValueError("service exceeds uint64")
         if self.wire_elements not in (2, 3):
             raise ValueError("IPN wire element count must be 2 or 3")
+        if (
+            self.allocator == 0
+            and self.node == 0
+            and self.service != 0
+            and not self.allow_invalid_null
+        ):
+            raise ValueError(
+                "Null IPN URI must not be composed with a nonzero service number"
+            )
 
     @classmethod
     def from_wire(cls, parts: list[int]) -> IpnSsp:
@@ -246,6 +258,7 @@ class IpnSsp:
                 fqnn & 0xFFFFFFFF,
                 service,
                 wire_elements=2,
+                allow_invalid_null=True,
             )
         if len(parts) == 3:
             return cls(
@@ -253,6 +266,7 @@ class IpnSsp:
                 parts[1],
                 parts[2],
                 wire_elements=3,
+                allow_invalid_null=True,
             )
         raise ValueError("IPN SSP must be 2 or 3 elements")
 
@@ -277,22 +291,13 @@ class IpnSsp:
         return self.allocator == 0 and self.node == 0
 
     def to_text(self) -> str:
-        def _fmt_node(node: int) -> str:
-            return "!" if node == _IPN_LOCALNODE else "%d" % node
-
-        if self.wire_elements == 2 and self.allocator == 0:
-            return "ipn:%s.%d" % (_fmt_node(self.node), self.service)
+        # RFC 9758: "!" is the entire FQNN (allocator 0 + LocalNode), never a
+        # lone allocator or service component.
         if self.allocator == 0 and self.node == _IPN_LOCALNODE:
             return "ipn:!.%d" % self.service
-        if self.allocator == 0 and self.wire_elements == 2:
-            return "ipn:{:d}.{:d}".format(self.node, self.service)
-        alloc = "!" if self.allocator == _IPN_LOCALNODE else "%d" % self.allocator
-        # Prefer ! for LocalNode in the node component of three-element text.
-        return "ipn:%s.%s.%d" % (
-            alloc,
-            _fmt_node(self.node),
-            self.service,
-        )
+        if self.wire_elements == 2 and self.allocator == 0:
+            return "ipn:%d.%d" % (self.node, self.service)
+        return "ipn:%d.%d.%d" % (self.allocator, self.node, self.service)
 
 
 @dataclass(frozen=True)
@@ -322,18 +327,38 @@ class EidStruct:
                 ssp = ssp_text
 
         elif scheme == EidScheme.ipn:
-            parts = [
-                _parse_ipn_component(part)
-                for part in ssp_text.split(".")
-            ]
-            if len(parts) == 2:
-                ssp = IpnSsp(0, parts[0], parts[1], wire_elements=2)
-            elif len(parts) == 3:
+            # RFC 9758: "!" is only the full FQNN form ipn:!.<service>
+            if ssp_text.startswith("!."):
+                service_text = ssp_text[2:]
+                if not service_text or "." in service_text:
+                    raise ValueError("Invalid LocalNode IPN URI: %r" % text)
                 ssp = IpnSsp(
-                    parts[0], parts[1], parts[2], wire_elements=3
+                    0,
+                    _IPN_LOCALNODE,
+                    _parse_ipn_ascii_uint(service_text),
+                    wire_elements=2,
                 )
             else:
-                raise ValueError("IPN SSP must be 2 or 3 elements")
+                parts = ssp_text.split(".")
+                if len(parts) == 2:
+                    ssp = IpnSsp(
+                        0,
+                        _parse_ipn_ascii_uint(parts[0]),
+                        _parse_ipn_ascii_uint(parts[1]),
+                        wire_elements=2,
+                        # Text parse may receive invalid Null+service forms.
+                        allow_invalid_null=True,
+                    )
+                elif len(parts) == 3:
+                    ssp = IpnSsp(
+                        _parse_ipn_ascii_uint(parts[0]),
+                        _parse_ipn_ascii_uint(parts[1]),
+                        _parse_ipn_ascii_uint(parts[2]),
+                        wire_elements=3,
+                        allow_invalid_null=True,
+                    )
+                else:
+                    raise ValueError("IPN SSP must be 2 or 3 elements")
 
         else:
             raise ValueError("Invalid scheme state")

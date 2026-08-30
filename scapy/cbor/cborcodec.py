@@ -278,10 +278,11 @@ def _cbor_float_to_half_bits(value):
             return None
         mant = ((mant64 | (1 << 52)) >> shift) if exp64 != -1023 else 0
         half = mant & 0x3FF
-        if _cbor_float_from_bits(25, sign | half) != math.copysign(value, -1 if sign else 1):
+        preferred = math.copysign(value, -1.0 if sign else 1.0)
+        if _cbor_float_from_bits(25, sign | half) != preferred:
             # Compare absolute then restore sign via copysign on left side
             decoded = _cbor_float_from_bits(25, sign | half)
-            if decoded != (math.copysign(abs(value), -1.0 if sign else 1.0)):
+            if decoded != math.copysign(abs(value), -1.0 if sign else 1.0):
                 return None
         return sign | half
     half_exp = exp64 + 15

@@ -1037,7 +1037,10 @@ class _CBORF_compound(CBORF_element):
         remaining = s
         if count is CBOR_INDEFINITE:
             # Count items with a memoryview cursor (no suffix copies / span).
-            view = memoryview(remaining) if not isinstance(remaining, memoryview) else remaining
+            if not isinstance(remaining, memoryview):
+                view = memoryview(remaining)
+            else:
+                view = remaining
             probe = view
             item_count = 0
             while probe and not cbor_is_break(probe):

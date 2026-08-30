@@ -188,11 +188,19 @@ _DTN_WELL_KNOWN_SSP = {
 
 @dataclass(frozen=True)
 class IpnSsp:
-    """Normalized IPN scheme-specific part."""
+    """Normalized IPN scheme-specific part.
+
+    Stores the RFC 9758 logical triple ``(allocator, node, service)`` and the
+    CBOR array arity used on the wire. The 2- vs 3-element choice is part of
+    the value: after an EID is first encoded, later decode/re-encode cycles
+    must preserve that element count.
+    """
 
     allocator: int
     node: int
     service: int
+    # 2 = packed [fqnn, service]; 3 = explicit [allocator, node, service]
+    wire_elements: int = 3
 
     def __post_init__(self) -> None:
         for name, value in (
@@ -208,29 +216,46 @@ class IpnSsp:
             raise ValueError("node exceeds uint32")
         if self.service > 0xFFFFFFFFFFFFFFFF:
             raise ValueError("service exceeds uint64")
+        if self.wire_elements not in (2, 3):
+            raise ValueError("IPN wire element count must be 2 or 3")
 
     @classmethod
     def from_wire(cls, parts: list[int]) -> IpnSsp:
         if len(parts) == 2:
             fqnn, service = parts
-            return cls(fqnn >> 32, fqnn & 0xFFFFFFFF, service)
+            return cls(
+                fqnn >> 32,
+                fqnn & 0xFFFFFFFF,
+                service,
+                wire_elements=2,
+            )
         if len(parts) == 3:
-            return cls(parts[0], parts[1], parts[2])
+            return cls(
+                parts[0],
+                parts[1],
+                parts[2],
+                wire_elements=3,
+            )
         raise ValueError("IPN SSP must be 2 or 3 elements")
 
     def to_wire(self) -> list[int]:
-        if self.allocator == 0:
-            return [self.node, self.service]
+        if self.wire_elements == 2:
+            fqnn = (self.allocator << 32) | self.node
+            return [fqnn, self.service]
         return [self.allocator, self.node, self.service]
 
-    def to_wire_packed(self) -> list[int]:
-        if self.allocator == 0:
-            return [self.node, self.service]
-        fqnn = (self.allocator << 32) | self.node
-        return [fqnn, self.service]
+    def same_endpoint(self, other: object) -> bool:
+        """Return True when *other* names the same logical IPN endpoint."""
+        if not isinstance(other, IpnSsp):
+            return False
+        return (
+            self.allocator == other.allocator
+            and self.node == other.node
+            and self.service == other.service
+        )
 
     def to_text(self) -> str:
-        if self.allocator == 0:
+        if self.allocator == 0 and self.wire_elements == 2:
             return "ipn:{:d}.{:d}".format(self.node, self.service)
         return "ipn:{:d}.{:d}.{:d}".format(
             self.allocator, self.node, self.service
@@ -266,9 +291,11 @@ class EidStruct:
         elif scheme == EidScheme.ipn:
             parts = [int(part, 10) for part in ssp_text.split(".")]
             if len(parts) == 2:
-                ssp = IpnSsp(0, parts[0], parts[1])
+                ssp = IpnSsp(0, parts[0], parts[1], wire_elements=2)
             elif len(parts) == 3:
-                ssp = IpnSsp(parts[0], parts[1], parts[2])
+                ssp = IpnSsp(
+                    parts[0], parts[1], parts[2], wire_elements=3
+                )
             else:
                 raise ValueError("IPN SSP must be 2 or 3 elements")
 

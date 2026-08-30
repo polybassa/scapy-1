@@ -464,3 +464,47 @@ pkt.primary.freeze_crc()
 rebuilt = bytes(pkt)
 assert rebuilt != raw
 assert BundleV7(rebuilt).primary.lifetime == 1
+
++ Merge-gate: validator refinements
+
+= BTSD validation errors are emitted exactly once
+from scapy.contrib.bpv7 import HopCountBlock
+
+block = _review_block(10, 2, HopCountBlock(limit=0, count=0))
+bundle = _review_bundle(extension_blocks=[block])
+issues = bundle.validate()
+bad_hop = [issue for issue in issues if issue.code == "bad-hop-limit"]
+assert len(bad_hop) == 1
+assert bad_hop[0].path.endswith(".btsd")
+
+= BIB-protected primary CRC absence is not an unconditional error
+from scapy.contrib.bpv7 import BundleTimestamp, CrcType, PrimaryBlock
+
+primary = PrimaryBlock(
+    crc_type=CrcType.NONE,
+    destination="ipn:2.1",
+    source="ipn:1.1",
+    report_to="ipn:1.1",
+    create_ts=BundleTimestamp(dtntime=1, seqno=0),
+    lifetime=60000,
+)
+bundle = _review_bundle(primary=primary)
+codes_default = {issue.code for issue in bundle.validate()}
+assert "primary-crc-required" in codes_default
+codes_bib = {issue.code for issue in bundle.validate(primary_integrity_protected=True)}
+assert "primary-crc-required" not in codes_bib
+
+= Overlong integer encoding is reported as non-deterministic CBOR
+from scapy.contrib.bpv7 import CanonicalBlock
+from scapy.libs.crc import CRC_16_X25
+import struct
+
+# Canonical block with overlong type_code encoding: 18 01 instead of 01
+# [_ 18 01, 1, 0, CRC16, h'6869', h'XXXX' _]
+prefix = b"\x9f\x18\x01\x01\x00\x01\x42\x68\x69\x42"
+zeroed = prefix + b"\x00\x00\xff"
+crc_value = struct.pack(">H", CRC_16_X25(zeroed))
+wire = prefix + crc_value + b"\xff"
+block = CanonicalBlock(wire)
+codes = {issue.code for issue in block.validate("blocks[0]")}
+assert "non-deterministic-cbor" in codes

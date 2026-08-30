@@ -1,0 +1,690 @@
+% CBOR PR 5075 follow-up review and blind-spot regressions
+
++ Shared helpers
+
+= Import follow-up test dependencies
+from scapy.cbor import CBOR_Codecs
+from scapy.cbor.cbor import (
+    CBOR_Decoding_Error,
+    CBOR_Encoding_Error,
+    CBORMapData,
+    CBOR_UNSIGNED_INTEGER,
+    CBOR_TEXT_STRING,
+    CBOR_FALSE,
+    CBOR_TRUE,
+    CBOR_FLOAT,
+    CBORTagValue,
+    CBORSimpleValue,
+)
+from scapy.cbor.cborcodec import (
+    CBOR_Codec_Decoding_Error,
+    CBORcodec_ARRAY,
+)
+from scapy.cbor.cborfields import (
+    CBORF_ANY,
+    CBORF_ARRAY,
+    CBORF_ARRAY_INDEFINITE,
+    CBORF_ARRAY_OF,
+    CBORF_BOOLEAN,
+    CBORF_CONDITIONAL,
+    CBORF_FLOAT,
+    CBORF_MAP,
+    CBORF_NULL,
+    CBORF_PACKET,
+    CBORF_SEMANTIC_TAG,
+    CBORF_SEQUENCE,
+    CBORF_SEQUENCE_OF,
+    CBORF_TEXT_STRING,
+    CBORF_UNDEFINED,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_optional,
+)
+from scapy.cborpacket import CBOR_Packet
+
+_RR_FLOAT_1_5 = b"\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00"
+
+
++ Finding 1: CBORF_ANY must preserve map identity
+
+= A non-empty CBORF_ANY map remains a map after a sibling field changes
+class RRAnyNonEmptyMap(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_ANY("value", None),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+wire = b"\x82\xa1\x01\x02\x00"
+pkt = RRAnyNonEmptyMap(wire)
+pkt.tail = 1
+assert bytes(pkt) == b"\x82\xa1\x01\x02\x01"
+
+= An empty CBORF_ANY map never silently becomes an empty array
+class RRAnyEmptyMap(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_ANY("value", None),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+pkt = RRAnyEmptyMap(b"\x82\xa0\x00")
+pkt.tail = 1
+assert bytes(pkt) == b"\x82\xa0\x01"
+
+= A map nested in a CBORF_ANY array retains major type 5 on rebuild
+class RRAnyNestedMap(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_ANY("value", None),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+wire = b"\x82\x81\xa1\x01\x02\x00"
+pkt = RRAnyNestedMap(wire)
+pkt.tail = 1
+assert bytes(pkt) == b"\x82\x81\xa1\x01\x02\x01"
+
+= A map nested in a semantic tag retains map identity on rebuild
+class RRAnyTaggedMap(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_ANY("value", None),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+wire = b"\x82\xd8\x2a\xa1\x01\x02\x00"
+pkt = RRAnyTaggedMap(wire)
+pkt.tail = 1
+assert bytes(pkt) == b"\x82\xd8\x2a\xa1\x01\x02\x01"
+
+= A CBORF_ANY map with a compound array key round-trips faithfully
+class RRAnyCompoundMapKey(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_ANY("value", None),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+wire = b"\x82\xa1\x81\x01\x02\x00"
+pkt = RRAnyCompoundMapKey(wire)
+pkt.tail = 1
+assert bytes(pkt) == b"\x82\xa1\x81\x01\x02\x01"
+
+= A CBORF_ANY map preserves integer 1 and Boolean true as distinct keys
+class RRAnyTypedMapKeys(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_ANY("value", None),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+wire = b"\x82\xa2\x01\x61i\xf5\x61b\x00"
+pkt = RRAnyTypedMapKeys(wire)
+pkt.tail = 1
+assert bytes(pkt) == b"\x82\xa2\x01\x61i\xf5\x61b\x01"
+
+
++ Finding 2: optional major-type-7 lookahead must be exact
+
+= Optional Boolean does not consume a following floating-point value
+class RROptionalBooleanThenFloat(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_BOOLEAN("maybe", None)),
+        CBORF_FLOAT("value", None),
+    )
+
+pkt = RROptionalBooleanThenFloat(_RR_FLOAT_1_5)
+assert pkt.value == 1.5
+
+= Optional Boolean does not consume a following null
+class RROptionalBooleanThenNull(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_BOOLEAN("maybe", None)),
+        CBORF_NULL("value"),
+    )
+
+pkt = RROptionalBooleanThenNull(b"\xf6")
+assert bytes(pkt) == b"\xf6"
+
+= Optional null does not consume a following Boolean
+class RROptionalNullThenBoolean(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_NULL("maybe")),
+        CBORF_BOOLEAN("value", None),
+    )
+
+pkt = RROptionalNullThenBoolean(b"\xf5")
+assert pkt.value is True
+
+= Optional undefined does not consume a following float
+class RROptionalUndefinedThenFloat(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_UNDEFINED("maybe")),
+        CBORF_FLOAT("value", None),
+    )
+
+pkt = RROptionalUndefinedThenFloat(_RR_FLOAT_1_5)
+assert pkt.value == 1.5
+
+= Optional float does not consume a following Boolean
+class RROptionalFloatThenBoolean(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_FLOAT("maybe", None)),
+        CBORF_BOOLEAN("value", None),
+    )
+
+pkt = RROptionalFloatThenBoolean(b"\xf4")
+assert pkt.value is False
+
+= Exact major-type-7 matches are still consumed by optional fields
+class RROptionalBooleanPresent(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_BOOLEAN("maybe", None)),
+        CBORF_UNSIGNED_INTEGER("tail", None),
+    )
+
+class RROptionalFloatPresent(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_FLOAT("maybe", None)),
+        CBORF_UNSIGNED_INTEGER("tail", None),
+    )
+
+boolean_pkt = RROptionalBooleanPresent(b"\xf5\x07")
+assert boolean_pkt.maybe is True
+assert boolean_pkt.tail == 7
+
+float_pkt = RROptionalFloatPresent(_RR_FLOAT_1_5 + b"\x07")
+assert float_pkt.maybe == 1.5
+assert float_pkt.tail == 7
+
+= Optional Boolean lookahead recognizes half and single precision floats
+for wire in (b"\xf9\x3e\x00", b"\xfa\x3f\xc0\x00\x00"):
+    pkt = RROptionalBooleanThenFloat(wire)
+    assert pkt.value == 1.5
+
+= Optional Boolean leaves direct and extended simple values for CBORF_ANY
+class RROptionalBooleanThenAny(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_BOOLEAN("maybe", None)),
+        CBORF_ANY("value", None),
+    )
+
+for wire, expected in ((b"\xf0", 16), (b"\xf8\x20", 32)):
+    pkt = RROptionalBooleanThenAny(wire)
+    assert isinstance(pkt.value, CBORSimpleValue)
+    assert pkt.value.value == expected
+
+= Optional null and undefined do not consume each other's wire values
+class RROptionalNullThenUndefined(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_NULL("maybe")),
+        CBORF_UNDEFINED("value"),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+class RROptionalUndefinedThenNull(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_optional(CBORF_UNDEFINED("maybe")),
+        CBORF_NULL("value"),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+undefined_pkt = RROptionalNullThenUndefined(b"\xf7\x00")
+undefined_pkt.tail = 1
+assert bytes(undefined_pkt) == b"\xf7\x01"
+
+null_pkt = RROptionalUndefinedThenNull(b"\xf6\x00")
+null_pkt.tail = 1
+assert bytes(null_pkt) == b"\xf6\x01"
+
+
++ Finding 3: optional absence must be represented on every decode path
+
+= Definite-array exhaustion marks a trailing optional CBORF_ANY absent
+class RRAbsentAnyDefinite(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("head", 0),
+        CBORF_optional(CBORF_ANY("value", None)),
+    )
+
+pkt = RRAbsentAnyDefinite(b"\x81\x00")
+pkt.head = 1
+assert bytes(pkt) == b"\x81\x01"
+
+= Indefinite-array break marks a trailing optional CBORF_ANY absent
+class RRAbsentAnyIndefinite(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_INDEFINITE(
+        CBORF_UNSIGNED_INTEGER("head", 0),
+        CBORF_optional(CBORF_ANY("value", None)),
+    )
+
+pkt = RRAbsentAnyIndefinite(b"\x9f\x00\xff")
+pkt.head = 1
+assert bytes(pkt) == b"\x9f\x01\xff"
+
+= A missing optional fixed-map member remains omitted after rebuild
+class RRAbsentAnyMap(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("a", 0),
+        CBORF_optional(CBORF_ANY("b", None)),
+    )
+
+pkt = RRAbsentAnyMap(b"\xa1\x61a\x00")
+pkt.a = 1
+assert bytes(pkt) == b"\xa1\x61a\x01"
+
+= Optional null undefined and semantic-tag fields stay absent at array end
+class RRAbsentNull(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("head", 0),
+        CBORF_optional(CBORF_NULL("value")),
+    )
+
+class RRAbsentUndefined(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("head", 0),
+        CBORF_optional(CBORF_UNDEFINED("value")),
+    )
+
+class RRAbsentTag(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("head", 0),
+        CBORF_optional(
+            CBORF_SEMANTIC_TAG(
+                "tag_number",
+                None,
+                1,
+                CBORF_UNSIGNED_INTEGER("tagged_value", 7),
+            )
+        ),
+    )
+
+for packet_cls in (RRAbsentNull, RRAbsentUndefined, RRAbsentTag):
+    pkt = packet_cls(b"\x81\x00")
+    pkt.head = 1
+    assert bytes(pkt) == b"\x81\x01", packet_cls.__name__
+
+= An absent optional scalar does not reappear from a non-None declared default
+class RRAbsentDefaultScalar(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("head", 0),
+        CBORF_optional(CBORF_UNSIGNED_INTEGER("value", 9)),
+    )
+
+pkt = RRAbsentDefaultScalar(b"\x81\x00")
+pkt.head = 1
+assert bytes(pkt) == b"\x81\x01"
+
+= An absent optional packet does not reappear from its packet default
+class RRAbsentPacketChild(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("value", 9)
+
+class RRAbsentPacketParent(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("head", 0),
+        CBORF_optional(
+            CBORF_PACKET(
+                "child",
+                RRAbsentPacketChild(value=9),
+                RRAbsentPacketChild,
+            )
+        ),
+    )
+
+pkt = RRAbsentPacketParent(b"\x81\x00")
+pkt.head = 1
+assert bytes(pkt) == b"\x81\x01"
+
+= A missing optional fixed-map scalar does not reappear from its default
+class RRAbsentDefaultMapScalar(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("a", 0),
+        CBORF_optional(CBORF_UNSIGNED_INTEGER("b", 9)),
+    )
+
+pkt = RRAbsentDefaultMapScalar(b"\xa1\x61a\x00")
+pkt.a = 1
+assert bytes(pkt) == b"\xa1\x61a\x01"
+
+= A present optional CBOR null remains present after cache invalidation
+class RRPresentOptionalNull(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_ANY("value", None)),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+pkt = RRPresentOptionalNull(b"\x82\xf6\x00")
+pkt.tail = 1
+assert bytes(pkt) == b"\x82\xf6\x01"
+
+
++ Finding 4: positional arrays must reserve items for later required fields
+
+= Definite arrays reserve the final item after a nonterminal SEQUENCE_OF
+class RRSequenceThenTail(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_SEQUENCE_OF(
+            "values",
+            [],
+            CBORF_UNSIGNED_INTEGER("item", None),
+        ),
+        CBORF_UNSIGNED_INTEGER("tail", None),
+    )
+
+pkt = RRSequenceThenTail(b"\x83\x01\x02\x03")
+assert pkt.values == [1, 2]
+assert pkt.tail == 3
+
+= Indefinite arrays reserve the final item after a nonterminal SEQUENCE_OF
+class RRIndefiniteSequenceThenTail(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_INDEFINITE(
+        CBORF_SEQUENCE_OF(
+            "values",
+            [],
+            CBORF_UNSIGNED_INTEGER("item", None),
+        ),
+        CBORF_UNSIGNED_INTEGER("tail", None),
+    )
+
+pkt = RRIndefiniteSequenceThenTail(b"\x9f\x01\x02\x03\xff")
+assert pkt.values == [1, 2]
+assert pkt.tail == 3
+
+= An optional scalar yields a sole item to a required scalar of the same type
+class RROptionalThenRequiredUnsigned(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_UNSIGNED_INTEGER("optional_value", None)),
+        CBORF_UNSIGNED_INTEGER("required_value", None),
+    )
+
+pkt = RROptionalThenRequiredUnsigned(b"\x81\x07")
+assert pkt.required_value == 7
+pkt.required_value = 8
+assert bytes(pkt) == b"\x81\x08"
+
+= An optional packet yields a sole item to a required packet
+class RRBudgetChild(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("value", None)
+
+class RROptionalThenRequiredPacket(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(CBORF_PACKET("optional_child", None, RRBudgetChild)),
+        CBORF_PACKET("required_child", None, RRBudgetChild),
+    )
+
+pkt = RROptionalThenRequiredPacket(b"\x81\x07")
+assert pkt.required_child.value == 7
+
+= A SEQUENCE_OF reserves an item for a later required conditional field
+class RRSequenceThenConditionalTail(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("flag", 0),
+        CBORF_SEQUENCE_OF(
+            "values",
+            [],
+            CBORF_UNSIGNED_INTEGER("item", None),
+        ),
+        CBORF_CONDITIONAL(
+            CBORF_UNSIGNED_INTEGER("tail", None),
+            lambda pkt: pkt.getfieldval("flag") == 1,
+        ),
+    )
+
+pkt = RRSequenceThenConditionalTail(b"\x83\x01\x02\x03")
+assert pkt.flag == 1
+assert pkt.values == [2]
+assert pkt.tail == 3
+
+
++ Finding 5: recursive CBORF_ANY mutations must invalidate the raw cache
+
+= Appending to a decoded root CBORF_ANY array changes serialized bytes
+class RRMutableAnyRoot(CBOR_Packet):
+    CBOR_root = CBORF_ANY("value", None)
+
+pkt = RRMutableAnyRoot(b"\x82\x01\x02")
+pkt.value.append(3)
+assert bytes(pkt) == b"\x83\x01\x02\x03"
+
+= Mutating a nested CBORF_ANY array changes serialized bytes
+class RRMutableAnyNested(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_ANY("value", None),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+pkt = RRMutableAnyNested(b"\x82\x82\x01\x02\x00")
+pkt.value.append(3)
+assert bytes(pkt) == b"\x82\x83\x01\x02\x03\x00"
+
+= Mutating the list inside a decoded semantic tag changes serialized bytes
+pkt = RRMutableAnyRoot(b"\xd8\x2a\x82\x01\x02")
+assert isinstance(pkt.value, CBORTagValue)
+pkt.value.value.append(3)
+assert bytes(pkt) == b"\xd8\x2a\x83\x01\x02\x03"
+
+= Mutating a decoded semantic tag number changes serialized bytes
+pkt = RRMutableAnyRoot(b"\xd8\x2a\x01")
+assert isinstance(pkt.value, CBORTagValue)
+pkt.value.tag = 43
+assert bytes(pkt) == b"\xd8\x2b\x01"
+
+= Mutating a decoded extended simple value changes serialized bytes
+pkt = RRMutableAnyRoot(b"\xf8\x20")
+assert isinstance(pkt.value, CBORSimpleValue)
+pkt.value.value = 33
+assert bytes(pkt) == b"\xf8\x21"
+
+= Mutating an array value inside a decoded map changes serialized bytes
+pkt = RRMutableAnyRoot(b"\xa1\x61a\x81\x01")
+assert isinstance(pkt.value, CBORMapData)
+pkt.value["a"].append(2)
+assert bytes(pkt) == b"\xa1\x61a\x82\x01\x02"
+
+
++ Finding 7: generic map lookup must use typed CBOR key identity
+
+= Typed lookup distinguishes unsigned integer 1 from Boolean true
+obj, remaining = CBOR_Codecs.CBOR.dec(b"\xa2\x01\x61i\xf5\x61b")
+assert remaining == b""
+map_data = obj.val
+assert map_data[CBOR_UNSIGNED_INTEGER(1)].val == "i"
+assert map_data[CBOR_TRUE()].val == "b"
+
+= Typed lookup distinguishes unsigned integer 0 from Boolean false
+obj, remaining = CBOR_Codecs.CBOR.dec(b"\xa2\x00\x61i\xf4\x61b")
+assert remaining == b""
+map_data = obj.val
+assert map_data[CBOR_UNSIGNED_INTEGER(0)].val == "i"
+assert map_data[CBOR_FALSE()].val == "b"
+
+= Typed lookup distinguishes unsigned integer 1 from floating-point 1.0
+obj, remaining = CBOR_Codecs.CBOR.dec(
+    b"\xa2\x01\x61i\xfb\x3f\xf0\x00\x00\x00\x00\x00\x00\x61f"
+)
+assert remaining == b""
+map_data = obj.val
+assert map_data[CBOR_UNSIGNED_INTEGER(1)].val == "i"
+assert map_data[CBOR_FLOAT(1.0)].val == "f"
+
+
++ Finding 10: nested packet builds must traverse each child schema once
+
+= CBORF_PACKET builds a child root exactly once
+class RRCountingArray(CBORF_ARRAY):
+    calls = 0
+    def build_result(self, pkt):
+        type(self).calls += 1
+        return super().build_result(pkt)
+
+class RRCountedChild(CBOR_Packet):
+    CBOR_root = RRCountingArray(CBORF_UNSIGNED_INTEGER("value", 1))
+
+class RRCountedDirectParent(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_PACKET("child", None, RRCountedChild)
+    )
+
+RRCountingArray.calls = 0
+bytes(RRCountedDirectParent(child=RRCountedChild(value=1)))
+assert RRCountingArray.calls == 1
+
+= Packet-valued CBORF_ARRAY_OF builds each child root exactly once
+class RRCountedArrayParent(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("children", [], RRCountedChild)
+
+RRCountingArray.calls = 0
+bytes(RRCountedArrayParent(children=[RRCountedChild(value=1)]))
+assert RRCountingArray.calls == 1
+
+= Packet-valued CBORF_SEQUENCE_OF builds each child root exactly once
+class RRCountedSequenceParent(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF("children", [], RRCountedChild)
+
+RRCountingArray.calls = 0
+bytes(RRCountedSequenceParent(children=[RRCountedChild(value=1)]))
+assert RRCountingArray.calls == 1
+
+
++ Finding 11: decoder internals must not repeatedly copy unread suffixes
+
+= Decoding a flat array has linear rather than quadratic suffix-copy volume
+class RRSliceCountingBytes(bytes):
+    copied = 0
+    slices = 0
+    def __getitem__(self, key):
+        result = super().__getitem__(key)
+        if isinstance(key, slice) and isinstance(result, bytes):
+            type(self).copied += len(result)
+            type(self).slices += 1
+            return type(self)(result)
+        return result
+
+wire = CBORcodec_ARRAY.enc([0] * 1024) + b"\x01"
+RRSliceCountingBytes.copied = 0
+RRSliceCountingBytes.slices = 0
+obj, remaining = CBOR_Codecs.CBOR.dec(RRSliceCountingBytes(wire))
+assert len(obj.val) == 1024
+assert remaining == b"\x01"
+assert RRSliceCountingBytes.copied <= len(wire) * 8, (
+    "decoder copied %d bytes while consuming %d bytes"
+    % (RRSliceCountingBytes.copied, len(wire))
+)
+
+
++ Additional blind spots: fixed maps, mutable defaults, and simple values
+
+= A fixed map skips an unknown nested indefinite value and decodes later keys
+class RRKnownMapMember(CBOR_Packet):
+    CBOR_root = CBORF_MAP(CBORF_UNSIGNED_INTEGER("a", None))
+
+wire = (
+    b"\xa2"
+    b"\x61x"
+    b"\x9f\x01\xbf\x61k\x02\xff\xff"
+    b"\x61a\x07"
+)
+pkt = RRKnownMapMember(wire)
+assert pkt.a == 7
+
+= A malformed unknown fixed-map value is not silently skipped
+try:
+    RRKnownMapMember(b"\xa1\x61x\x9f\x01")
+    assert False, "Malformed unknown map content was silently accepted"
+except (CBOR_Decoding_Error, CBOR_Codec_Decoding_Error):
+    pass
+
+= Duplicate fixed-map schema names are rejected at class construction
+try:
+    CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("duplicate", 0),
+        CBORF_TEXT_STRING("duplicate", ""),
+    )
+    assert False, "Duplicate fixed-map field names were accepted"
+except ValueError:
+    pass
+
+= Nested mutable CBORF_ANY defaults are isolated between packet instances
+class RRNestedMutableDefault(CBOR_Packet):
+    CBOR_root = CBORF_ANY("value", [[0]])
+
+a = RRNestedMutableDefault()
+b = RRNestedMutableDefault()
+a.value[0].append(1)
+assert b.value == [[0]]
+
+= Mutable semantic-tag defaults are isolated between packet instances
+class RRMutableTagDefault(CBOR_Packet):
+    CBOR_root = CBORF_ANY("value", CBORTagValue(1, []))
+
+a = RRMutableTagDefault()
+b = RRMutableTagDefault()
+a.value.value.append(1)
+assert b.value == CBORTagValue(1, [])
+
+= Semantically duplicate map keys are rejected despite different encodings
+try:
+    CBOR_Codecs.CBOR.dec(b"\xa2\x01\x00\x18\x01\x01")
+    assert False, "Equivalent unsigned-integer map keys were accepted twice"
+except CBOR_Codec_Decoding_Error:
+    pass
+
+= Two adjacent unbounded positional sequences are rejected as ambiguous
+try:
+    CBORF_ARRAY(
+        CBORF_SEQUENCE_OF(
+            "left",
+            [],
+            CBORF_UNSIGNED_INTEGER("left_item", None),
+        ),
+        CBORF_SEQUENCE_OF(
+            "right",
+            [],
+            CBORF_UNSIGNED_INTEGER("right_item", None),
+        ),
+    )
+    assert False, "An inherently ambiguous array schema was accepted"
+except ValueError:
+    pass
+
+= A false conditional with a non-None default stays absent after rebuild
+class RRConditionalDefaultAbsent(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("flag", 0),
+        CBORF_CONDITIONAL(
+            CBORF_UNSIGNED_INTEGER("conditional_value", 9),
+            lambda pkt: pkt.getfieldval("flag") == 1,
+        ),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+pkt = RRConditionalDefaultAbsent(b"\x82\x00\x07")
+pkt.tail = 8
+assert bytes(pkt) == b"\x82\x00\x08"
+
+= A false conditional fixed-map member stays absent after rebuild
+class RRConditionalDefaultMapAbsent(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("flag", 0),
+        CBORF_CONDITIONAL(
+            CBORF_UNSIGNED_INTEGER("conditional_value", 9),
+            lambda pkt: pkt.getfieldval("flag") == 1,
+        ),
+        CBORF_UNSIGNED_INTEGER("tail", 0),
+    )
+
+wire = b"\xa2\x64flag\x00\x64tail\x07"
+pkt = RRConditionalDefaultMapAbsent(wire)
+pkt.tail = 8
+assert bytes(pkt) == b"\xa2\x64flag\x00\x64tail\x08"
+
+= Mutable CBORMapData defaults are isolated between packet instances
+class RRMutableMapDefault(CBOR_Packet):
+    CBOR_root = CBORF_ANY(
+        "value",
+        CBORMapData([(CBOR_TEXT_STRING("a"), [])]),
+    )
+
+a = RRMutableMapDefault()
+b = RRMutableMapDefault()
+a.value["a"].append(1)
+assert b.value["a"] == []
+
+= Direct and extended simple values round-trip through CBORF_ANY
+for wire in (b"\xf0", b"\xf8\x20", b"\xf8\xff"):
+    pkt = RRMutableAnyRoot(wire)
+    assert bytes(pkt) == wire

@@ -123,29 +123,40 @@ def CBOR_encode_break():
     return b'\xff'
 
 
+def _cbor_buf_bytes(buf):
+    # type: (Any) -> bytes
+    """Materialize a bytes/memoryview slice as ``bytes``."""
+    if isinstance(buf, bytes):
+        return buf
+    if isinstance(buf, memoryview):
+        return buf.tobytes()
+    return bytes(buf)
+
+
 def cbor_is_break(s):
-    # type: (bytes) -> bool
+    # type: (Any) -> bool
     """Return whether *s* begins with a CBOR break byte."""
-    return bool(s) and orb(s[0]) == 0xff
+    return bool(s) and s[0] == 0xff
 
 
 def cbor_consume_break(s):
-    # type: (bytes) -> bytes
+    # type: (Any) -> Any
     """Consume a leading CBOR break byte from *s*."""
     if not cbor_is_break(s):
         raise CBOR_Codec_Decoding_Error(
-            "Expected break byte (0xff)", remaining=s)
+            "Expected break byte (0xff)", remaining=_cbor_buf_bytes(s))
     return s[1:]
 
 
 def CBOR_decode_head(s):
-    # type: (bytes) -> Tuple[int, Union[int, CBOR_INDEFINITE], bytes]
+    # type: (Any) -> Tuple[int, Union[int, CBOR_INDEFINITE], Any]
     """
     Decode CBOR initial byte and additional info.
     Returns: (major_type, value, remaining_bytes)
     """
     if not s:
-        raise CBOR_Codec_Decoding_Error("Empty CBOR data", remaining=s)
+        raise CBOR_Codec_Decoding_Error(
+            "Empty CBOR data", remaining=_cbor_buf_bytes(s))
 
     initial_byte = s[0]
     major_type = initial_byte >> 5
@@ -158,45 +169,197 @@ def CBOR_decode_head(s):
         # 1-byte value follows
         if len(s) < 2:
             raise CBOR_Codec_Decoding_Error(
-                "Not enough bytes for 1-byte value", remaining=s)
+                "Not enough bytes for 1-byte value",
+                remaining=_cbor_buf_bytes(s))
         return major_type, s[1], s[2:]
     elif additional_info == 25:
         # 2-byte value follows
         if len(s) < 3:
             raise CBOR_Codec_Decoding_Error(
-                "Not enough bytes for 2-byte value", remaining=s)
+                "Not enough bytes for 2-byte value",
+                remaining=_cbor_buf_bytes(s))
         value = struct.unpack(">H", s[1:3])[0]
         return major_type, value, s[3:]
     elif additional_info == 26:
         # 4-byte value follows
         if len(s) < 5:
             raise CBOR_Codec_Decoding_Error(
-                "Not enough bytes for 4-byte value", remaining=s)
+                "Not enough bytes for 4-byte value",
+                remaining=_cbor_buf_bytes(s))
         value = struct.unpack(">I", s[1:5])[0]
         return major_type, value, s[5:]
     elif additional_info == 27:
         # 8-byte value follows
         if len(s) < 9:
             raise CBOR_Codec_Decoding_Error(
-                "Not enough bytes for 8-byte value", remaining=s)
+                "Not enough bytes for 8-byte value",
+                remaining=_cbor_buf_bytes(s))
         value = struct.unpack(">Q", s[1:9])[0]
         return major_type, value, s[9:]
     elif additional_info == 31:
         if major_type in (0, 1, 6):
             raise CBOR_Codec_Decoding_Error(
                 "Indefinite length not allowed for major type %d" %
-                major_type, remaining=s)
+                major_type, remaining=_cbor_buf_bytes(s))
         if major_type in (2, 3, 4, 5):
             return major_type, CBOR_INDEFINITE, s[1:]
         raise CBOR_Codec_Decoding_Error(
             "Indefinite length not allowed for major type %d" %
-            major_type, remaining=s)
+            major_type, remaining=_cbor_buf_bytes(s))
     elif additional_info in (28, 29, 30):
         raise CBOR_Codec_Decoding_Error(
-            "Reserved additional info: %d" % additional_info, remaining=s)
+            "Reserved additional info: %d" % additional_info,
+            remaining=_cbor_buf_bytes(s))
     else:
         raise CBOR_Codec_Decoding_Error(
-            "Invalid additional info: %d" % additional_info, remaining=s)
+            "Invalid additional info: %d" % additional_info,
+            remaining=_cbor_buf_bytes(s))
+
+
+def cbor_argument_is_shortest(additional_info, value):
+    # type: (int, Union[int, CBOR_INDEFINITE]) -> bool
+    """Return True when *additional_info* is the shortest encoding for *value*."""
+    if value is CBOR_INDEFINITE:
+        return additional_info == 31
+    if additional_info < 24:
+        return True
+    if additional_info == 24:
+        return value >= 24
+    if additional_info == 25:
+        return value >= 256
+    if additional_info == 26:
+        return value >= 65536
+    if additional_info == 27:
+        return value >= (1 << 32)
+    return additional_info == 31
+
+
+def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
+    # type: (bytes, bool, int) -> List[Tuple[int, str]]
+    """Scan *s* for non-shortest CBOR argument encodings.
+
+    Returns a list of ``(absolute_offset, message)`` issues. Indefinite-length
+    containers are accepted when *allow_indefinite* is true (RFC 9171).
+    """
+    issues = []  # type: List[Tuple[int, str]]
+    index = [0]
+
+    def _walk():
+        # type: () -> None
+        start = index[0]
+        if start >= len(s):
+            raise CBOR_Codec_Decoding_Error(
+                "Empty CBOR data", remaining=s[start:])
+        initial = s[start]
+        major = initial >> 5
+        ai = initial & 0x1f
+        pos = start + 1
+        if ai < 24:
+            value = ai  # type: Union[int, CBOR_INDEFINITE]
+        elif ai == 24:
+            if pos + 1 > len(s):
+                raise CBOR_Codec_Decoding_Error(
+                    "Not enough bytes for 1-byte value", remaining=s[start:])
+            value = s[pos]
+            pos += 1
+        elif ai == 25:
+            if pos + 2 > len(s):
+                raise CBOR_Codec_Decoding_Error(
+                    "Not enough bytes for 2-byte value", remaining=s[start:])
+            value = struct.unpack(">H", s[pos:pos + 2])[0]
+            pos += 2
+        elif ai == 26:
+            if pos + 4 > len(s):
+                raise CBOR_Codec_Decoding_Error(
+                    "Not enough bytes for 4-byte value", remaining=s[start:])
+            value = struct.unpack(">I", s[pos:pos + 4])[0]
+            pos += 4
+        elif ai == 27:
+            if pos + 8 > len(s):
+                raise CBOR_Codec_Decoding_Error(
+                    "Not enough bytes for 8-byte value", remaining=s[start:])
+            value = struct.unpack(">Q", s[pos:pos + 8])[0]
+            pos += 8
+        elif ai == 31:
+            value = CBOR_INDEFINITE
+        else:
+            raise CBOR_Codec_Decoding_Error(
+                "Invalid additional info: %d" % ai, remaining=s[start:])
+        index[0] = pos
+
+        # Major type 7 AI 20-27 are simple/float literals, not length args.
+        if major == 7:
+            return
+
+        if value is CBOR_INDEFINITE:
+            if not allow_indefinite:
+                issues.append((
+                    base_offset + start,
+                    "Indefinite-length item is not allowed",
+                ))
+            if major in (2, 3):
+                while index[0] < len(s) and not cbor_is_break(s[index[0]:]):
+                    _walk()
+                if index[0] >= len(s) or not cbor_is_break(s[index[0]:]):
+                    raise CBOR_Codec_Decoding_Error(
+                        "Expected break byte (0xff)", remaining=s[index[0]:])
+                index[0] += 1
+                return
+            if major == 4:
+                while index[0] < len(s) and not cbor_is_break(s[index[0]:]):
+                    _walk()
+                if index[0] >= len(s) or not cbor_is_break(s[index[0]:]):
+                    raise CBOR_Codec_Decoding_Error(
+                        "Expected break byte (0xff)", remaining=s[index[0]:])
+                index[0] += 1
+                return
+            if major == 5:
+                while index[0] < len(s) and not cbor_is_break(s[index[0]:]):
+                    _walk()
+                    _walk()
+                if index[0] >= len(s) or not cbor_is_break(s[index[0]:]):
+                    raise CBOR_Codec_Decoding_Error(
+                        "Expected break byte (0xff)", remaining=s[index[0]:])
+                index[0] += 1
+                return
+            raise CBOR_Codec_Decoding_Error(
+                "Indefinite length not allowed for major type %d" % major,
+                remaining=s[start:],
+            )
+
+        if not cbor_argument_is_shortest(ai, value):
+            issues.append((
+                base_offset + start,
+                "Non-shortest CBOR argument encoding (AI=%d, value=%r)"
+                % (ai, value),
+            ))
+
+        if major in (2, 3):
+            length = int(value)
+            if index[0] + length > len(s):
+                raise CBOR_Codec_Decoding_Error(
+                    "Truncated byte/text string", remaining=s[start:])
+            index[0] += length
+            return
+        if major == 4:
+            for _ in range(int(value)):
+                _walk()
+            return
+        if major == 5:
+            for _ in range(int(value)):
+                _walk()
+                _walk()
+            return
+        if major == 6:
+            _walk()
+            return
+
+    try:
+        _walk()
+    except CBOR_Codec_Decoding_Error:
+        # Malformed input is reported by normal decoding, not this checker.
+        pass
+    return issues
 
 
 #    [ CBOR codec classes ]    #
@@ -259,10 +422,11 @@ class CBORcodec_Object(Generic[_K], metaclass=CBORcodec_metaclass):
             _depth=0,  # type: int
             ):
         # type: (...) -> Tuple[Union[_CBOR_ERROR, CBOR_Object[_K]], bytes]
+        # Nested decoding must raise so safedec only wraps the outermost item.
         if not safe:
-            return cls.do_dec(s, context, safe, _depth=_depth)
+            return cls.do_dec(s, context, False, _depth=_depth)
         try:
-            return cls.do_dec(s, context, safe, _depth=_depth)
+            return cls.do_dec(s, context, False, _depth=_depth)
         except CBOR_Codec_Decoding_Error as e:
             return CBOR_DECODING_ERROR(s, exc=e), b""
         except CBOR_Error as e:
@@ -409,14 +573,17 @@ class CBORcodec_BYTE_STRING(CBORcodec_Object[bytes]):
                         "Not enough bytes for byte string chunk: "
                         "expected %d, got %d" %
                         (chunk_len, len(remainder)), remaining=remainder)
-                chunks.append(remainder[:chunk_len])
+                chunks.append(_cbor_buf_bytes(remainder[:chunk_len]))
                 remainder = remainder[chunk_len:]
             return cls.cbor_object(b"".join(chunks)), remainder
         if len(remainder) < length:
             raise CBOR_Codec_Decoding_Error(
                 "Not enough bytes for byte string: expected %d, got %d" %
-                (length, len(remainder)), remaining=s)
-        return cls.cbor_object(remainder[:length]), remainder[length:]
+                (length, len(remainder)), remaining=_cbor_buf_bytes(s))
+        return (
+            cls.cbor_object(_cbor_buf_bytes(remainder[:length])),
+            remainder[length:],
+        )
 
 
 class CBORcodec_TEXT_STRING(CBORcodec_Object[str]):
@@ -467,24 +634,25 @@ class CBORcodec_TEXT_STRING(CBORcodec_Object[str]):
                         "Not enough bytes for text string chunk: "
                         "expected %d, got %d" %
                         (chunk_len, len(remainder)), remaining=remainder)
-                chunk_bytes = remainder[:chunk_len]
+                chunk_bytes = _cbor_buf_bytes(remainder[:chunk_len])
                 remainder = remainder[chunk_len:]
                 try:
                     decoded_chunks.append(chunk_bytes.decode('utf-8'))
                 except UnicodeDecodeError as e:
                     raise CBOR_Codec_Decoding_Error(
                         "Invalid UTF-8 in text string chunk: %s" % str(e),
-                        remaining=s)
+                        remaining=_cbor_buf_bytes(s))
             return cls.cbor_object("".join(decoded_chunks)), remainder
         if len(remainder) < length:
             raise CBOR_Codec_Decoding_Error(
                 "Not enough bytes for text string: expected %d, got %d" %
-                (length, len(remainder)), remaining=s)
+                (length, len(remainder)), remaining=_cbor_buf_bytes(s))
         try:
-            text = remainder[:length].decode('utf-8')
+            text = _cbor_buf_bytes(remainder[:length]).decode('utf-8')
         except UnicodeDecodeError as e:
             raise CBOR_Codec_Decoding_Error(
-                "Invalid UTF-8 in text string: %s" % str(e), remaining=s)
+                "Invalid UTF-8 in text string: %s" % str(e),
+                remaining=_cbor_buf_bytes(s))
         return cls.cbor_object(text), remainder[length:]
 
 
@@ -811,7 +979,7 @@ class CBORcodec_SIMPLE_AND_FLOAT(CBORcodec_Object[Union[int, float, bool, None]]
                 if len(s) < 2:
                     raise CBOR_Codec_Decoding_Error(
                         "Not enough bytes for simple value", remaining=s)
-                simple = orb(s[1])
+                simple = s[1]
                 if simple < 32:
                     raise CBOR_Codec_Decoding_Error(
                         "Two-byte simple-value encoding below 32 "
@@ -834,6 +1002,7 @@ def _encode_cbor_item(item):
         CBOR_Object,
         CBOR_UNDEFINED,
         CBOR_UNDEFINED_VALUE,
+        CBORMapData,
         CBORTagValue,
         CBORSimpleValue,
         CBOR_SIMPLE_VALUE,
@@ -850,6 +1019,8 @@ def _encode_cbor_item(item):
         )
     elif isinstance(item, CBORSimpleValue):
         return CBORcodec_SIMPLE_AND_FLOAT.enc(CBOR_SIMPLE_VALUE(item.value))
+    elif isinstance(item, CBORMapData):
+        return CBORcodec_MAP.enc(item)
     elif isinstance(item, bool):
         # Must check bool before int (bool is subclass of int)
         return CBORcodec_SIMPLE_AND_FLOAT.enc(item)
@@ -876,19 +1047,28 @@ def _encode_cbor_item(item):
 
 
 def _decode_cbor_item(s, safe=False, depth=0):
-    # type: (bytes, bool, int) -> Tuple[CBOR_Object[Any], bytes]
-    """Decode CBOR bytes to a CBOR_Object"""
+    # type: (Any, bool, int) -> Tuple[CBOR_Object[Any], Any]
+    """Decode CBOR bytes to a CBOR_Object.
+
+    Top-level callers may pass ``bytes`` (or a subclass). Decoding then works
+    on a ``memoryview`` so unread suffixes are not recopied per item.
+    """
     if depth > MAX_CBOR_NESTING:
         raise CBOR_Codec_Decoding_Error(
-            "Maximum CBOR nesting depth exceeded", remaining=s)
+            "Maximum CBOR nesting depth exceeded",
+            remaining=_cbor_buf_bytes(s))
+    if not isinstance(s, memoryview):
+        obj, rem = _decode_cbor_item(memoryview(s), safe=safe, depth=depth)
+        return obj, _cbor_buf_bytes(rem) if isinstance(rem, memoryview) else rem
     if not s:
-        raise CBOR_Codec_Decoding_Error("Empty CBOR data", remaining=s)
+        raise CBOR_Codec_Decoding_Error(
+            "Empty CBOR data", remaining=_cbor_buf_bytes(s))
 
     if cbor_is_break(s):
         raise CBOR_Codec_Decoding_Error(
-            "Standalone break byte (0xff)", remaining=s)
+            "Standalone break byte (0xff)", remaining=_cbor_buf_bytes(s))
 
-    initial_byte = orb(s[0])
+    initial_byte = s[0]
     major_type = initial_byte >> 5
 
     # Dispatch to appropriate codec based on major type
@@ -910,7 +1090,8 @@ def _decode_cbor_item(s, safe=False, depth=0):
         return CBORcodec_SIMPLE_AND_FLOAT.dec(s, safe=safe, _depth=depth)
     else:
         raise CBOR_Codec_Decoding_Error(
-            "Invalid major type: %d" % major_type, remaining=s)
+            "Invalid major type: %d" % major_type,
+            remaining=_cbor_buf_bytes(s))
 
 
 # Add helper methods to CBORcodec_Object

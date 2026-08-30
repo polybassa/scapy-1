@@ -3337,7 +3337,8 @@ class TwoFieldPkt(CBOR_Packet):
 
 pkt = TwoFieldPkt(b"\x81\x07")
 assert pkt.version == 7
-assert pkt.description is None
+from scapy.cbor.cborfields import CBOR_ABSENT
+assert pkt.description is CBOR_ABSENT
 
 = CBORF_optional: mismatched trailing item is rejected
 from scapy.cbor.cbor import CBOR_Decoding_Error
@@ -4682,7 +4683,8 @@ class OptArr(CBOR_Packet):
     )
 
 p = OptArr(b"\x82\x01\x02")
-assert p.a == 1 and p.t is None and p.b == 2
+from scapy.cbor.cborfields import CBOR_ABSENT
+assert p.a == 1 and p.t is CBOR_ABSENT and p.b == 2
 
 = Optional text present in definite array
 from scapy.cbor.cborfields import (

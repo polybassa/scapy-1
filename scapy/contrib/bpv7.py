@@ -15,7 +15,12 @@ import enum
 from typing import Any, Callable, ClassVar, Iterator, Optional, Union, cast
 
 from scapy import volatile
-from scapy.cbor.cborcodec import cbor_is_break
+from scapy.cbor.cborcodec import (
+    cbor_is_break,
+    cbor_find_non_deterministic,
+    CBOR_decode_head,
+    CBOR_INDEFINITE,
+)
 from scapy.cbor import (
     CBORF_field,
     CBORF_UNSIGNED_INTEGER,
@@ -461,30 +466,9 @@ class AbstractBlock:
                 return self.CBOR_root.build(self)
 
     def cbor_build_result(self):
-        """Item accounting under the same context as CRC-aware ``self_build``."""
-        crc_type = _native_int(self.getfieldval(self._crc_type_name))
-        if crc_type == int(CrcType.NONE):
-            with self._effective_build_context():
-                return self.CBOR_root.build_result(self)
-        crc_value = self.getfieldval(self._crc_value_name)
-        if crc_value is not None and crc_value is not _MISSING:
-            with self._effective_build_context():
-                with _temporary_internal_field(
-                    self, self._crc_value_name, _crc_bytes(crc_value)
-                ):
-                    return self.CBOR_root.build_result(self)
-        defn = self._crc_definition()
-        if defn is None:
-            raise CBOR_Encoding_Error(
-                "Unsupported CRC type %d" % crc_type
-            )
-        # Placeholder CRC is enough for cardinality; SEQUENCE_OF uses wire
-        # bytes from ``bytes(item)`` / ``self_build`` separately.
-        with self._effective_build_context():
-            with _temporary_internal_field(
-                self, self._crc_value_name, defn.encode(0)
-            ):
-                return self.CBOR_root.build_result(self)
+        """Return final wire bytes and cardinality in one schema traversal."""
+        from scapy.cbor.cborfields import CBORBuildResult
+        return CBORBuildResult(self.self_build(), 1)
 
     def calculate_crc(self) -> Optional[bytes]:
         crc_type = _native_int(self.getfieldval(self._crc_type_name))
@@ -495,9 +479,9 @@ class AbstractBlock:
             raise CBOR_Encoding_Error(
                 "Unsupported CRC type %d" % crc_type
             )
+        # Build once with zero placeholder; derive CRC from that buffer.
         pre_crc = self._build_root_with_crc_value(defn.encode(0))
-        crc_int = defn.cls(pre_crc)
-        return defn.encode(crc_int)
+        return defn.encode(defn.cls(pre_crc))
 
     def _self_build_with_crc(self) -> bytes:
         if self._raw_packet_cache_is_valid():  # type: ignore[attr-defined]
@@ -520,8 +504,24 @@ class AbstractBlock:
                     % (len(actual), CrcType(crc_type).name)
                 )
             return self._build_root_with_crc_value(actual)
-        computed = self.calculate_crc()
-        return self._build_root_with_crc_value(computed)
+        # Single schema traversal: build once with a zero CRC, then patch.
+        defn = self._crc_definition()
+        if defn is None:
+            raise CBOR_Encoding_Error(
+                "Unsupported CRC type %d" % crc_type
+            )
+        zero = defn.encode(0)
+        pre_crc = self._build_root_with_crc_value(zero)
+        crc_bytes = defn.encode(defn.cls(pre_crc))
+        if len(crc_bytes) != len(zero):
+            raise CBOR_Encoding_Error("CRC width mismatch during patch")
+        idx = pre_crc.rfind(zero)
+        if idx < 0:
+            # Fall back to a second build if the placeholder was not unique.
+            return self._build_root_with_crc_value(crc_bytes)
+        patched = bytearray(pre_crc)
+        patched[idx:idx + len(zero)] = crc_bytes
+        return bytes(patched)
 
     def freeze_crc(self) -> None:
         crc_type = _native_int(self.getfieldval(self._crc_type_name))
@@ -532,6 +532,9 @@ class AbstractBlock:
 
     def _crc_over_received_or_built(self, defn: CrcInfo, actual: bytes) -> bytes:
         """CRC over exact received bytes when available; else rebuilt form."""
+        # Nested mutations must invalidate a dissected raw cache first.
+        if hasattr(self, "_raw_packet_cache_is_valid"):
+            self._raw_packet_cache_is_valid()
         raw = self.raw_packet_cache
         if raw is not None and actual:
             from scapy.cbor.cborcodec import CBOR_encode_head
@@ -619,6 +622,25 @@ class AbstractBlock:
         return issues
 
 
+def _append_non_deterministic_issues(
+    issues: list[ValidationIssue],
+    raw: Optional[bytes],
+    path: str,
+) -> None:
+    if not raw:
+        return
+    for offset, message in cbor_find_non_deterministic(
+        raw, allow_indefinite=True
+    ):
+        issues.append(
+            ValidationIssue(
+                "non-deterministic-cbor",
+                path,
+                "%s at offset %d" % (message, offset),
+            )
+        )
+
+
 class PrimaryBlock(CBOR_Packet, AbstractBlock):
     """The primary block definition"""
 
@@ -671,6 +693,9 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
 
     def validate(self, path: str = "") -> list[ValidationIssue]:
         issues = super().validate(path)
+        _append_non_deterministic_issues(
+            issues, self.raw_packet_cache, path
+        )
         if _native_int(self.getfieldval("version")) != 7:
             issues.append(
                 ValidationIssue(
@@ -819,6 +844,17 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
             )
         if self.getfieldval("btsd") is None:
             issues.append(ValidationIssue("missing-btsd", path, "BTSD is missing"))
+        _append_non_deterministic_issues(
+            issues, self.raw_packet_cache, path
+        )
+        btsd = self.getfieldval("btsd")
+        if btsd is not None:
+            btsd_raw = getattr(btsd, "raw_packet_cache", None)
+            if not btsd_raw and hasattr(btsd, "original"):
+                btsd_raw = btsd.original
+            _append_non_deterministic_issues(
+                issues, btsd_raw, path + ".btsd"
+            )
         return issues
 
 
@@ -848,12 +884,21 @@ class HopCountBlock(CBOR_Packet):
     def validate(self, path: str = "") -> list[ValidationIssue]:
         issues = []  # type: list[ValidationIssue]
         limit = self.getfieldval("limit")
+        count = self.getfieldval("count")
         if limit is None or _native_int(limit) < 1 or _native_int(limit) > 255:
             issues.append(
                 ValidationIssue(
                     "bad-hop-limit",
                     path,
                     "Hop Count limit must be in 1..255",
+                )
+            )
+        elif count is not None and _native_int(count) > _native_int(limit):
+            issues.append(
+                ValidationIssue(
+                    "hop-count-exceeds-limit",
+                    path,
+                    "Hop Count count must not exceed limit",
                 )
             )
         return issues
@@ -887,8 +932,26 @@ class BundleV7(CBOR_Packet):
     def check_crc(self) -> bool:
         return self.primary.check_crc() and all(blk.check_crc() for blk in self.blocks)
 
-    def validate(self) -> list[ValidationIssue]:
+    def validate(
+        self,
+        primary_integrity_protected: bool = False,
+    ) -> list[ValidationIssue]:
         issues = []
+        raw = self.raw_packet_cache
+        if raw:
+            try:
+                major_type, count, _ = CBOR_decode_head(raw)
+                if major_type == 4 and count is not CBOR_INDEFINITE:
+                    issues.append(
+                        ValidationIssue(
+                            "bundle-array-must-be-indefinite",
+                            "",
+                            "BPv7 bundle array must use indefinite length",
+                        )
+                    )
+            except Exception:
+                pass
+            _append_non_deterministic_issues(issues, raw, "")
         primary = self.primary
         if primary is not None:
             issues.extend(primary.validate("primary"))
@@ -909,13 +972,13 @@ class BundleV7(CBOR_Packet):
         if primary is not None:
             flags = int(primary.getfieldval("bundle_flags") or 0)
             crc_type = _native_int(primary.getfieldval("crc_type"))
-            if crc_type == int(CrcType.NONE):
+            if crc_type == int(CrcType.NONE) and not primary_integrity_protected:
                 issues.append(
                     ValidationIssue(
                         "primary-crc-required",
                         "primary",
-                        "Primary block requires a nonzero CRC type "
-                        "without BPSec BIB protection",
+                        "Primary block requires a nonzero CRC type unless a "
+                        "Block Integrity Block protects the primary block",
                     )
                 )
             source = primary.getfieldval("source")
@@ -960,9 +1023,6 @@ class BundleV7(CBOR_Packet):
             path = "blocks[%d]" % index
             if isinstance(blk, CanonicalBlock):
                 issues.extend(blk.validate(path))
-                btsd = blk.getfieldval("btsd")
-                if btsd is not None and hasattr(btsd, "validate"):
-                    issues.extend(btsd.validate(path + ".btsd"))
             type_code = None
             if isinstance(blk, CanonicalBlock):
                 type_code = blk._effective_type_code()

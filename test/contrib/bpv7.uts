@@ -473,12 +473,13 @@ assert not hasattr(bpv7, "AbstractSecurityBlock")
 
 + IPN EID normalization
 
-= Two-element and three-element IPN forms compare equal
+= Two-element and three-element IPN forms name the same logical endpoint
 from scapy.contrib.bpv7 import EidStruct
 
-packed = EidStruct.from_text("ipn:1.2.3")
+text_form = EidStruct.from_text("ipn:1.2.3")
 explicit = EidStruct.from_cbor([2, [1, 2, 3]])
-assert packed == explicit
+assert text_form == explicit
+assert text_form.ssp.same_endpoint(explicit.ssp)
 
 = Two-element packed form splits allocator from node number
 from scapy.contrib.bpv7 import EidStruct
@@ -488,6 +489,43 @@ two_elem = EidStruct.from_cbor([2, [fqnn, 3]])
 assert two_elem.ssp.allocator == 1
 assert two_elem.ssp.node == 2
 assert two_elem.ssp.service == 3
+assert two_elem.ssp.wire_elements == 2
+
+= Packed two-element IPN CBOR form is preserved on re-encode
+from scapy.contrib.bpv7 import EidStruct
+
+fqnn = (1 << 32) | 2
+parts = [fqnn, 3]
+eid = EidStruct.from_cbor([2, parts])
+assert eid.to_cbor() == [2, parts]
+assert eid.ssp.to_wire() == parts
+
+= Explicit three-element IPN CBOR form is preserved on re-encode
+from scapy.contrib.bpv7 import EidStruct
+
+parts = [1, 2, 3]
+eid = EidStruct.from_cbor([2, parts])
+assert eid.to_cbor() == [2, parts]
+assert eid.ssp.to_wire() == parts
+
+= Explicit three-element form with allocator zero keeps three wire elements
+from scapy.contrib.bpv7 import EidStruct
+
+parts = [0, 2, 3]
+eid = EidStruct.from_cbor([2, parts])
+assert eid.ssp.wire_elements == 3
+assert eid.to_cbor() == [2, parts]
+assert eid.to_text() == "ipn:0.2.3"
+
+= Packed and explicit forms of the same endpoint compare logically
+from scapy.contrib.bpv7 import EidStruct
+
+fqnn = (1 << 32) | 2
+packed = EidStruct.from_cbor([2, [fqnn, 3]])
+explicit = EidStruct.from_cbor([2, [1, 2, 3]])
+assert packed.ssp.same_endpoint(explicit.ssp)
+assert packed != explicit
+assert packed.to_cbor() != explicit.to_cbor()
 
 = Primary block sizes for fragment and CRC combinations
 from scapy.contrib.bpv7 import *

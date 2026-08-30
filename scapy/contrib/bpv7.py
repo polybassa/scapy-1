@@ -375,8 +375,14 @@ class EidStruct:
         if self.scheme == EidScheme.dtn:
             return self.semantic_key() == other.semantic_key()
         if self.scheme == EidScheme.ipn:
-            left = self.ssp if isinstance(self.ssp, IpnSsp) else IpnSsp.from_wire(list(self.ssp))
-            right = other.ssp if isinstance(other.ssp, IpnSsp) else IpnSsp.from_wire(list(other.ssp))
+            if isinstance(self.ssp, IpnSsp):
+                left = self.ssp
+            else:
+                left = IpnSsp.from_wire(list(self.ssp))
+            if isinstance(other.ssp, IpnSsp):
+                right = other.ssp
+            else:
+                right = IpnSsp.from_wire(list(other.ssp))
             return left.same_endpoint(right)
         return False
 
@@ -387,7 +393,10 @@ class EidStruct:
                 return ("dtn", "none")
             return ("dtn", self.ssp)
         if self.scheme == EidScheme.ipn:
-            ssp = self.ssp if isinstance(self.ssp, IpnSsp) else IpnSsp.from_wire(list(self.ssp))
+            if isinstance(self.ssp, IpnSsp):
+                ssp = self.ssp
+            else:
+                ssp = IpnSsp.from_wire(list(self.ssp))
             return ("ipn", ssp.allocator, ssp.node, ssp.service)
         return ("unknown",)
 

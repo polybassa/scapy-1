@@ -116,7 +116,24 @@ class CBORValueDissectResult(object):
 
 # Sentinel for an optional field that was not present on the wire.
 # Distinct from Python ``None``, which encodes CBOR null for CBORF_ANY.
-CBOR_ABSENT = object()
+# Identity must survive copy/deepcopy used by Packet default caches.
+
+
+class _CBORAbsent(object):
+    def __repr__(self):
+        # type: () -> str
+        return "CBOR_ABSENT"
+
+    def __copy__(self):
+        # type: () -> _CBORAbsent
+        return self
+
+    def __deepcopy__(self, memo):
+        # type: (dict) -> _CBORAbsent
+        return self
+
+
+CBOR_ABSENT = _CBORAbsent()
 
 
 def cbor_item_span(s):
@@ -323,6 +340,8 @@ class CBORF_field(CBORF_element, Generic[_I]):
 
     def do_copy(self, x):
         # type: (Any) -> Any
+        if x is CBOR_ABSENT or x is CBOR_UNDEFINED_VALUE or x is CBOR_NO_ITEM:
+            return x
         if isinstance(x, list):
             return copy.deepcopy(x)
         if hasattr(x, "copy"):
@@ -404,6 +423,8 @@ class CBORF_ANY(CBORF_field[Any]):
 
     def do_copy(self, x):  # type: ignore[override]
         # type: (Any) -> Any
+        if x is CBOR_ABSENT or x is CBOR_UNDEFINED_VALUE or x is CBOR_NO_ITEM:
+            return x
         # Deep-copy composites so in-place nested mutations invalidate cache.
         return copy.deepcopy(x)
 
@@ -583,10 +604,19 @@ class CBORF_BYTE_STRING(CBORF_field[bytes]):
             if length is CBOR_INDEFINITE:
                 raise CBOR_Decoding_Error(
                     "Indefinite-length byte string not allowed here")
+        before = len(s)
         obj, remain = CBORcodec_BYTE_STRING.dec(s)
         if not isinstance(obj, CBOR_BYTE_STRING):
             raise CBOR_Type_Mismatch(
                 "Expected byte string, got %r" % obj)
+        # Record exact content span for CRC verification over received bytes.
+        if self.definite_only and pkt is not None:
+            content = obj.val
+            pkt._crc_content_span = (  # type: ignore[attr-defined]
+                len(content),
+                len(remain),
+                before - len(remain) - len(content),  # head length
+            )
         return obj.val, remain
 
     def encode_value(self, x):
@@ -1006,12 +1036,12 @@ class _CBORF_compound(CBORF_element):
         # type: (CBOR_Packet, bytes, Union[int, CBOR_INDEFINITE]) -> bytes
         remaining = s
         if count is CBOR_INDEFINITE:
-            # Pre-count top-level items so nonterminal SEQUENCE_OF / optional
-            # fields can reserve for later required members.
-            probe = remaining
+            # Count items with a memoryview cursor (no suffix copies / span).
+            view = memoryview(remaining) if not isinstance(remaining, memoryview) else remaining
+            probe = view
             item_count = 0
             while probe and not cbor_is_break(probe):
-                _item, probe = cbor_item_span(probe)
+                _obj, probe = CBORcodec_Object.decode_cbor_item(probe)
                 item_count += 1
             remaining = self._dissect_children_budgeted(
                 pkt, remaining, item_count
@@ -1037,21 +1067,8 @@ class _CBORF_compound(CBORF_element):
             if available == 0:
                 if needed > 0:
                     raise CBOR_Decoding_Error("CBOR item count mismatch")
-                if isinstance(field, CBORF_optional):
-                    # Under a zero budget, still attempt a uniquely matching
-                    # optional so malformed present values are not silently
-                    # absorbed by a later catch-all CBORF_ANY.
-                    if (
-                        remaining
-                        and field._field.matches_next_item(pkt, remaining)
-                        and not self._later_non_any_matches(
-                            pkt, remaining, self.seq[index + 1:]
-                        )
-                    ):
-                        result = field.dissect_result(pkt, remaining)
-                        remaining = result.remaining
-                        items_left -= result.items
-                        continue
+                # Zero budget: later required fields already reserved every
+                # remaining item. Mark optionals absent unconditionally.
                 self._mark_absent(pkt, field)
                 continue
             try:
@@ -1118,6 +1135,15 @@ class CBORF_SEQUENCE(_CBORF_compound):
             )
     """
 
+    def __init__(self, *seq, **kwargs):
+        # type: (*Any, **Any) -> None
+        super(CBORF_SEQUENCE, self).__init__(*seq, **kwargs)
+        self._reject_ambiguous_unbounded_sequences()
+
+    def _reject_ambiguous_unbounded_sequences(self):
+        # type: () -> None
+        CBORF_ARRAY._reject_ambiguous_unbounded_sequences(self)
+
     def build_result(self, pkt):
         # type: (CBOR_Packet) -> CBORBuildResult
         data, total_items = self._build_children(pkt)
@@ -1125,16 +1151,17 @@ class CBORF_SEQUENCE(_CBORF_compound):
 
     def dissect_result(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> CBORDissectResult
-        remaining = s
-        total_items = 0
-        for field in self.seq:
-            try:
-                result = field.dissect_result(pkt, remaining)
-            except CBORF_badsequence:
-                break
-            remaining = result.remaining
-            total_items += result.items
-        return CBORDissectResult(remaining, total_items)
+        # Count top-level items once via memoryview so optional / SEQUENCE_OF
+        # fields can reserve for later required members without quadratic
+        # suffix copies.
+        view = memoryview(s) if not isinstance(s, memoryview) else s
+        probe = view
+        item_count = 0
+        while probe and not cbor_is_break(probe):
+            _obj, probe = CBORcodec_Object.decode_cbor_item(probe)
+            item_count += 1
+        remaining = self._dissect_children_budgeted(pkt, s, item_count)
+        return CBORDissectResult(remaining, item_count)
 
     def build(self, pkt):
         # type: (CBOR_Packet) -> bytes
@@ -1196,10 +1223,19 @@ class CBORF_ARRAY(_CBORF_compound):
                 )
             )
 
-        for index in range(len(self.seq) - 1):
-            if _unbounded(self.seq[index]) and _unbounded(self.seq[index + 1]):
+        def _skippable(field):
+            # type: (Any) -> bool
+            return isinstance(field, (CBORF_optional, CBORF_CONDITIONAL))
+
+        unbounded_indexes = [
+            index for index, field in enumerate(self.seq) if _unbounded(field)
+        ]
+        for left, right in zip(unbounded_indexes, unbounded_indexes[1:]):
+            # Adjacent unbounded fields, or unbounded fields separated only by
+            # optional/conditional fillers, cannot be partitioned uniquely.
+            if all(_skippable(self.seq[i]) for i in range(left + 1, right)):
                 raise ValueError(
-                    "Ambiguous adjacent unbounded CBOR sequences in array schema"
+                    "Ambiguous unbounded CBOR sequences in array schema"
                 )
 
     def build_result(self, pkt):
@@ -1759,7 +1795,11 @@ class CBORF_SEMANTIC_TAG(CBORF_field[int]):
             raise CBOR_Encoding_Error(
                 "Semantic tag number out of uint64 range")
         self.inner_field = inner_field
-        super(CBORF_SEMANTIC_TAG, self).__init__(name, tag_num)
+        # Honour an explicit default (e.g. CBOR_ABSENT); otherwise the field
+        # stores the configured tag number when present.
+        if default is None:
+            default = tag_num
+        super(CBORF_SEMANTIC_TAG, self).__init__(name, default)
 
     def _parse_tag_head(self, s, require_match=True):
         # type: (bytes, bool) -> Tuple[int, bytes]

@@ -122,9 +122,13 @@ try:
 except CBOR_Decoding_Error:
     pass
 
-= A malformed optional value cannot migrate into a following CBORF_ANY field
-from scapy.cbor.cbor import CBOR_Decoding_Error
+= Zero-budget optional stays absent so a trailing CBORF_ANY can consume the item
+# Finding 2: when the optional has available==0 because a required trailing
+# field reserved the only item, mark the optional absent unconditionally.
+# Rejecting the packet (or letting a mismatched optional claim the item) is
+# wrong; the only complete valid allocation is optional=absent, ANY=item.
 from scapy.cbor.cborfields import (
+    CBOR_ABSENT,
     CBORF_ANY,
     CBORF_ARRAY,
     CBORF_SEMANTIC_TAG,
@@ -146,11 +150,10 @@ class OptionalTaggedBeforeAny(CBOR_Packet):
         CBORF_ANY("fallback", None),
     )
 
-try:
-    OptionalTaggedBeforeAny(b"\x81\xc1\x61x")
-    assert False, "Malformed tagged data migrated into the fallback field"
-except CBOR_Decoding_Error:
-    pass
+pkt = OptionalTaggedBeforeAny(b"\x81\xc1\x61x")
+assert pkt.getfieldval("tag_number") is CBOR_ABSENT
+assert pkt.getfieldval("fallback") is not None
+assert pkt.getfieldval("fallback") is not CBOR_ABSENT
 
 + Optional CBOR null presence
 

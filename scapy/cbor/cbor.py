@@ -669,6 +669,14 @@ class _CBORUndefined(object):
         # type: () -> bool
         return False
 
+    def __copy__(self):
+        # type: () -> _CBORUndefined
+        return self
+
+    def __deepcopy__(self, memo):
+        # type: (dict) -> _CBORUndefined
+        return self
+
 
 CBOR_UNDEFINED_VALUE = _CBORUndefined()
 
@@ -679,6 +687,14 @@ class _CBORNoItem(object):
     def __repr__(self):
         # type: () -> str
         return "CBOR_NO_ITEM"
+
+    def __copy__(self):
+        # type: () -> _CBORNoItem
+        return self
+
+    def __deepcopy__(self, memo):
+        # type: (dict) -> _CBORNoItem
+        return self
 
 
 CBOR_NO_ITEM = _CBORNoItem()

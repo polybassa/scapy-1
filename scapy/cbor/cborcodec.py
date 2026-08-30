@@ -259,6 +259,7 @@ def _cbor_float_to_half_bits(value):
     """Return IEEE binary16 bits when *value* round-trips exactly."""
     import math
     if math.isnan(value):
+        # Callers that care about NaN payloads must use bit-pattern helpers.
         return 0x7E00
     sign = 0x8000 if math.copysign(1.0, value) < 0 else 0
     if math.isinf(value):
@@ -297,18 +298,64 @@ def _cbor_float_to_half_bits(value):
     return bits
 
 
+def _cbor_nan_preferred_ai(ai, bits):
+    # type: (int, int) -> int
+    """Preferred float AI for a NaN, based on the original bit pattern.
+
+    RFC 8949 prefers a shorter NaN only when zero-padding the shorter
+    significand reconstructs the original NaN payload.
+    """
+    if ai == 25:
+        return 25
+    if ai == 26:
+        # binary32 NaN: 1+8+23. Prefer half when low 13 significand bits are 0.
+        mant = int(bits) & 0x7FFFFF
+        if mant and (mant & ((1 << 13) - 1)) == 0:
+            return 25
+        return 26
+    if ai == 27:
+        # binary64 NaN: 1+11+52.
+        mant = int(bits) & ((1 << 52) - 1)
+        if mant == 0:
+            # Infinity, not NaN — caller should not use this helper.
+            return 27
+        # Prefer half when only the top 10 significand bits are used.
+        if (mant & ((1 << 42) - 1)) == 0:
+            return 25
+        # Prefer single when only the top 23 significand bits are used.
+        if (mant & ((1 << 29) - 1)) == 0:
+            return 26
+        return 27
+    return ai
+
+
 def _cbor_preferred_float_ai(value):
     # type: (float) -> int
-    """Return the preferred float AI (25/26/27) for *value*."""
+    """Return the preferred float AI (25/26/27) for a numeric *value*."""
     import math
     if math.isnan(value):
+        # Without the original payload bits, only the quiet binary16 NaN is a
+        # safe generic preference. Encoded-width checks use bit patterns.
         return 25
     if _cbor_float_to_half_bits(value) is not None:
         return 25
-    single = struct.unpack(">f", struct.pack(">f", value))[0]
+    try:
+        single = struct.unpack(">f", struct.pack(">f", value))[0]
+    except (OverflowError, struct.error):
+        return 27
     if single == value or (math.isinf(single) and math.isinf(value)):
         return 26
     return 27
+
+
+def _cbor_preferred_float_ai_from_encoded(ai, bits):
+    # type: (int, int) -> int
+    """Preferred float AI using the original encoded width and bit pattern."""
+    import math
+    float_val = _cbor_float_from_bits(ai, bits)
+    if math.isnan(float_val):
+        return _cbor_nan_preferred_ai(ai, bits)
+    return _cbor_preferred_float_ai(float_val)
 
 
 def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
@@ -367,8 +414,7 @@ def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
         # Major type 7: simple values and floats. Check float preferred width.
         if major == 7:
             if ai in (25, 26, 27) and value is not CBOR_INDEFINITE:
-                float_val = _cbor_float_from_bits(ai, int(value))
-                preferred = _cbor_preferred_float_ai(float_val)
+                preferred = _cbor_preferred_float_ai_from_encoded(ai, int(value))
                 if preferred is not None and preferred < ai:
                     issues.append((
                         base_offset + start,
@@ -400,13 +446,21 @@ def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
                 index[0] += 1
                 return
             if major == 5:
+                key_encodings = []  # type: List[bytes]
                 while index[0] < len(s) and not cbor_is_break(s[index[0]:]):
+                    key_start = index[0]
                     _walk()
+                    key_encodings.append(bytes(s[key_start:index[0]]))
                     _walk()
                 if index[0] >= len(s) or not cbor_is_break(s[index[0]:]):
                     raise CBOR_Codec_Decoding_Error(
                         "Expected break byte (0xff)", remaining=s[index[0]:])
                 index[0] += 1
+                if key_encodings != sorted(key_encodings):
+                    issues.append((
+                        base_offset + start,
+                        "CBOR map keys are not in bytewise lexicographic order",
+                    ))
                 return
             raise CBOR_Codec_Decoding_Error(
                 "Indefinite length not allowed for major type %d" % major,

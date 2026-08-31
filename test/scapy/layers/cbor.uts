@@ -2109,3 +2109,72 @@ assert cbor_find_non_deterministic(bytes.fromhex("fb7ff8000000000001")) == []
 # binary64 quiet NaN with only top significand bits set prefers binary16
 assert cbor_find_non_deterministic(bytes.fromhex("fb7ffc000000000000"))
 
+
+########### Scapy-native review: cache items and packet-field cardinality #################
+
++ Cached unframed packets preserve exact bytes and item counts
+
+= Unframed SEQUENCE cache returns exact bytes without rebuild
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_PACKET,
+    CBORF_SEQUENCE,
+    CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class SeqChild(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_UNSIGNED_INTEGER("a", 0),
+        CBORF_UNSIGNED_INTEGER("b", 0),
+    )
+
+class ParentPkt(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_PACKET("child", None, cls=SeqChild),
+        CBORF_UNSIGNED_INTEGER("sib", 0),
+    )
+
+# Overlong encoding of 1, then 2: two top-level items
+overlong = b"\x18\x01\x02"
+child = SeqChild(overlong)
+assert child.raw_packet_cache == overlong
+assert child._cbor_raw_cache_items == 2
+result = child.cbor_build_result()
+assert result.data == overlong
+assert result.items == 2
+assert result.data == bytes(child)
+
+parent = ParentPkt(child=child, sib=9)
+parent.sib = 8
+assert overlong in bytes(parent)
+
+= CBORF_PACKET build_value enforces one-item cardinality like build_result
+from scapy.cbor.cborfields import (
+    CBORF_PACKET,
+    CBORF_SEQUENCE,
+    CBORF_UNSIGNED_INTEGER,
+)
+from scapy.cbor.cbor import CBOR_Encoding_Error
+from scapy.cborpacket import CBOR_Packet
+
+class TwoItemChild(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_UNSIGNED_INTEGER("a", 1),
+        CBORF_UNSIGNED_INTEGER("b", 2),
+    )
+
+class OneItemChild(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("a", 1)
+
+fld = CBORF_PACKET("x", None, cls=OneItemChild)
+ok = fld.build_value(None, OneItemChild(a=7))
+assert ok.items == 1
+
+fld2 = CBORF_PACKET("x", None, cls=TwoItemChild)
+try:
+    fld2.build_value(None, TwoItemChild())
+    assert False, "multi-item child must be rejected by build_value"
+except CBOR_Encoding_Error:
+    pass
+

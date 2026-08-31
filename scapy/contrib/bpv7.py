@@ -21,23 +21,20 @@ from scapy.cbor.cborcodec import (
     CBOR_INDEFINITE,
 )
 from scapy.cbor import (
-    CBORResult,
-    CBORUIntField,
-    CBORBytesField,
-    CBOREnumField,
-    CBORFlagsField,
-    CBORArray,
-    CBORIndefiniteArray,
-    CBORConditionalField,
-    CBORPacketField,
-    CBORPacketLenField,
-    CBORPacketListField,
     CBORF_field,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_ARRAY,
+    CBORF_ARRAY_INDEFINITE,
+    CBORF_BYTE_STRING,
+    CBORF_CONDITIONAL,
+    CBORF_SEQUENCE_OF,
+    CBORF_PACKET,
+    CBORF_BYTE_STRING_PACKET,
+    CBORF_UNSIGNED_ENUM,
+    CBORF_UNSIGNED_FLAGS,
     CBORcodec_ARRAY,
-    CBOR_ARRAY,
     CBOR_NO_ITEM,
     CBOR_Encoding_Error,
-    CBOR_Object,
 )
 from scapy.cbor.cborfields import (
     CBORBuildResult,
@@ -62,7 +59,7 @@ def _as_bytes(val: Any) -> bytes:
     return cast(bytes, val)
 
 
-class BlockTypeField(CBORUIntField):
+class BlockTypeField(CBORF_UNSIGNED_INTEGER):
     """Canonical block type code; ``None`` means infer from BTSD on build."""
 
     def build_result(self, pkt):
@@ -77,7 +74,7 @@ class BlockTypeField(CBORUIntField):
         return CBORBuildResult(self.encode_value(val), 1)
 
 
-class CrcBytesField(CBORBytesField):
+class CrcBytesField(CBORF_BYTE_STRING):
     """CRC content octets; ``None`` means compute automatically on build."""
 
     def build_result(self, pkt):
@@ -100,12 +97,12 @@ class CrcBytesField(CBORBytesField):
         return CBORBuildResult(self.encode_value(val), 1)
 
 
-class CrcTypeField(CBOREnumField):
+class CrcTypeField(CBORF_UNSIGNED_ENUM):
     """Human-friendly CRC type enumeration."""
     pass
 
 
-class DtnTimeField(CBORUIntField):
+class DtnTimeField(CBORF_UNSIGNED_INTEGER):
     """A DTN time value representing number of milliseconds from the
     DTN epoch 2000-01-01T00:00:00Z.
 
@@ -197,9 +194,9 @@ class BundleTimestamp(CBOR_Packet):
     :py:cls:`datetime.datetime` object and text.
     """
 
-    CBOR_root = CBORArray(
+    CBOR_root = CBORF_ARRAY(
         DtnTimeField("dtntime", default=0),
-        CBORUIntField("seqno", default=0),
+        CBORF_UNSIGNED_INTEGER("seqno", default=0),
     )
 
 
@@ -453,15 +450,13 @@ class EidStruct:
 
     @staticmethod
     def _wire_parts(ssp_item: Any) -> list[int]:
-        if isinstance(ssp_item, CBOR_ARRAY):
-            ssp_item = ssp_item.val
-        return [_as_int(getattr(item, "val", item)) for item in ssp_item]
+        if not isinstance(ssp_item, (list, tuple)):
+            raise TypeError("IPN SSP must be a list, have %r" % (ssp_item,))
+        return [_as_int(item) for item in ssp_item]
 
     @staticmethod
     def from_cbor(item: Any) -> EidStruct:
-        # Normalize codec wrappers to Python natives at the field boundary.
-        if isinstance(item, CBOR_Object):
-            item = cbor_object_to_python(item)
+        # Expect Python natives after BundleEidField.m2i normalization.
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             raise TypeError("Need a 2-element EID array, have %r" % (item,))
         scheme_id, ssp_item = item
@@ -480,7 +475,7 @@ class EidStruct:
             elif isinstance(ssp_item, str):
                 ssp = ssp_item
             else:
-                ssp = ssp_item
+                raise TypeError("Invalid DTN SSP: %r" % (ssp_item,))
         elif scheme == EidScheme.ipn:
             ssp = IpnSsp.from_wire(EidStruct._wire_parts(ssp_item))
         else:
@@ -544,13 +539,11 @@ class BundleEidField(CBORF_field[EidStruct]):
             x = EidStruct.from_text(x)
         if isinstance(x, EidStruct):
             return CBORcodec_ARRAY.enc(x.to_cbor())
-        if isinstance(x, CBOR_Object):
-            return x.enc()
         raise TypeError("Cannot encode EID value %r" % (x,))
 
     def m2i(self, pkt, s):
         item, remain = CBORcodec_ARRAY.dec(s)
-        return EidStruct.from_cbor(item), remain
+        return EidStruct.from_cbor(cbor_object_to_python(item)), remain
 
 
 @enum.unique
@@ -625,7 +618,7 @@ class AbstractBlock:
 
     def cbor_build_result(self):
         """Return final wire bytes and cardinality in one schema traversal."""
-        return CBORResult(data=self.self_build(), items=1)
+        return CBORBuildResult(data=self.self_build(), items=1)
 
     def calculate_crc(self) -> Optional[bytes]:
         crc_type = _as_int(self.getfieldval(self._crc_type_name))
@@ -835,24 +828,24 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
         flags = _as_int(self.getfieldval("bundle_flags"))
         return bool(flags & PrimaryBlock.Flag.IS_FRAGMENT)
 
-    CBOR_root = CBORArray(
-        CBORUIntField("version", default=7),
-        CBORFlagsField(
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("version", default=7),
+        CBORF_UNSIGNED_FLAGS(
             "bundle_flags", default=0, size=64, names=_enum_dict(Flag)
         ),
         CrcTypeField("crc_type", default=CrcType.NONE, enum=CrcType),
         BundleEidField("destination", default="dtn:none"),
         BundleEidField("source", default="dtn:none"),
         BundleEidField("report_to", default="dtn:none"),
-        CBORPacketField("create_ts", default=BundleTimestamp(), cls=BundleTimestamp),
-        CBORUIntField("lifetime", default=0),
-        CBORConditionalField(
-            CBORUIntField("fragment_offset", default=0), cond=is_fragment
+        CBORF_PACKET("create_ts", default=BundleTimestamp(), cls=BundleTimestamp),
+        CBORF_UNSIGNED_INTEGER("lifetime", default=0),
+        CBORF_CONDITIONAL(
+            CBORF_UNSIGNED_INTEGER("fragment_offset", default=0), cond=is_fragment
         ),
-        CBORConditionalField(
-            CBORUIntField("total_app_data_len", default=0), cond=is_fragment
+        CBORF_CONDITIONAL(
+            CBORF_UNSIGNED_INTEGER("total_app_data_len", default=0), cond=is_fragment
         ),
-        CBORConditionalField(
+        CBORF_CONDITIONAL(
             CrcBytesField("crc_value", default=None, definite_only=True),
             cond=AbstractBlock.has_crc
         ),
@@ -948,15 +941,15 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
                 pass
         return None
 
-    CBOR_root = CBORArray(
+    CBOR_root = CBORF_ARRAY(
         BlockTypeField("type_code", default=None),
-        CBORUIntField("block_num", default=None),
-        CBORFlagsField("block_flags", default=0, size=64, names=_enum_dict(Flag)),
+        CBORF_UNSIGNED_INTEGER("block_num", default=None),
+        CBORF_UNSIGNED_FLAGS("block_flags", default=0, size=64, names=_enum_dict(Flag)),
         CrcTypeField("crc_type", default=CrcType.NONE, enum=CrcType),
-        CBORPacketLenField(
+        CBORF_BYTE_STRING_PACKET(
             "btsd", default=None, cls_cb=btsd_class, definite_only=True
         ),
-        CBORConditionalField(
+        CBORF_CONDITIONAL(
             CrcBytesField("crc_value", default=None, definite_only=True),
             cond=AbstractBlock.has_crc
         ),
@@ -1066,16 +1059,16 @@ class PreviousNodeBlock(CBOR_Packet):
 class BundleAgeBlock(CBOR_Packet):
     """Block data content from Section 4.4.2 of RFC 9171."""
 
-    CBOR_root = CBORUIntField("age", default=None)
+    CBOR_root = CBORF_UNSIGNED_INTEGER("age", default=None)
 
 
 @CanonicalBlock.register_type(10)
 class HopCountBlock(CBOR_Packet):
     """Block data content from Section 4.4.3 of RFC 9171."""
 
-    CBOR_root = CBORArray(
-        CBORUIntField("limit", default=None),
-        CBORUIntField("count", default=0),
+    CBOR_root = CBORF_ARRAY(
+        CBORF_UNSIGNED_INTEGER("limit", default=None),
+        CBORF_UNSIGNED_INTEGER("count", default=0),
     )
 
     def validate(self, path: str = "") -> list[ValidationIssue]:
@@ -1121,9 +1114,9 @@ class BundleV7(CBOR_Packet):
             return CBOR_NO_ITEM
         return CanonicalBlock
 
-    CBOR_root = CBORIndefiniteArray(
-        CBORPacketField("primary", default=PrimaryBlock(), cls=PrimaryBlock),
-        CBORPacketListField("blocks", default=[], cls_cb=_block_until_break),
+    CBOR_root = CBORF_ARRAY_INDEFINITE(
+        CBORF_PACKET("primary", default=PrimaryBlock(), cls=PrimaryBlock),
+        CBORF_SEQUENCE_OF("blocks", default=[], cls_cb=_block_until_break),
     )
 
     def mysummary(self):

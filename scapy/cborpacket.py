@@ -6,7 +6,8 @@
 CBOR Packet
 
 Packet holding data encoded in Concise Binary Object Representation (CBOR).
-Modelled after scapy/asn1packet.py: a thin root-schema wrapper around Packet.
+Modelled after scapy/asn1packet.py, with CBOR-specific raw-cache integration
+for sentinels (``CBOR_ABSENT``), mutable ANY values, and nested item counts.
 """
 
 from scapy.base_classes import Packet_metaclass
@@ -37,16 +38,17 @@ class CBORPacket_metaclass(Packet_metaclass):
         )
 
 
-def _finalize_cbor_raw_cache(pkt, raw, remain):
-    # type: (Packet, bytes, bytes) -> None
-    """Record raw cache + mutable-field snapshot after CBOR_root.dissect.
+def _finalize_cbor_raw_cache(pkt, raw, remain, items):
+    # type: (Packet, bytes, bytes, int) -> None
+    """Record raw cache, item count, and mutable-field snapshot after dissect.
 
-    Mirrors ``Packet.do_dissect`` cache bookkeeping so ``CBOR_Packet`` itself
-    stays ASN.1-thin. Handles ``CBOR_ABSENT`` which ordinary Packet fields
-    do not use.
+    CBOR-specific Packet cache integration: mirrors ``Packet.do_dissect``
+    bookkeeping and also stores ``_cbor_raw_cache_items`` so unframed sequence
+    roots can return the exact received bytes without rebuilding.
     """
     from scapy.cbor.cborfields import CBOR_ABSENT
     pkt.raw_packet_cache = raw[:-len(remain)] if remain else raw
+    pkt._cbor_raw_cache_items = items  # type: ignore[attr-defined]
     pkt.raw_packet_cache_fields = {}
     for f in pkt.fields_desc:
         if f.name not in pkt.fields:
@@ -74,32 +76,39 @@ def _cbor_raw_cache_is_valid(pkt):
         if pkt._raw_packet_cache_field_value(fld, val) != fval:
             pkt.raw_packet_cache = None
             pkt.raw_packet_cache_fields = None
+            pkt._cbor_raw_cache_items = None  # type: ignore[attr-defined]
             pkt.wirelen = None
             return False
     return True
 
 
 class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
-    """ASN.1-shaped CBOR packet: metaclass + root build/dissect only.
+    """CBOR packet with root-schema build/dissect and cache integration.
 
-    Mutable-field defaults and cache snapshots are handled via field flags
-    (``islist`` / ``ismutable`` / ``holds_packets``) and module helpers so this
-    class does not re-implement Scapy's Packet cache policy.
+    Field flags (``islist`` / ``ismutable`` / ``holds_packets``) drive
+    Scapy's mutation detection. This class additionally deepens ``ismutable``
+    defaults and stores parsed root item counts for exact-wire rebuilds.
     """
 
     CBOR_root = None  # type: Optional[Any]
 
     def cbor_build_result(self):
         # type: () -> Any
-        """Return ``CBORResult`` for this packet's root schema."""
-        from scapy.cbor.cborfields import CBORResult
+        """Return ``CBORBuildResult`` for this packet's root schema.
+
+        When the raw cache is valid, return the exact received bytes together
+        with the dissected top-level item count. Never rebuild an unchanged
+        packet merely to recover cardinality.
+        """
+        from scapy.cbor.cborfields import CBORBuildResult
         if _cbor_raw_cache_is_valid(self):
-            root = self.CBOR_root
-            # Unframed SEQUENCE roots need a real item count, not "1".
-            if getattr(root, "CBOR_tag", None) is None and hasattr(root, "seq"):
-                return root.build_result(self)
-            return CBORResult(data=self.raw_packet_cache, items=1)
-        return self.CBOR_root.build_result(self)
+            items = getattr(self, "_cbor_raw_cache_items", None)
+            if items is None:
+                items = 1
+            return CBORBuildResult(self.raw_packet_cache, items)
+        result = self.CBOR_root.build_result(self)
+        self._cbor_raw_cache_items = result.items  # type: ignore[attr-defined]
+        return result
 
     def do_init_cached_fields(self, for_dissect_only=False):
         # type: (bool) -> None
@@ -139,6 +148,6 @@ class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
 
     def do_dissect(self, x):
         # type: (bytes) -> bytes
-        remain = self.CBOR_root.dissect(self, x)
-        _finalize_cbor_raw_cache(self, x, remain)
-        return remain
+        result = self.CBOR_root.dissect_result(self, x)
+        _finalize_cbor_raw_cache(self, x, result.remaining, result.items)
+        return result.remaining

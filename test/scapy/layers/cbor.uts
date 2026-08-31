@@ -2212,3 +2212,184 @@ ok = fld.build_value(None, Raw(b"\x01"))
 assert ok.items == 1
 assert ok.data == b"\x01"
 
+
+########### Merged from pr43_cbor_review_findings.uts #################
+
++ PR43 review - Scapy-native packet ownership
+
+= CBORF_PACKET construction uses parent ownership, not protocol underlayer
+from scapy.cbor.cborfields import CBORF_PACKET, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43OwnedChild(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("value", 0)
+
+class PR43DirectParent(CBOR_Packet):
+    CBOR_root = CBORF_PACKET("child", None, PR43OwnedChild)
+
+child = PR43OwnedChild(value=1)
+parent = PR43DirectParent(child=child)
+assert parent.child is child
+assert child.parent is parent
+assert child.underlayer is None
+
+= CBORF_PACKET assignment preserves an existing protocol underlayer
+from scapy.packet import Raw
+
+child = PR43OwnedChild(value=1)
+real_underlayer = Raw(load=b"lower")
+child.add_underlayer(real_underlayer)
+parent = PR43DirectParent(child=child)
+assert child.parent is parent
+assert child.underlayer is real_underlayer
+
+= CBORF_PACKET dissection uses parent ownership, not protocol underlayer
+parent = PR43DirectParent(b"\x01")
+assert isinstance(parent.child, PR43OwnedChild)
+assert parent.child.parent is parent
+assert parent.child.underlayer is None
+assert bytes(parent) == b"\x01"
+
+= CBORF_BYTE_STRING_PACKET uses parent ownership on construction and dissection
+from scapy.cbor.cborfields import CBORF_BYTE_STRING_PACKET
+from scapy.packet import Raw
+
+class PR43ByteStringParent(CBOR_Packet):
+    CBOR_root = CBORF_BYTE_STRING_PACKET("child", None, pkt_cls=Raw)
+
+child = Raw(load=b"x")
+parent = PR43ByteStringParent(child=child)
+assert parent.child is child
+assert child.parent is parent
+assert child.underlayer is None
+assert bytes(parent) == b"\x41x"
+
+parsed = PR43ByteStringParent(b"\x41x")
+assert isinstance(parsed.child, Raw)
+assert parsed.child.load == b"x"
+assert parsed.child.parent is parsed
+assert parsed.child.underlayer is None
+
++ PR43 review - packet-valued collection ownership
+
+= CBORF_ARRAY_OF construction attaches every packet child to parent
+from scapy.cbor.cborfields import CBORF_ARRAY_OF
+
+class PR43ArrayParent(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("children", [], PR43OwnedChild)
+
+children = [PR43OwnedChild(value=1), PR43OwnedChild(value=2)]
+parent = PR43ArrayParent(children=children)
+assert parent.children == children
+for child in parent.children:
+    assert child.parent is parent
+    assert child.underlayer is None
+
+assert bytes(parent) == b"\x82\x01\x02"
+
+= CBORF_ARRAY_OF dissection attaches every packet child to parent
+parent = PR43ArrayParent(b"\x82\x01\x02")
+assert [child.value for child in parent.children] == [1, 2]
+for child in parent.children:
+    assert child.parent is parent
+    assert child.underlayer is None
+
+assert bytes(parent) == b"\x82\x01\x02"
+
+= CBORF_SEQUENCE_OF construction attaches every packet child to parent
+from scapy.cbor.cborfields import CBORF_SEQUENCE_OF
+
+class PR43SequenceParent(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF("children", [], PR43OwnedChild)
+
+children = [PR43OwnedChild(value=1), PR43OwnedChild(value=2)]
+parent = PR43SequenceParent(children=children)
+assert parent.children == children
+for child in parent.children:
+    assert child.parent is parent
+    assert child.underlayer is None
+
+assert bytes(parent) == b"\x01\x02"
+
+= CBORF_SEQUENCE_OF dissection attaches every packet child to parent
+parent = PR43SequenceParent(b"\x01\x02")
+assert [child.value for child in parent.children] == [1, 2]
+for child in parent.children:
+    assert child.parent is parent
+    assert child.underlayer is None
+
+assert bytes(parent) == b"\x01\x02"
+
++ PR43 review - deterministic fixed-schema maps
+
+= CBORF_MAP emits deterministic encoded-key order independent of declaration order
+from scapy.cbor.cborcodec import cbor_find_non_deterministic
+from scapy.cbor.cborfields import CBORF_MAP
+
+class PR43ReverseDeclaredMap(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("b", 1),
+        CBORF_UNSIGNED_INTEGER("a", 2),
+    )
+
+wire = bytes(PR43ReverseDeclaredMap())
+# RFC 8949 deterministic ordering sorts by the encoded key bytes, so "a"
+# precedes "b" even though the fields were declared in the opposite order.
+assert wire == b"\xa2\x61a\x02\x61b\x01"
+assert cbor_find_non_deterministic(wire) == []
+
+########### Scapy-native conversion pipeline #################
+
++ Field defaults and i2m / RawVal
+
+= Field defaults are normalized through any2i like native Scapy
+from scapy.cbor.cborfields import CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class DefaultNormPkt(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("value", "12")
+
+assert DefaultNormPkt().value == 12
+assert DefaultNormPkt(value="34").value == 34
+assert bytes(DefaultNormPkt()) == b"\x0c"
+
+= RawVal injects exact CBOR wire bytes through i2m
+from scapy.cbor.cborfields import CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+from scapy.fields import RawVal
+from scapy.cbor.cbor import CBOR_Encoding_Error
+
+class RawValPkt(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("value", 0)
+
+assert bytes(RawValPkt(value=RawVal(b"\x18\x64"))) == b"\x18\x64"
+
+try:
+    bytes(RawValPkt(value=RawVal(b"\x01\x02")))
+    assert False, "multi-item RawVal must be rejected"
+except CBOR_Encoding_Error:
+    pass
+
+= Byte-string internals remain encoded (bytes is not a wire bypass)
+from scapy.cbor.cborfields import CBORF_BYTE_STRING
+from scapy.cborpacket import CBOR_Packet
+
+class BstrPkt(CBOR_Packet):
+    CBOR_root = CBORF_BYTE_STRING("blob", b"ABC")
+
+assert BstrPkt().blob == b"ABC"
+assert bytes(BstrPkt()) == b"\x43" + b"ABC"
+
+= BundleEidField defaults and assignments are always EidStruct
+from scapy.contrib.bpv7 import BundleEidField, EidStruct, PrimaryBlock
+from scapy.cborpacket import CBOR_Packet
+
+class EidPkt(CBOR_Packet):
+    CBOR_root = BundleEidField("eid", "dtn:none")
+
+# Internal representation (getfieldval) is always EidStruct; attribute access
+# returns the human form via i2h(), matching native Scapy Field semantics.
+assert isinstance(EidPkt().getfieldval("eid"), EidStruct)
+assert EidPkt().eid == "dtn:none"
+assert isinstance(PrimaryBlock().getfieldval("source"), EidStruct)
+assert PrimaryBlock().source == "dtn:none"

@@ -71,7 +71,7 @@ class BlockTypeField(CBORF_UNSIGNED_INTEGER):
                     "Block type_code is None and cannot be inferred from BTSD"
                 )
             val = inferred
-        return CBORBuildResult(self.encode_value(val), 1)
+        return CBORBuildResult(self.i2m(pkt, val), 1)
 
 
 class CrcBytesField(CBORF_BYTE_STRING):
@@ -94,7 +94,7 @@ class CrcBytesField(CBORF_BYTE_STRING):
                         "CRC field present but CRC type is unsupported"
                     )
                 val = defn.encode(0)
-        return CBORBuildResult(self.encode_value(val), 1)
+        return CBORBuildResult(self.i2m(pkt, val), 1)
 
 
 class CrcTypeField(CBORF_UNSIGNED_ENUM):
@@ -369,13 +369,13 @@ class EidStruct:
             else:
                 parts = ssp_text.split(".")
                 if len(parts) == 2:
+                    # from_text() is local composition: reject invalid Null+service
+                    # (RFC 9758). Wire decode uses IpnSsp.from_wire() / from_cbor().
                     ssp = IpnSsp(
                         0,
                         _parse_ipn_ascii_uint(parts[0]),
                         _parse_ipn_ascii_uint(parts[1]),
                         wire_elements=2,
-                        # Text parse may receive invalid Null+service forms.
-                        allow_invalid_null=True,
                     )
                 elif len(parts) == 3:
                     ssp = IpnSsp(
@@ -383,7 +383,6 @@ class EidStruct:
                         _parse_ipn_ascii_uint(parts[1]),
                         _parse_ipn_ascii_uint(parts[2]),
                         wire_elements=3,
-                        allow_invalid_null=True,
                     )
                 else:
                     raise ValueError("IPN SSP must be 2 or 3 elements")
@@ -506,18 +505,15 @@ class BundleEidField(CBORF_field[EidStruct]):
     """Provide a human-friendly representation of a BP Endpoint ID (EID) as
     a single field.
     The EID is a two-item array of (scheme ID, scheme-specific part).
-    """
 
-    def __init__(self, name, default=None):
-        if isinstance(default, str):
-            default = EidStruct.from_text(default)
-        super(BundleEidField, self).__init__(name, default)
+    Internal representation is always :class:`EidStruct`.
+    """
 
     def i2h(self, _pkt, x):
         if x is None:
             return None
         if not isinstance(x, EidStruct):
-            raise ValueError("EID must be decoded into an EidStruct")
+            raise TypeError("EID internal value must be an EidStruct")
         return x.to_text()
 
     def h2i(self, _pkt, x):
@@ -525,26 +521,20 @@ class BundleEidField(CBORF_field[EidStruct]):
             return None
         if isinstance(x, EidStruct):
             return x
-        return EidStruct.from_text(x)
+        if isinstance(x, str):
+            return EidStruct.from_text(x)
+        raise TypeError("Cannot convert %r to an EidStruct" % (x,))
 
     def any2i(self, pkt, x):
-        if x is None:
-            return None
-        if isinstance(x, str):
-            return self.h2i(pkt, x)
-        if isinstance(x, EidStruct):
-            return x
-        return x
+        return self.h2i(pkt, x)
 
     def i2repr(self, pkt, x):
         return self.i2h(pkt, x)
 
     def encode_value(self, x):
-        if isinstance(x, str):
-            x = EidStruct.from_text(x)
-        if isinstance(x, EidStruct):
-            return CBORcodec_ARRAY.enc(x.to_cbor())
-        raise TypeError("Cannot encode EID value %r" % (x,))
+        if not isinstance(x, EidStruct):
+            raise TypeError("Cannot encode EID value %r" % (x,))
+        return CBORcodec_ARRAY.enc(x.to_cbor())
 
     def m2i(self, pkt, s):
         item, remain = CBORcodec_ARRAY.dec(s)
@@ -1117,14 +1107,16 @@ class BundleV7(CBOR_Packet):
         | int(PrimaryBlock.Flag.REQ_RECEPTION_REPORT)
     )
 
-    def _block_until_break(self, data: bytes):
-        if cbor_is_break(data):
+    def _block_until_break(self, lst, cur, remain):
+        if cbor_is_break(remain):
             return CBOR_NO_ITEM
         return CanonicalBlock
 
     CBOR_root = CBORF_ARRAY_INDEFINITE(
         CBORF_PACKET("primary", default=PrimaryBlock(), cls=PrimaryBlock),
-        CBORF_SEQUENCE_OF("blocks", default=[], cls_cb=_block_until_break),
+        CBORF_SEQUENCE_OF(
+            "blocks", default=[], next_cls_cb=_block_until_break
+        ),
     )
 
     def mysummary(self):
@@ -1237,11 +1229,17 @@ class BundleV7(CBOR_Packet):
         type_counts: dict[int, int] = {}
         for index, blk in enumerate(self.blocks):
             path = "blocks[%d]" % index
-            if isinstance(blk, CanonicalBlock):
-                issues.extend(blk.validate(path))
-            type_code = None
-            if isinstance(blk, CanonicalBlock):
-                type_code = blk._effective_type_code()
+            if not isinstance(blk, CanonicalBlock):
+                issues.append(
+                    ValidationIssue(
+                        "invalid-canonical-block",
+                        path,
+                        "Bundle blocks entry is not a CanonicalBlock",
+                    )
+                )
+                continue
+            issues.extend(blk.validate(path))
+            type_code = blk._effective_type_code()
             if type_code is not None:
                 type_counts[type_code] = type_counts.get(type_code, 0) + 1
             block_num = blk.getfieldval("block_num")

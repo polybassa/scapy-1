@@ -1686,11 +1686,13 @@ for source in ("ipn:0.0", "ipn:0.0.0"):
     assert "anonymous-source-status-flags" in codes, (source, codes)
 
 = IPN node zero with a nonzero service is still the null endpoint
-from scapy.contrib.bpv7 import BundleV7, PrimaryBlock
+from scapy.contrib.bpv7 import BundleV7, PrimaryBlock, EidStruct
 
-# RFC 9758 requires every IPN URI with allocator 0 and node 0 to be treated as
-# the Null Endpoint, even when the service number is nonzero.
-bundle = BundleV7(primary=PrimaryBlock(source="ipn:0.9"))
+# RFC 9758: received allocator 0 + node 0 + nonzero service is Null.
+# Textual/local composition of that form is rejected separately.
+eid = EidStruct.from_cbor([2, [0, 9]])
+assert eid.is_null_endpoint()
+bundle = BundleV7(primary=PrimaryBlock(source=eid))
 codes = [issue.code for issue in bundle.validate(primary_integrity_protected=True)]
 assert "anonymous-source-must-not-fragment" in codes, codes
 
@@ -1982,3 +1984,65 @@ else:
 received = IpnSsp.from_wire([0, 0, 7])
 assert received.is_null_endpoint()
 assert received.service == 7
+
+########### Merged from pr43_bpv7_review_findings.uts #################
+
++ PR43 review - RFC 9758 invalid Null-IPN composition
+
+= Invalid Null-IPN plus nonzero service cannot be composed from text
+from scapy.contrib.bpv7 import EidStruct
+
+for text in ("ipn:0.9", "ipn:0.0.9"):
+    try:
+        EidStruct.from_text(text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "RFC 9758 invalid Null-IPN service form was locally composed: %s"
+            % text
+        )
+
+= Invalid Null-IPN plus nonzero service received from wire is still decoded as Null
+from scapy.contrib.bpv7 import EidStruct
+
+for parts in ([0, 9], [0, 0, 9]):
+    eid = EidStruct.from_cbor([2, parts])
+    assert eid.is_null_endpoint()
+    assert eid.to_cbor() == [2, parts]
+
+= PrimaryBlock rejects locally composed invalid Null-IPN source text
+from scapy.contrib.bpv7 import PrimaryBlock
+
+for source in ("ipn:0.9", "ipn:0.0.9"):
+    try:
+        PrimaryBlock(source=source)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "PrimaryBlock accepted an RFC 9758 invalid composed source: %s"
+            % source
+        )
+
++ PR43 review - BundleV7 validation robustness
+
+= BundleV7 validate reports a non-CanonicalBlock entry instead of crashing
+from scapy.contrib.bpv7 import BundleV7, PrimaryBlock
+from scapy.packet import Raw
+
+bundle = BundleV7(
+    primary=PrimaryBlock(),
+    blocks=[Raw(load=b"not-a-canonical-block")],
+)
+try:
+    issues = bundle.validate(primary_integrity_protected=True)
+except Exception as exc:
+    raise AssertionError(
+        "BundleV7.validate() crashed on a malformed blocks entry: %r" % exc
+    )
+
+assert any(
+    issue.code == "invalid-canonical-block" and issue.path == "blocks[0]"
+    for issue in issues
+), [(issue.code, issue.path, issue.message) for issue in issues]

@@ -1022,7 +1022,20 @@ class CBORcodec_SIMPLE_AND_FLOAT(CBORcodec_Object[Union[int, float, bool, None]]
         elif val is None:
             return chb(0xf6)  # null
         elif isinstance(val, float):
-            # Encode as double precision (8 bytes)
+            # Preferred serialization (RFC 8949): shortest float that
+            # preserves the numeric value. Received non-preferred widths are
+            # preserved via packet raw caches, not by this encoder.
+            ai = _cbor_preferred_float_ai(val)
+            if ai == 25:
+                half = _cbor_float_to_half_bits(val)
+                if half is not None:
+                    return chb(0xf9) + struct.pack(">H", half)
+                ai = 26
+            if ai == 26:
+                try:
+                    return chb(0xfa) + struct.pack(">f", val)
+                except (OverflowError, struct.error):
+                    pass
             return chb(0xfb) + struct.pack(">d", val)
         elif isinstance(val, int) and 0 <= val <= 23:
             # Simple value 0-23

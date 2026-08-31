@@ -184,10 +184,7 @@ def _cbor_attach_parent(parent, child):
 def _cbor_packet_from_bytes(cls, data, parent):
     # type: (Type[Packet], bytes, Optional[Packet]) -> Packet
     """Instantiate a nested packet with Scapy field-parent ownership."""
-    try:
-        return cls(data, _parent=parent)  # type: ignore
-    except TypeError:
-        return cls(data)  # type: ignore
+    return cls(data, _parent=parent)  # type: ignore
 
 
 def cbor_object_to_python(obj):
@@ -684,19 +681,10 @@ class CBORF_BYTE_STRING(CBORF_field[bytes]):
             if length is CBOR_INDEFINITE:
                 raise CBOR_Decoding_Error(
                     "Indefinite-length byte string not allowed here")
-        before = len(s)
         obj, remain = CBORcodec_BYTE_STRING.dec(s)
         if not isinstance(obj, CBOR_BYTE_STRING):
             raise CBOR_Type_Mismatch(
                 "Expected byte string, got %r" % obj)
-        # Record exact content span for CRC verification over received bytes.
-        if self.definite_only and pkt is not None:
-            content = obj.val
-            pkt._crc_content_span = (  # type: ignore[attr-defined]
-                len(content),
-                len(remain),
-                before - len(remain) - len(content),  # head length
-            )
         return obj.val, remain
 
     def encode_value(self, x):
@@ -730,10 +718,11 @@ class CBORF_BYTE_STRING_PACKET(CBORF_field[Packet]):
         # type: (...) -> None
         if pkt_cls is None and cls_cb is None:
             raise ValueError('Must give one of pkt_cls or cls_cb')
-        super(CBORF_BYTE_STRING_PACKET, self).__init__(name, default)
+        # any2i() needs these during default normalization in super().__init__.
         self.pkt_cls = pkt_cls
         self.cls_cb = cls_cb
         self.definite_only = definite_only
+        super(CBORF_BYTE_STRING_PACKET, self).__init__(name, default)
 
     def _resolve_packet_class(self, pkt, data):
         # type: (CBOR_Packet, bytes) -> Tuple[Optional[Type[Packet]], bool]
@@ -768,7 +757,6 @@ class CBORF_BYTE_STRING_PACKET(CBORF_field[Packet]):
         if isinstance(x, (bytes, bytearray)):
             return self._decode_packet_value(pkt, bytes(x))
         return _cbor_attach_parent(pkt, x)
-        return cast(Packet, x)
 
     def m2i(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> Tuple[Packet, bytes]
@@ -1397,34 +1385,58 @@ class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
                  item_field=None,  # type: Optional[Union[Type[CBORF_field[Any]], CBORF_field[Any]]]  # noqa: E501
                  ):
         # type: (...) -> None
-        if pkt_cls is not None:
-            cls = pkt_cls  # type: ignore
-        if item_field is not None:
-            cls = item_field  # type: ignore
-        if next_cls_cb is not None:
-            cls_cb = next_cls_cb
+        # PacketListField semantics: next_cls_cb takes precedence over pkt_cls.
+        # Wrap legacy cls_cb(pkt, remain) once at construction — never probe
+        # signatures with TypeError at decode time.
         self.next_cls_cb = None  # type: Optional[Callable[..., Optional[Type[Packet]]]]
-        if isinstance(cls, type) and issubclass(cls, CBORF_field) or \
-                isinstance(cls, CBORF_field):
-            if isinstance(cls, type):
-                self.item_field = cls("_item", None)  # type: ignore
-            else:
-                self.item_field = cls
-            self.cls = None
-            self.holds_packets = 0
-        elif hasattr(cls, "CBOR_root") or callable(cls):
-            self.cls = cast("Type[CBOR_Packet]", cls)
-            self.item_field = None
+        self.cls = None
+        self.item_field = None
+        self.holds_packets = 0
+
+        if next_cls_cb is not None and cls_cb is not None:
+            raise ValueError("Pass only one of next_cls_cb or cls_cb")
+        if next_cls_cb is not None:
+            self.next_cls_cb = next_cls_cb
             self.holds_packets = 1
         elif cls_cb is not None:
-            self.cls = None
-            self.item_field = None
+            legacy_cb = cls_cb
+
+            def _legacy_next_cls(pkt, lst, cur, remain, _cb=legacy_cb):
+                # type: (Packet, List[Any], Optional[Packet], bytes) -> Optional[Type[Packet]]  # noqa: E501
+                return _cb(pkt, remain)
+
+            self.next_cls_cb = _legacy_next_cls
             self.holds_packets = 1
-            self.next_cls_cb = cls_cb
         else:
-            raise ValueError(
-                "Provide pkt_cls/cls, item_field, or next_cls_cb/cls_cb"
+            selectors = []
+            if cls is not None:
+                selectors.append("cls")
+            if pkt_cls is not None:
+                selectors.append("pkt_cls")
+            if item_field is not None:
+                selectors.append("item_field")
+            if len(selectors) > 1:
+                raise ValueError(
+                    "Conflicting SEQUENCE_OF selectors: %s"
+                    % ", ".join(selectors)
+                )
+            chosen = item_field if item_field is not None else (
+                pkt_cls if pkt_cls is not None else cls
             )
+            if isinstance(chosen, type) and issubclass(chosen, CBORF_field) or \
+                    isinstance(chosen, CBORF_field):
+                if isinstance(chosen, type):
+                    self.item_field = chosen("_item", None)  # type: ignore
+                else:
+                    self.item_field = chosen
+                self.holds_packets = 0
+            elif hasattr(chosen, "CBOR_root") or callable(chosen):
+                self.cls = cast("Type[CBOR_Packet]", chosen)
+                self.holds_packets = 1
+            else:
+                raise ValueError(
+                    "Provide pkt_cls/cls, item_field, or next_cls_cb/cls_cb"
+                )
         self.cls_cb = self.next_cls_cb
         super(CBORF_SEQUENCE_OF, self).__init__(name, default)
 
@@ -1452,15 +1464,12 @@ class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
             if self.holds_packets:
                 pkt_cls = self.cls
                 if self.next_cls_cb is not None:
-                    try:
-                        pkt_cls = self.next_cls_cb(
-                            pkt,
-                            values,
-                            values[-1] if values else None,
-                            remaining,
-                        )
-                    except TypeError:
-                        pkt_cls = self.next_cls_cb(pkt, remaining)
+                    pkt_cls = self.next_cls_cb(
+                        pkt,
+                        values,
+                        values[-1] if values else None,
+                        remaining,
+                    )
                     if pkt_cls is CBOR_NO_ITEM or pkt_cls is None:
                         break
                 item_bytes, next_remaining = cbor_item_span(remaining)
@@ -1573,10 +1582,21 @@ class CBORF_ARRAY_OF(CBORF_field[List[Any]]):
                  item_field=None,  # type: Optional[Union[Type[CBORF_field[Any]], CBORF_field[Any]]]  # noqa: E501
                  ):
         # type: (...) -> None
+        selectors = []
+        if cls is not None:
+            selectors.append("cls")
         if pkt_cls is not None:
-            cls = pkt_cls  # type: ignore
+            selectors.append("pkt_cls")
+        if item_field is not None:
+            selectors.append("item_field")
+        if len(selectors) > 1:
+            raise ValueError(
+                "Conflicting ARRAY_OF selectors: %s" % ", ".join(selectors)
+            )
         if item_field is not None:
             cls = item_field  # type: ignore
+        elif pkt_cls is not None:
+            cls = pkt_cls  # type: ignore
         if cls is None:
             raise ValueError("Provide pkt_cls/cls or item_field")
         if isinstance(cls, type) and issubclass(cls, CBORF_field) or \
@@ -1689,6 +1709,10 @@ class CBORF_MAP(CBORF_element):
     On encode, pairs are emitted in RFC 8949 core-deterministic order
     (sorted by encoded key bytes), independent of declaration order.
 
+    Unknown received key/value pairs are retained as encoded byte spans on
+    the packet (``_cbor_unknown_map_pairs``) and re-emitted on rebuild so a
+    mutation of a known field cannot silently drop extensions.
+
     Example::
 
         class MyCBOR(CBOR_Packet):
@@ -1747,6 +1771,9 @@ class CBORF_MAP(CBORF_element):
                     % fld.name
                 )
             pairs.append((self._encoded_keys[fld.name], value_result.data))
+        unknown = getattr(pkt, "_cbor_unknown_map_pairs", None) or []
+        for key_bytes, value_bytes in unknown:
+            pairs.append((key_bytes, value_bytes))
         pairs.sort(key=lambda item: item[0])
         parts = []  # type: List[bytes]
         for key_bytes, value_bytes in pairs:
@@ -1769,6 +1796,7 @@ class CBORF_MAP(CBORF_element):
         seen_keys = set()  # type: set[str]
         seen_fields = set()  # type: set[str]
         pair_values = {}  # type: Dict[str, bytes]
+        unknown_pairs = []  # type: List[Tuple[bytes, bytes]]
 
         def _map_text_key(key_obj):
             # type: (Any) -> str
@@ -1788,11 +1816,19 @@ class CBORF_MAP(CBORF_element):
         def _collect_pair():
             # type: () -> None
             nonlocal remaining
-            key_obj, remaining = CBORcodec_Object.decode_cbor_item(remaining)
+            # Keep encoded key bytes so unknown extensions round-trip exactly.
+            key_bytes, after_key = cbor_item_span(remaining)
+            key_obj, key_rest = CBORcodec_Object.decode_cbor_item(key_bytes)
+            if key_rest:
+                raise CBOR_Decoding_Error(
+                    "CBOR map key did not decode to a single item"
+                )
             key = _map_text_key(key_obj)
-            val_bytes, remaining = cbor_item_span(remaining)
+            val_bytes, remaining = cbor_item_span(after_key)
             if key in field_map:
                 pair_values[key] = val_bytes
+            else:
+                unknown_pairs.append((key_bytes, val_bytes))
 
         if count is CBOR_INDEFINITE:
             while True:
@@ -1848,6 +1884,7 @@ class CBORF_MAP(CBORF_element):
                 raise CBOR_Decoding_Error(
                     "Required map field %r is missing" % fld.name
                 )
+        pkt._cbor_unknown_map_pairs = unknown_pairs  # type: ignore[attr-defined]
         return CBORParseResult(remaining=remaining, items=1)
 
     def _mark_map_field_absent(self, pkt, fld):

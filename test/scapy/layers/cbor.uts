@@ -143,9 +143,13 @@ isinstance(obj, CBOR_UNDEFINED) and remainder == b''
 
 + CBOR Float
 
-= Encode double precision float
+= Encode preferred (shortest) float for exact half-precision values
 obj = CBOR_FLOAT(1.5)
-bytes(obj) == b'\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00'
+bytes(obj) == b'\xf9\x3e\x00'
+
+= Encode double precision when shorter widths cannot preserve the value
+obj = CBOR_FLOAT(1.0e300)
+bytes(obj) == b'\xfb\x7e\x37\xe4\x3c\x88\x00\x75\x9c'
 
 = Decode double precision float
 obj, remainder = CBOR_Codecs.CBOR.dec(b'\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00')
@@ -2393,3 +2397,194 @@ assert isinstance(EidPkt().getfieldval("eid"), EidStruct)
 assert EidPkt().eid == "dtn:none"
 assert isinstance(PrimaryBlock().getfieldval("source"), EidStruct)
 assert PrimaryBlock().source == "dtn:none"
+
+########### Merged from pr43_latest_review_cbor_findings.uts #################
+
++ PR43 latest review - CBORF_BYTE_STRING_PACKET default normalization
+
+= CBORF_BYTE_STRING_PACKET normalizes byte defaults after packet-class state is initialized
+from scapy.cbor.cborfields import CBORF_BYTE_STRING_PACKET
+from scapy.cborpacket import CBOR_Packet
+from scapy.packet import Raw
+
+class PR43ByteStringDefaultParent(CBOR_Packet):
+    CBOR_root = CBORF_BYTE_STRING_PACKET(
+        "child",
+        b"abc",
+        pkt_cls=Raw,
+    )
+
+pkt = PR43ByteStringDefaultParent()
+assert isinstance(pkt.child, Raw)
+assert pkt.child.load == b"abc"
+assert pkt.child.parent is pkt
+assert bytes(pkt) == b"\x43abc"
+
+
++ PR43 latest review - PacketListField-style next_cls_cb semantics
+
+= CBORF_SEQUENCE_OF next_cls_cb takes precedence over pkt_cls
+from scapy.cbor.cborfields import CBORF_SEQUENCE_OF, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43FixedSequenceChild(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("value", 0)
+
+class PR43DynamicSequenceChild(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("value", 0)
+
+PR43NextClsCalls = []
+def pr43_choose_dynamic_child(pkt, lst, cur, remain):
+    PR43NextClsCalls.append(len(lst))
+    return PR43DynamicSequenceChild
+
+class PR43DynamicSequenceParent(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF(
+        "children",
+        [],
+        pkt_cls=PR43FixedSequenceChild,
+        next_cls_cb=pr43_choose_dynamic_child,
+    )
+
+pkt = PR43DynamicSequenceParent(b"\x01")
+assert PR43NextClsCalls == [0]
+assert len(pkt.children) == 1
+assert isinstance(pkt.children[0], PR43DynamicSequenceChild)
+assert not isinstance(pkt.children[0], PR43FixedSequenceChild)
+assert pkt.children[0].parent is pkt
+
+
++ PR43 latest review - TypeError must not be used for callback signature probing
+
+= CBORF_SEQUENCE_OF does not retry next_cls_cb when the callback itself raises TypeError
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import CBORF_SEQUENCE_OF
+from scapy.cborpacket import CBOR_Packet
+
+PR43BrokenNextClsCalls = []
+def pr43_broken_next_cls(*args):
+    PR43BrokenNextClsCalls.append(len(args))
+    raise TypeError("intentional next_cls_cb failure")
+
+class PR43BrokenCallbackParent(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF(
+        "children",
+        [],
+        next_cls_cb=pr43_broken_next_cls,
+    )
+
+try:
+    PR43BrokenCallbackParent(b"\x01")
+except TypeError as exc:
+    assert str(exc) == "intentional next_cls_cb failure"
+except CBOR_Decoding_Error as exc:
+    raise AssertionError(
+        "next_cls_cb TypeError was unexpectedly translated: %r" % (exc,)
+    )
+else:
+    raise AssertionError("next_cls_cb TypeError was swallowed")
+
+assert PR43BrokenNextClsCalls == [4], PR43BrokenNextClsCalls
+
+
+= Nested packet construction is not retried when the child constructor raises TypeError
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import CBORF_PACKET, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43TypeErrorChild(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("value", 0)
+    init_calls = []
+    def __init__(self, *args, **kwargs):
+        type(self).init_calls.append("_parent" in kwargs)
+        raise TypeError("intentional nested packet failure")
+
+class PR43TypeErrorParent(CBOR_Packet):
+    CBOR_root = CBORF_PACKET("child", None, PR43TypeErrorChild)
+
+PR43TypeErrorChild.init_calls[:] = []
+try:
+    PR43TypeErrorParent(b"\x01")
+except CBOR_Decoding_Error as exc:
+    assert "intentional nested packet failure" in str(exc)
+else:
+    raise AssertionError("nested packet TypeError was unexpectedly swallowed")
+
+assert PR43TypeErrorChild.init_calls == [True], PR43TypeErrorChild.init_calls
+
+
++ PR43 latest review - fixed-map unknown member preservation
+
+= CBORF_MAP preserves an unknown member when a known field is mutated
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43ExtensibleMap(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("a", 0),
+    )
+
+# {"x": 1, "a": 7}
+wire = b"\xa2\x61x\x01\x61a\x07"
+pkt = PR43ExtensibleMap(wire)
+assert pkt.a == 7
+# Exact received bytes are retained while the packet is untouched.
+assert bytes(pkt) == wire
+
+# Mutation invalidates Scapy's raw packet cache.  Rebuilding must not silently
+# discard the unknown extension member.  Fixed maps build deterministically,
+# therefore "a" sorts before "x".
+pkt.a = 8
+assert bytes(pkt) == b"\xa2\x61a\x08\x61x\x01"
+
+
+= CBORF_MAP preserves an unknown nested value after a known-field mutation
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43ExtensibleNestedMap(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("a", 0),
+    )
+
+# Indefinite input map: {"x": [1, {"k": 2}], "a": 7}
+# The unknown value is itself indefinite/nested, exercising preservation of
+# the complete encoded value rather than only simple Python-native values.
+wire = (
+    b"\xbf"
+    b"\x61x"
+    b"\x9f\x01\xbf\x61k\x02\xff\xff"
+    b"\x61a\x07"
+    b"\xff"
+)
+pkt = PR43ExtensibleNestedMap(wire)
+assert pkt.a == 7
+pkt.a = 8
+
+# CBORF_MAP's normal rebuild is definite and deterministic, while the unknown
+# member value should survive byte-for-byte.
+assert bytes(pkt) == (
+    b"\xa2"
+    b"\x61a\x08"
+    b"\x61x\x9f\x01\xbf\x61k\x02\xff\xff"
+)
+
++ PR43 review - CBOR_Packet.copy re-parents embedded children
+
+= Copied CBOR packet children point at the clone, not the original
+from scapy.cbor.cborfields import CBORF_PACKET, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class CopyChild(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("n", 0)
+
+class CopyParent(CBOR_Packet):
+    CBOR_root = CBORF_PACKET("child", None, cls=CopyChild)
+
+a = CopyParent(child=CopyChild(n=1))
+assert a.child.parent is a
+b = a.copy()
+assert b.child is not a.child
+assert b.child.parent is b, b.child.parent
+assert a.child.parent is a
+assert b.child.n == 1

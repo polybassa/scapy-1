@@ -121,13 +121,24 @@ class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
         for f in self.fields_desc:
             if getattr(f, "ismutable", False) and f.name in self.fields:
                 self.fields[f.name] = f.do_copy(self.fields[f.name])
+            # Packet-valued defaults are copied in Packet.__init__ with
+            # parent=None; re-run any2i so this instance becomes the parent.
+            if f.holds_packets and f.name in self.fields:
+                self.fields[f.name] = f.any2i(self, self.fields[f.name])
 
     def getfield_and_val(self, attr):
         # type: (str) -> Tuple[Any, Any]
         if attr not in self.fields and attr in self.default_fields:
             fld = self.get_field(attr)
-            if fld is not None and getattr(fld, "ismutable", False):
-                self.fields[attr] = fld.do_copy(self.default_fields[attr])
+            if fld is not None and (
+                getattr(fld, "ismutable", False) or fld.holds_packets
+            ):
+                val = fld.do_copy(self.default_fields[attr])
+                # Re-run any2i so packet-valued defaults attach this instance
+                # as parent (defaults were normalized with pkt=None).
+                if fld.holds_packets:
+                    val = fld.any2i(self, val)
+                self.fields[attr] = val
                 return fld, self.fields[attr]
         return super(CBOR_Packet, self).getfield_and_val(attr)
 
@@ -135,8 +146,13 @@ class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
         # type: (str) -> Any
         if attr not in self.fields and attr in self.default_fields:
             fld = self.get_field(attr)
-            if fld is not None and getattr(fld, "ismutable", False):
-                self.fields[attr] = fld.do_copy(self.default_fields[attr])
+            if fld is not None and (
+                getattr(fld, "ismutable", False) or fld.holds_packets
+            ):
+                val = fld.do_copy(self.default_fields[attr])
+                if fld.holds_packets:
+                    val = fld.any2i(self, val)
+                self.fields[attr] = val
                 return self.fields[attr]
         return super(CBOR_Packet, self).getfieldval(attr)
 
@@ -146,8 +162,57 @@ class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
             return self.raw_packet_cache
         return self.CBOR_root.build(self)
 
+    def do_build(self):
+        # type: () -> bytes
+        # Packet.do_build() expands via __iter__ when explicit=0 (setfieldval).
+        # That would drop CBOR-only packet state such as unknown map pairs.
+        pkt = self.self_build()
+        for t in self.post_transforms:
+            pkt = t(pkt)
+        pay = self.do_build_payload()
+        if self.raw_packet_cache is None:
+            return self.post_build(pkt, pay)
+        return pkt + pay
+
     def do_dissect(self, x):
         # type: (bytes) -> bytes
         result = self.CBOR_root.dissect_result(self, x)
         _finalize_cbor_raw_cache(self, x, result.remaining, result.items)
         return result.remaining
+
+    def copy(self):
+        # type: () -> Packet
+        """Deep-copy this packet and re-parent embedded CBOR children.
+
+        Generic ``Packet.copy()`` copies packet-valued fields but leaves each
+        child's ``.parent`` pointing at the original owner. CBOR fields rely on
+        ``parent`` for ownership, so reattach after the clone is built.
+        """
+        clone = super(CBOR_Packet, self).copy()
+        for attr in (
+            "_cbor_raw_cache_items",
+            "_cbor_unknown_map_pairs",
+            "_crc_content_span",
+        ):
+            if hasattr(self, attr):
+                val = getattr(self, attr)
+                if attr == "_cbor_unknown_map_pairs" and isinstance(val, dict):
+                    setattr(
+                        clone,
+                        attr,
+                        {k: list(pairs) for k, pairs in val.items()},
+                    )
+                else:
+                    setattr(clone, attr, val)
+        from scapy.cbor.cborfields import _cbor_attach_parent
+        for f in clone.fields_desc:
+            if not f.holds_packets or f.name not in clone.fields:
+                continue
+            fval = clone.fields[f.name]
+            if isinstance(fval, Packet):
+                _cbor_attach_parent(clone, fval)
+            elif isinstance(fval, list):
+                for item in fval:
+                    if isinstance(item, Packet):
+                        _cbor_attach_parent(clone, item)
+        return clone

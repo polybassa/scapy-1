@@ -2046,3 +2046,137 @@ assert any(
     issue.code == "invalid-canonical-block" and issue.path == "blocks[0]"
     for issue in issues
 ), [(issue.code, issue.path, issue.message) for issue in issues]
+
+########### Merged from pr43_latest_review_bpv7_findings.uts #################
+
++ PR43 latest review - RFC 9758 Null endpoint semantic identity
+
+= Received invalid Null-IPN service forms have canonical Null semantic identity
+from scapy.contrib.bpv7 import EidStruct
+
+canonical_two = EidStruct.from_text("ipn:0.0")
+canonical_three = EidStruct.from_text("ipn:0.0.0")
+received_two = EidStruct.from_cbor([2, [0, 9]])
+received_three = EidStruct.from_cbor([2, [0, 0, 9]])
+
+for received in (received_two, received_three):
+    assert received.is_null_endpoint()
+    assert received.same_endpoint(canonical_two)
+    assert canonical_two.same_endpoint(received)
+    assert received.same_endpoint(canonical_three)
+    assert canonical_three.same_endpoint(received)
+    assert received.semantic_key() == canonical_two.semantic_key()
+    assert received.semantic_key() == canonical_three.semantic_key()
+
+
+# Preserve the received wire representation even though semantic identity is
+# normalized to the Null endpoint.
+assert received_two.to_cbor() == [2, [0, 9]]
+assert received_three.to_cbor() == [2, [0, 0, 9]]
+
+
+= dtn:none and both canonical IPN Null forms identify the same BPv7 endpoint
+from scapy.contrib.bpv7 import EidStruct
+
+dtn_null = EidStruct.from_text("dtn:none")
+ipn_null_two = EidStruct.from_text("ipn:0.0")
+ipn_null_three = EidStruct.from_text("ipn:0.0.0")
+
+for ipn_null in (ipn_null_two, ipn_null_three):
+    assert dtn_null.is_null_endpoint()
+    assert ipn_null.is_null_endpoint()
+    assert dtn_null.same_endpoint(ipn_null)
+    assert ipn_null.same_endpoint(dtn_null)
+    assert dtn_null.semantic_key() == ipn_null.semantic_key()
+
+
+# The two textual/wire IPN forms remain distinguishable for rendering even
+# though they denote the same endpoint.
+assert ipn_null_two.to_text() == "ipn:0.0"
+assert ipn_null_three.to_text() == "ipn:0.0.0"
+
++ PR43 review - DTN EID syntax and Node-ID validation
+
+= Local DTN composition rejects syntactically invalid URIs
+from scapy.contrib.bpv7 import EidStruct
+
+for text in ("dtn:garbage", "dtn://nodemux", "dtn:///svc"):
+    try:
+        EidStruct.from_text(text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid DTN text was accepted: %s" % text)
+
+= Hierarchical DTN forms parse; only empty demux is a Node ID
+from scapy.contrib.bpv7 import EidStruct
+
+node = EidStruct.from_text("dtn://node/")
+svc = EidStruct.from_text("dtn://node/svc")
+assert node.is_valid() and node.is_node_id()
+assert svc.is_valid() and not svc.is_node_id()
+assert not EidStruct.from_text("dtn:none").is_node_id()
+
+= IPN EIDs with nonzero service remain Node IDs under RFC 9758
+from scapy.contrib.bpv7 import EidStruct
+
+eid = EidStruct.from_text("ipn:1.2.3")
+assert eid.is_valid() and eid.is_node_id()
+
+= Primary source with a non-empty DTN demux is reported by validate()
+from scapy.contrib.bpv7 import PrimaryBlock
+
+codes = {i.code for i in PrimaryBlock(source="dtn://src/svc").validate()}
+assert "source-not-node-id" in codes, codes
+
+= PreviousNodeBlock.validate requires a Node ID
+from scapy.contrib.bpv7 import PreviousNodeBlock
+
+bad = PreviousNodeBlock(node="dtn://n/s")
+good = PreviousNodeBlock(node="dtn://n/")
+assert "previous-node-not-node-id" in {i.code for i in bad.validate()}
+assert not {i.code for i in good.validate()}
+
+= Fresh CBOR BTSD without a received cache is scanned via bytes(btsd)
+from scapy.cbor.cborfields import CBORF_FLOAT
+from scapy.cborpacket import CBOR_Packet
+from scapy.contrib.bpv7 import CanonicalBlock
+
+class StickyNonPrefFloat(CBOR_Packet):
+    CBOR_root = CBORF_FLOAT("value", 1.5)
+    def self_build(self):
+        # Intentionally emit non-preferred binary64 for 1.5.
+        return b"\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00"
+
+btsd = StickyNonPrefFloat(value=1.5)
+btsd.raw_packet_cache = None
+btsd.raw_packet_cache_fields = None
+btsd.original = None
+block = CanonicalBlock(block_num=2, type_code=99, btsd=btsd)
+assert "non-deterministic-cbor" in {i.code for i in block.validate()}, [
+    (i.code, i.message) for i in block.validate()
+]
+
+= Freshly composed preferred float BTSD is not reported as non-deterministic
+from scapy.cbor.cborfields import CBORF_FLOAT
+from scapy.cborpacket import CBOR_Packet
+from scapy.contrib.bpv7 import CanonicalBlock
+
+class PrefFloatBtsd(CBOR_Packet):
+    CBOR_root = CBORF_FLOAT("value", 1.5)
+
+block = CanonicalBlock(block_num=2, type_code=99, btsd=PrefFloatBtsd(value=1.5))
+assert bytes(block.btsd) == b"\xf9\x3e\x00"
+assert "non-deterministic-cbor" not in {i.code for i in block.validate()}
+
+= Received non-preferred float BTSD remains detectable via its raw cache
+from scapy.cbor.cborfields import CBORF_FLOAT
+from scapy.cborpacket import CBOR_Packet
+from scapy.contrib.bpv7 import CanonicalBlock
+
+class FloatBtsd(CBOR_Packet):
+    CBOR_root = CBORF_FLOAT("value", 0.0)
+
+nonpref = FloatBtsd(b"\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00")
+block = CanonicalBlock(block_num=2, type_code=99, btsd=nonpref)
+assert "non-deterministic-cbor" in {i.code for i in block.validate()}

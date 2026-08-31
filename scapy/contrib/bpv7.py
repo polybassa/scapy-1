@@ -77,6 +77,20 @@ class BlockTypeField(CBORF_UNSIGNED_INTEGER):
 class CrcBytesField(CBORF_BYTE_STRING):
     """CRC content octets; ``None`` means compute automatically on build."""
 
+    def m2i(self, pkt, s):
+        # Record the exact received CRC content span on the owning block.
+        # Kept here (not on generic CBORF_BYTE_STRING) so other definite
+        # byte-string fields cannot overwrite BPv7 CRC bookkeeping.
+        before = len(s)
+        val, remain = super(CrcBytesField, self).m2i(pkt, s)
+        if pkt is not None:
+            pkt._crc_content_span = (  # type: ignore[attr-defined]
+                len(val),
+                len(remain),
+                before - len(remain) - len(val),
+            )
+        return val, remain
+
     def build_result(self, pkt):
         override = getattr(pkt, "_cbor_crc_override", _MISSING)
         if override is not _MISSING:
@@ -112,7 +126,7 @@ class DtnTimeField(CBORF_UNSIGNED_INTEGER):
     DTN epoch 2000-01-01T00:00:00Z.
 
     This value is automatically converted from a
-    :py:cls:`datetime.datetime` object and human friendly text in ISO8601
+    :py:class:`datetime.datetime` object and human friendly text in ISO8601
     format.
     The special human value "zero" represents the zero value time.
     """
@@ -196,7 +210,7 @@ class BundleTimestamp(CBOR_Packet):
     """A structured representation of an DTN Timestamp.
     The timestamp is a two-tuple of (time, sequence number)
     The creation time portion is automatically converted from a
-    :py:cls:`datetime.datetime` object and text.
+    :py:class:`datetime.datetime` object and text.
     """
 
     CBOR_root = CBORF_ARRAY(
@@ -230,6 +244,48 @@ def _parse_ipn_ascii_uint(text: str) -> int:
     if len(text) > 1 and text[0] == "0":
         raise ValueError("IPN components must not have leading zeros: %r" % text)
     return int(text, 10)
+
+
+def _dtn_is_vchar(text: str) -> bool:
+    """Return True when *text* is RFC 5234 ``*VCHAR`` (%x21-7E)."""
+    return all(0x21 <= ord(ch) <= 0x7E for ch in text)
+
+
+def _parse_dtn_hier_ssp(ssp_text: str) -> tuple[str, str]:
+    """Split a DTN hierarchical SSP into ``(node_name, demux)``.
+
+    RFC 9171: ``dtn-hier-part = "//" node-name "/" demux``.
+    """
+    if not ssp_text.startswith("//"):
+        raise ValueError(
+            "DTN EID must be 'dtn:none' or 'dtn://node-name/demux', "
+            "got 'dtn:%s'" % ssp_text
+        )
+    rest = ssp_text[2:]
+    slash = rest.find("/")
+    if slash < 0:
+        raise ValueError(
+            "DTN hierarchical EID requires '/' after node-name: 'dtn:%s'"
+            % ssp_text
+        )
+    node_name = rest[:slash]
+    demux = rest[slash + 1:]
+    if not node_name:
+        raise ValueError("DTN node-name must not be empty")
+    if not _dtn_is_vchar(node_name):
+        raise ValueError("DTN node-name must be printable VCHAR: %r" % node_name)
+    if not _dtn_is_vchar(demux):
+        raise ValueError("DTN demux must be *VCHAR: %r" % demux)
+    return node_name, demux
+
+
+def _parse_dtn_composed_ssp(ssp_text: str) -> Union[int, str]:
+    """Validate and normalize a locally composed ``dtn:`` SSP."""
+    for key, val in _DTN_WELL_KNOWN_SSP.items():
+        if ssp_text == val:
+            return key
+    _parse_dtn_hier_ssp(ssp_text)
+    return ssp_text
 
 
 @dataclass(frozen=True)
@@ -308,6 +364,10 @@ class IpnSsp:
         """Return True when *other* names the same logical IPN endpoint."""
         if not isinstance(other, IpnSsp):
             return False
+        # RFC 9758: any allocator=0/node=0 form identifies the Null endpoint,
+        # including received invalid non-zero service numbers.
+        if self.is_null_endpoint() and other.is_null_endpoint():
+            return True
         return (
             self.allocator == other.allocator
             and self.node == other.node
@@ -347,12 +407,9 @@ class EidStruct:
             raise ValueError(f"BP EID scheme {scheme_name} not understood")
         ssp = None
         if scheme == EidScheme.dtn:
-            for key, val in _DTN_WELL_KNOWN_SSP.items():
-                if ssp_text == val:
-                    ssp = key
-                    break
-            if ssp is None:
-                ssp = ssp_text
+            # Local composition rejects syntactically impossible DTN URIs
+            # (RFC 9171). Wire decode via from_cbor() remains permissive.
+            ssp = _parse_dtn_composed_ssp(ssp_text)
 
         elif scheme == EidScheme.ipn:
             # RFC 9758: "!" is only the full FQNN form ipn:!.<service>
@@ -418,31 +475,74 @@ class EidStruct:
             return IpnSsp.from_wire(list(self.ssp)).is_null_endpoint()
         return False
 
-    def same_endpoint(self, other: object) -> bool:
-        """Return True when *other* denotes the same logical endpoint."""
-        if not isinstance(other, EidStruct):
-            return False
-        if self.scheme != other.scheme:
-            return False
+    def is_valid(self) -> bool:
+        """Return True when this EID has a RFC-conformant structure.
+
+        Received wire forms may still dissect when ``False``; use this (and
+        :meth:`validate`) to report protocol issues. Local text composition
+        already rejects invalid DTN/IPN forms in :meth:`from_text`.
+        """
         if self.scheme == EidScheme.dtn:
-            return self.semantic_key() == other.semantic_key()
+            if isinstance(self.ssp, int):
+                return self.ssp in _DTN_WELL_KNOWN_SSP
+            if not isinstance(self.ssp, str):
+                return False
+            if self.ssp == "none":
+                return True
+            try:
+                _parse_dtn_hier_ssp(self.ssp)
+            except ValueError:
+                return False
+            return True
         if self.scheme == EidScheme.ipn:
             if isinstance(self.ssp, IpnSsp):
-                left = self.ssp
-            else:
-                left = IpnSsp.from_wire(list(self.ssp))
-            if isinstance(other.ssp, IpnSsp):
-                right = other.ssp
-            else:
-                right = IpnSsp.from_wire(list(other.ssp))
-            return left.same_endpoint(right)
+                return True
+            try:
+                IpnSsp.from_wire(list(self.ssp))
+            except (TypeError, ValueError):
+                return False
+            return True
         return False
+
+    def is_node_id(self) -> bool:
+        """Return True when this EID may serve as a BPv7 Node ID.
+
+        - Null endpoint is not a Node ID.
+        - ``dtn:`` Node IDs require an empty demux (``dtn://node-name/``).
+        - RFC 9758: any IPN EID may identify the node named by its FQNN
+          (do not require service number zero).
+        """
+        if self.is_null_endpoint() or not self.is_valid():
+            return False
+        if self.scheme == EidScheme.ipn:
+            return True
+        if self.scheme == EidScheme.dtn:
+            if isinstance(self.ssp, int):
+                return False
+            try:
+                _node_name, demux = _parse_dtn_hier_ssp(str(self.ssp))
+            except ValueError:
+                return False
+            return demux == ""
+        return False
+
+    def same_endpoint(self, other: object) -> bool:
+        """Return True when *other* denotes the same logical endpoint."""
+        return (
+            isinstance(other, EidStruct)
+            and self.semantic_key() == other.semantic_key()
+        )
 
     def semantic_key(self) -> tuple[Any, ...]:
         """Stable logical identity key independent of wire arity / text form."""
+        if self.is_null_endpoint():
+            return ("bpv7-null-endpoint",)
         if self.scheme == EidScheme.dtn:
-            if self.ssp == 0 or self.ssp == "none":
-                return ("dtn", "none")
+            if isinstance(self.ssp, int):
+                return ("dtn", self.ssp)
+            # Normalize well-known text SSP to the compressed code.
+            if self.ssp == "none":
+                return ("dtn", 0)
             return ("dtn", self.ssp)
         if self.scheme == EidScheme.ipn:
             if isinstance(self.ssp, IpnSsp):
@@ -873,6 +973,28 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
                     "Primary block version must be 7",
                 )
             )
+        for fname in ("destination", "source", "report_to"):
+            eid = self.getfieldval(fname)
+            if not isinstance(eid, EidStruct):
+                continue
+            if not eid.is_valid():
+                issues.append(
+                    ValidationIssue(
+                        "invalid-eid",
+                        "%s.%s" % (path, fname) if path else fname,
+                        "EID is not a valid BPv7 endpoint identifier",
+                    )
+                )
+            elif fname == "source" and (
+                not eid.is_null_endpoint() and not eid.is_node_id()
+            ):
+                issues.append(
+                    ValidationIssue(
+                        "source-not-node-id",
+                        "%s.source" % path if path else "source",
+                        "Source must be the Null endpoint or a Node ID",
+                    )
+                )
         if self.is_fragment():
             if self.getfieldval("fragment_offset") is None:
                 issues.append(
@@ -1004,6 +1126,13 @@ class CanonicalBlock(CBOR_Packet, AbstractBlock):
             btsd_raw = getattr(btsd, "raw_packet_cache", None)
             if not btsd_raw and hasattr(btsd, "original"):
                 btsd_raw = btsd.original
+            # Freshly composed CBOR BTSD may lack a received cache; build it
+            # so deterministic-CBOR checks still cover newly generated data.
+            if not btsd_raw:
+                try:
+                    btsd_raw = bytes(btsd)
+                except Exception:
+                    btsd_raw = None
             _append_non_deterministic_issues(
                 issues, btsd_raw, path + ".btsd"
             )
@@ -1051,6 +1180,36 @@ class PreviousNodeBlock(CBOR_Packet):
     """Block data content from Section 4.4.1 of RFC 9171."""
 
     CBOR_root = BundleEidField("node", default=None)
+
+    def validate(self, path: str = "") -> list[ValidationIssue]:
+        issues = []  # type: list[ValidationIssue]
+        node = self.getfieldval("node")
+        if node is None:
+            issues.append(
+                ValidationIssue(
+                    "missing-previous-node",
+                    path,
+                    "Previous Node block requires a node ID",
+                )
+            )
+        elif isinstance(node, EidStruct):
+            if not node.is_valid():
+                issues.append(
+                    ValidationIssue(
+                        "invalid-eid",
+                        path + ".node" if path else "node",
+                        "Previous Node EID is not a valid endpoint identifier",
+                    )
+                )
+            elif not node.is_node_id():
+                issues.append(
+                    ValidationIssue(
+                        "previous-node-not-node-id",
+                        path + ".node" if path else "node",
+                        "Previous Node must contain a Node ID",
+                    )
+                )
+        return issues
 
 
 @CanonicalBlock.register_type(7)

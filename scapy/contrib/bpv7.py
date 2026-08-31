@@ -99,7 +99,12 @@ class CrcBytesField(CBORF_BYTE_STRING):
 
 class CrcTypeField(CBORF_UNSIGNED_ENUM):
     """Human-friendly CRC type enumeration."""
-    pass
+
+    def any2i(self, pkt, x):
+        # Temporary: accept legacy "CRC32" as CRC-32C (RFC 9171).
+        if x in ("CRC32", b"CRC32"):
+            x = "CRC32C"
+        return super(CrcTypeField, self).any2i(pkt, x)
 
 
 class DtnTimeField(CBORF_UNSIGNED_INTEGER):
@@ -546,14 +551,17 @@ class BundleEidField(CBORF_field[EidStruct]):
         return EidStruct.from_cbor(cbor_object_to_python(item)), remain
 
 
-@enum.unique
 class CrcType(enum.IntEnum):
     """
     CRC type values defined in RFC 9171.
+
+    ``CRC32`` is a temporary alias of ``CRC32C`` (Castagnoli); prefer
+    ``CRC32C`` in new code. ``@enum.unique`` is omitted so the alias is valid.
     """
 
     NONE = 0
     CRC16 = 1
+    CRC32C = 2
     CRC32 = 2
 
 
@@ -572,7 +580,7 @@ class CrcInfo:
 
 _CRC_DEFN: dict[CrcType, CrcInfo] = {
     CrcType.CRC16: CrcInfo(cls=CRC_16_X25, width=2),
-    CrcType.CRC32: CrcInfo(cls=CRC_32C, width=4),
+    CrcType.CRC32C: CrcInfo(cls=CRC_32C, width=4),
 }
 
 

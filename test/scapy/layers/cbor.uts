@@ -283,6 +283,10 @@ isinstance(obj, CBOR_MAP) and remainder == b''
 obj, remainder = CBOR_Codecs.CBOR.safedec(b'\xff\xff\xff')
 isinstance(obj, CBOR_DECODING_ERROR)
 
+= Safe decode of a truncated nested array wraps only the outer error
+obj, remainder = CBOR_Codecs.CBOR.safedec(b'\x82\x01')
+isinstance(obj, CBOR_DECODING_ERROR) and remainder == b''
+
 = Decode with insufficient bytes for length
 try:
     obj, remainder = CBOR_Codecs.CBOR.dec(b'\x18')
@@ -296,8 +300,6 @@ try:
     False
 except:
     True
-
-########### Merged from cbor_pr5075_review.uts #################
 
 + CBORF_SEQUENCE_OF packet item cardinality
 
@@ -651,7 +653,7 @@ try:
 except CBOR_Codec_Decoding_Error:
     pass
 
-+ Merge-gate: CBORF_ANY map identity and mutability
++ CBORF_ANY map identity and mutability
 
 = Empty CBORF_ANY map survives sibling mutation as a map
 from scapy.cbor.cborfields import CBORF_ANY, CBORF_ARRAY, CBORF_UNSIGNED_INTEGER, CBOR_ABSENT
@@ -711,7 +713,7 @@ assert obj.val[1].val == "a"
 assert obj.val[True].val == "b"
 assert obj.val[1] is not obj.val[True]
 
-+ Merge-gate: optional major-type-7 lookahead and absence
++ optional major-type-7 lookahead and absence
 
 = Optional boolean leaves a required float for the next field
 from scapy.cbor.cborfields import (
@@ -867,7 +869,7 @@ assert pkt.endpoint is CBOR_ABSENT
 pkt.n = 1
 assert bytes(pkt) == b"\xa1\x61n\x01"
 
-+ Merge-gate: array item reservation
++ array item reservation
 
 = Nonterminal SEQUENCE_OF reserves items for a later required field
 from scapy.cbor.cborfields import (
@@ -923,8 +925,6 @@ class IndefSeqThenReq(CBOR_Packet):
 pkt = IndefSeqThenReq(b"\x9f\x01\x02\x03\xff")
 assert pkt.vals == [1, 2]
 assert pkt.tail == 3
-
-########### Merged from cbor_pr5075_followup.uts #################
 
 + Shared helpers
 
@@ -1615,8 +1615,6 @@ for wire in (b"\xf0", b"\xf8\x20", b"\xf8\xff"):
     pkt = RRMutableAnyRoot(wire)
     assert bytes(pkt) == wire
 
-########### Merged from cbor_pr5075_latest_review.uts #################
-
 + Finding 1 - CBOR sentinel identity survives Scapy copying
 
 = CBOR_ABSENT and CBOR_UNDEFINED_VALUE survive Packet.copy and deepcopy
@@ -2094,7 +2092,7 @@ assert pkt.value[True] == "b"
 assert len(pkt.value.cbor_pairs()) == 2
 assert bytes(pkt) == b"\xa2\x01\x61i\xf5\x61b"
 
-########### Latest review: deterministic CBOR and float edge cases #################
++ Deterministic CBOR and float edge cases
 
 + Deterministic CBOR: large binary64 and indefinite map key order
 
@@ -2125,7 +2123,7 @@ assert cbor_find_non_deterministic(bytes.fromhex("fb7ff8000000000001")) == []
 assert cbor_find_non_deterministic(bytes.fromhex("fb7ffc000000000000"))
 
 
-########### Scapy-native review: cache items and packet-field cardinality #################
++ Cache item counts and packet-field cardinality
 
 + Cached unframed packets preserve exact bytes and item counts
 
@@ -2228,22 +2226,20 @@ assert ok.items == 1
 assert ok.data == b"\x01"
 
 
-########### Merged from pr43_cbor_review_findings.uts #################
-
-+ PR43 review - Scapy-native packet ownership
++ Scapy-native packet ownership
 
 = CBORF_PACKET construction uses parent ownership, not protocol underlayer
 from scapy.cbor.cborfields import CBORF_PACKET, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43OwnedChild(CBOR_Packet):
+class OwnedChild(CBOR_Packet):
     CBOR_root = CBORF_UNSIGNED_INTEGER("value", 0)
 
-class PR43DirectParent(CBOR_Packet):
-    CBOR_root = CBORF_PACKET("child", None, PR43OwnedChild)
+class DirectParent(CBOR_Packet):
+    CBOR_root = CBORF_PACKET("child", None, OwnedChild)
 
-child = PR43OwnedChild(value=1)
-parent = PR43DirectParent(child=child)
+child = OwnedChild(value=1)
+parent = DirectParent(child=child)
 assert parent.child is child
 assert child.parent is parent
 assert child.underlayer is None
@@ -2251,16 +2247,16 @@ assert child.underlayer is None
 = CBORF_PACKET assignment preserves an existing protocol underlayer
 from scapy.packet import Raw
 
-child = PR43OwnedChild(value=1)
+child = OwnedChild(value=1)
 real_underlayer = Raw(load=b"lower")
 child.add_underlayer(real_underlayer)
-parent = PR43DirectParent(child=child)
+parent = DirectParent(child=child)
 assert child.parent is parent
 assert child.underlayer is real_underlayer
 
 = CBORF_PACKET dissection uses parent ownership, not protocol underlayer
-parent = PR43DirectParent(b"\x01")
-assert isinstance(parent.child, PR43OwnedChild)
+parent = DirectParent(b"\x01")
+assert isinstance(parent.child, OwnedChild)
 assert parent.child.parent is parent
 assert parent.child.underlayer is None
 assert bytes(parent) == b"\x01"
@@ -2269,32 +2265,32 @@ assert bytes(parent) == b"\x01"
 from scapy.cbor.cborfields import CBORF_BYTE_STRING_PACKET
 from scapy.packet import Raw
 
-class PR43ByteStringParent(CBOR_Packet):
+class ByteStringParent(CBOR_Packet):
     CBOR_root = CBORF_BYTE_STRING_PACKET("child", None, pkt_cls=Raw)
 
 child = Raw(load=b"x")
-parent = PR43ByteStringParent(child=child)
+parent = ByteStringParent(child=child)
 assert parent.child is child
 assert child.parent is parent
 assert child.underlayer is None
 assert bytes(parent) == b"\x41x"
 
-parsed = PR43ByteStringParent(b"\x41x")
+parsed = ByteStringParent(b"\x41x")
 assert isinstance(parsed.child, Raw)
 assert parsed.child.load == b"x"
 assert parsed.child.parent is parsed
 assert parsed.child.underlayer is None
 
-+ PR43 review - packet-valued collection ownership
++ packet-valued collection ownership
 
 = CBORF_ARRAY_OF construction attaches every packet child to parent
 from scapy.cbor.cborfields import CBORF_ARRAY_OF
 
-class PR43ArrayParent(CBOR_Packet):
-    CBOR_root = CBORF_ARRAY_OF("children", [], PR43OwnedChild)
+class ArrayParent(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("children", [], OwnedChild)
 
-children = [PR43OwnedChild(value=1), PR43OwnedChild(value=2)]
-parent = PR43ArrayParent(children=children)
+children = [OwnedChild(value=1), OwnedChild(value=2)]
+parent = ArrayParent(children=children)
 assert parent.children == children
 for child in parent.children:
     assert child.parent is parent
@@ -2303,7 +2299,7 @@ for child in parent.children:
 assert bytes(parent) == b"\x82\x01\x02"
 
 = CBORF_ARRAY_OF dissection attaches every packet child to parent
-parent = PR43ArrayParent(b"\x82\x01\x02")
+parent = ArrayParent(b"\x82\x01\x02")
 assert [child.value for child in parent.children] == [1, 2]
 for child in parent.children:
     assert child.parent is parent
@@ -2314,11 +2310,11 @@ assert bytes(parent) == b"\x82\x01\x02"
 = CBORF_SEQUENCE_OF construction attaches every packet child to parent
 from scapy.cbor.cborfields import CBORF_SEQUENCE_OF
 
-class PR43SequenceParent(CBOR_Packet):
-    CBOR_root = CBORF_SEQUENCE_OF("children", [], PR43OwnedChild)
+class SequenceParent(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE_OF("children", [], OwnedChild)
 
-children = [PR43OwnedChild(value=1), PR43OwnedChild(value=2)]
-parent = PR43SequenceParent(children=children)
+children = [OwnedChild(value=1), OwnedChild(value=2)]
+parent = SequenceParent(children=children)
 assert parent.children == children
 for child in parent.children:
     assert child.parent is parent
@@ -2327,7 +2323,7 @@ for child in parent.children:
 assert bytes(parent) == b"\x01\x02"
 
 = CBORF_SEQUENCE_OF dissection attaches every packet child to parent
-parent = PR43SequenceParent(b"\x01\x02")
+parent = SequenceParent(b"\x01\x02")
 assert [child.value for child in parent.children] == [1, 2]
 for child in parent.children:
     assert child.parent is parent
@@ -2335,19 +2331,19 @@ for child in parent.children:
 
 assert bytes(parent) == b"\x01\x02"
 
-+ PR43 review - deterministic fixed-schema maps
++ deterministic fixed-schema maps
 
 = CBORF_MAP emits deterministic encoded-key order independent of declaration order
 from scapy.cbor.cborcodec import cbor_find_non_deterministic
 from scapy.cbor.cborfields import CBORF_MAP
 
-class PR43ReverseDeclaredMap(CBOR_Packet):
+class ReverseDeclaredMap(CBOR_Packet):
     CBOR_root = CBORF_MAP(
         CBORF_UNSIGNED_INTEGER("b", 1),
         CBORF_UNSIGNED_INTEGER("a", 2),
     )
 
-wire = bytes(PR43ReverseDeclaredMap())
+wire = bytes(ReverseDeclaredMap())
 # RFC 8949 deterministic ordering sorts by the encoded key bytes, so "a"
 # precedes "b" even though the fields were declared in the opposite order.
 assert wire == b"\xa2\x61a\x02\x61b\x01"
@@ -2409,83 +2405,81 @@ assert EidPkt().eid == "dtn:none"
 assert isinstance(PrimaryBlock().getfieldval("source"), EidStruct)
 assert PrimaryBlock().source == "dtn:none"
 
-########### Merged from pr43_latest_review_cbor_findings.uts #################
-
-+ PR43 latest review - CBORF_BYTE_STRING_PACKET default normalization
++ CBORF_BYTE_STRING_PACKET default normalization
 
 = CBORF_BYTE_STRING_PACKET normalizes byte defaults after packet-class state is initialized
 from scapy.cbor.cborfields import CBORF_BYTE_STRING_PACKET
 from scapy.cborpacket import CBOR_Packet
 from scapy.packet import Raw
 
-class PR43ByteStringDefaultParent(CBOR_Packet):
+class ByteStringDefaultParent(CBOR_Packet):
     CBOR_root = CBORF_BYTE_STRING_PACKET(
         "child",
         b"abc",
         pkt_cls=Raw,
     )
 
-pkt = PR43ByteStringDefaultParent()
+pkt = ByteStringDefaultParent()
 assert isinstance(pkt.child, Raw)
 assert pkt.child.load == b"abc"
 assert pkt.child.parent is pkt
 assert bytes(pkt) == b"\x43abc"
 
 
-+ PR43 latest review - PacketListField-style next_cls_cb semantics
++ PacketListField-style next_cls_cb semantics
 
 = CBORF_SEQUENCE_OF next_cls_cb takes precedence over pkt_cls
 from scapy.cbor.cborfields import CBORF_SEQUENCE_OF, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43FixedSequenceChild(CBOR_Packet):
+class FixedSequenceChild(CBOR_Packet):
     CBOR_root = CBORF_UNSIGNED_INTEGER("value", 0)
 
-class PR43DynamicSequenceChild(CBOR_Packet):
+class DynamicSequenceChild(CBOR_Packet):
     CBOR_root = CBORF_UNSIGNED_INTEGER("value", 0)
 
-PR43NextClsCalls = []
-def pr43_choose_dynamic_child(pkt, lst, cur, remain):
-    PR43NextClsCalls.append(len(lst))
-    return PR43DynamicSequenceChild
+NextClsCalls = []
+def choose_dynamic_child(pkt, lst, cur, remain):
+    NextClsCalls.append(len(lst))
+    return DynamicSequenceChild
 
-class PR43DynamicSequenceParent(CBOR_Packet):
+class DynamicSequenceParent(CBOR_Packet):
     CBOR_root = CBORF_SEQUENCE_OF(
         "children",
         [],
-        pkt_cls=PR43FixedSequenceChild,
-        next_cls_cb=pr43_choose_dynamic_child,
+        pkt_cls=FixedSequenceChild,
+        next_cls_cb=choose_dynamic_child,
     )
 
-pkt = PR43DynamicSequenceParent(b"\x01")
-assert PR43NextClsCalls == [0]
+pkt = DynamicSequenceParent(b"\x01")
+assert NextClsCalls == [0]
 assert len(pkt.children) == 1
-assert isinstance(pkt.children[0], PR43DynamicSequenceChild)
-assert not isinstance(pkt.children[0], PR43FixedSequenceChild)
+assert isinstance(pkt.children[0], DynamicSequenceChild)
+assert not isinstance(pkt.children[0], FixedSequenceChild)
 assert pkt.children[0].parent is pkt
 
 
-+ PR43 latest review - TypeError must not be used for callback signature probing
++ TypeError must not be used for callback signature probing
 
 = CBORF_SEQUENCE_OF does not retry next_cls_cb when the callback itself raises TypeError
 from scapy.cbor.cbor import CBOR_Decoding_Error
 from scapy.cbor.cborfields import CBORF_SEQUENCE_OF
 from scapy.cborpacket import CBOR_Packet
 
-PR43BrokenNextClsCalls = []
-def pr43_broken_next_cls(*args):
-    PR43BrokenNextClsCalls.append(len(args))
+BrokenNextClsCalls = []
+def broken_next_cls(*args):
+    BrokenNextClsCalls.append(len(args))
     raise TypeError("intentional next_cls_cb failure")
 
-class PR43BrokenCallbackParent(CBOR_Packet):
+class BrokenCallbackParent(CBOR_Packet):
     CBOR_root = CBORF_SEQUENCE_OF(
         "children",
         [],
-        next_cls_cb=pr43_broken_next_cls,
+        next_cls_cb=broken_next_cls,
     )
 
 try:
-    PR43BrokenCallbackParent(b"\x01")
+    BrokenCallbackParent(b"\x01")
 except TypeError as exc:
     assert str(exc) == "intentional next_cls_cb failure"
 except CBOR_Decoding_Error as exc:
@@ -2495,7 +2489,7 @@ except CBOR_Decoding_Error as exc:
 else:
     raise AssertionError("next_cls_cb TypeError was swallowed")
 
-assert PR43BrokenNextClsCalls == [4], PR43BrokenNextClsCalls
+assert BrokenNextClsCalls == [4], BrokenNextClsCalls
 
 
 = Nested packet construction is not retried when the child constructor raises TypeError
@@ -2503,41 +2497,41 @@ from scapy.cbor.cbor import CBOR_Decoding_Error
 from scapy.cbor.cborfields import CBORF_PACKET, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43TypeErrorChild(CBOR_Packet):
+class TypeErrorChild(CBOR_Packet):
     CBOR_root = CBORF_UNSIGNED_INTEGER("value", 0)
     init_calls = []
     def __init__(self, *args, **kwargs):
         type(self).init_calls.append("_parent" in kwargs)
         raise TypeError("intentional nested packet failure")
 
-class PR43TypeErrorParent(CBOR_Packet):
-    CBOR_root = CBORF_PACKET("child", None, PR43TypeErrorChild)
+class TypeErrorParent(CBOR_Packet):
+    CBOR_root = CBORF_PACKET("child", None, TypeErrorChild)
 
-PR43TypeErrorChild.init_calls[:] = []
+TypeErrorChild.init_calls[:] = []
 try:
-    PR43TypeErrorParent(b"\x01")
+    TypeErrorParent(b"\x01")
 except CBOR_Decoding_Error as exc:
     assert "intentional nested packet failure" in str(exc)
 else:
     raise AssertionError("nested packet TypeError was unexpectedly swallowed")
 
-assert PR43TypeErrorChild.init_calls == [True], PR43TypeErrorChild.init_calls
+assert TypeErrorChild.init_calls == [True], TypeErrorChild.init_calls
 
 
-+ PR43 latest review - fixed-map unknown member preservation
++ fixed-map unknown member preservation
 
 = CBORF_MAP preserves an unknown member when a known field is mutated
 from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43ExtensibleMap(CBOR_Packet):
+class ExtensibleMap(CBOR_Packet):
     CBOR_root = CBORF_MAP(
         CBORF_UNSIGNED_INTEGER("a", 0),
     )
 
 # {"x": 1, "a": 7}
 wire = b"\xa2\x61x\x01\x61a\x07"
-pkt = PR43ExtensibleMap(wire)
+pkt = ExtensibleMap(wire)
 assert pkt.a == 7
 # Exact received bytes are retained while the packet is untouched.
 assert bytes(pkt) == wire
@@ -2553,7 +2547,7 @@ assert bytes(pkt) == b"\xa2\x61a\x08\x61x\x01"
 from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43ExtensibleNestedMap(CBOR_Packet):
+class ExtensibleNestedMap(CBOR_Packet):
     CBOR_root = CBORF_MAP(
         CBORF_UNSIGNED_INTEGER("a", 0),
     )
@@ -2568,7 +2562,7 @@ wire = (
     b"\x61a\x07"
     b"\xff"
 )
-pkt = PR43ExtensibleNestedMap(wire)
+pkt = ExtensibleNestedMap(wire)
 assert pkt.a == 7
 pkt.a = 8
 
@@ -2580,7 +2574,7 @@ assert bytes(pkt) == (
     b"\x61x\x82\x01\xa1\x61k\x02"
 )
 
-+ PR43 review - CBOR_Packet.copy re-parents embedded children
++ CBOR_Packet.copy re-parents embedded children
 
 = Copied CBOR packet children point at the clone, not the original
 from scapy.cbor.cborfields import CBORF_PACKET, CBORF_UNSIGNED_INTEGER
@@ -2601,20 +2595,20 @@ assert a.child.parent is a
 assert b.child.n == 1
 
 
-+ PR43 in-depth review - CBORF_MAP deterministic unknown rebuild
++ CBORF_MAP deterministic unknown rebuild
 
 = CBORF_MAP re-encodes non-preferred unknown members after a known-field mutation
 from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43DeterministicUnknownMap(CBOR_Packet):
+class DeterministicUnknownMap(CBOR_Packet):
     CBOR_root = CBORF_MAP(
         CBORF_UNSIGNED_INTEGER("z", 0),
     )
 
 # known "z":1, unknown "a":1 with non-preferred key (78 01 61) and value (18 01)
 wire = b"\xa2\x61z\x01\x78\x01\x61\x18\x01"
-pkt = PR43DeterministicUnknownMap(wire)
+pkt = DeterministicUnknownMap(wire)
 assert bytes(pkt) == wire
 pkt.z = 2
 assert bytes(pkt) == b"\xa2\x61a\x01\x61z\x02"
@@ -2624,14 +2618,14 @@ assert bytes(pkt) == b"\xa2\x61a\x01\x61z\x02"
 from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43NestedUnknownMap(CBOR_Packet):
+class NestedUnknownMap(CBOR_Packet):
     CBOR_root = CBORF_MAP(
         CBORF_UNSIGNED_INTEGER("z", 0),
     )
 
 # known z:1, unknown x:{b:1,a:2} with nested keys out of deterministic order
 wire = b"\xa2\x61z\x01\x61x\xa2\x61b\x01\x61a\x02"
-pkt = PR43NestedUnknownMap(wire)
+pkt = NestedUnknownMap(wire)
 assert bytes(pkt) == wire
 pkt.z = 2
 assert bytes(pkt) == b"\xa2\x61x\xa2\x61a\x02\x61b\x01\x61z\x02"
@@ -2641,7 +2635,7 @@ assert bytes(pkt) == b"\xa2\x61x\xa2\x61a\x02\x61b\x01\x61z\x02"
 from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43MapCopyIsolation(CBOR_Packet):
+class MapCopyIsolation(CBOR_Packet):
     CBOR_root = CBORF_MAP(
         CBORF_UNSIGNED_INTEGER("a", 0),
     )
@@ -2653,7 +2647,7 @@ wire = (
     b"\x61a\x07"
     b"\xff"
 )
-orig = PR43MapCopyIsolation(wire)
+orig = MapCopyIsolation(wire)
 clone = orig.copy()
 assert clone._cbor_unknown_map_pairs is not orig._cbor_unknown_map_pairs
 assert clone._cbor_unknown_map_pairs[0][1] is not orig._cbor_unknown_map_pairs[0][1]
@@ -2662,17 +2656,17 @@ assert len(orig._cbor_unknown_map_pairs[0][1]) == 2
 assert clone._cbor_unknown_map_pairs[0][1] == [1, {"k": 2}, 3]
 
 
-+ PR43 in-depth review - CBORF_ARRAY_OF indefinite decoding
++ CBORF_ARRAY_OF indefinite decoding
 
 = CBORF_ARRAY_OF decodes indefinite-length scalar arrays
 from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43IndefUIntArray(CBOR_Packet):
+class IndefUIntArray(CBOR_Packet):
     CBOR_root = CBORF_ARRAY_OF("values", [], item_field=CBORF_UNSIGNED_INTEGER)
 
 wire = b"\x9f\x01\x02\x03\xff"
-pkt = PR43IndefUIntArray(wire)
+pkt = IndefUIntArray(wire)
 assert pkt.values == [1, 2, 3]
 assert bytes(pkt) == wire
 
@@ -2681,14 +2675,14 @@ assert bytes(pkt) == wire
 from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
-class PR43IndefChild(CBOR_Packet):
+class IndefChild(CBOR_Packet):
     CBOR_root = CBORF_UNSIGNED_INTEGER("n", 0)
 
-class PR43IndefPacketArray(CBOR_Packet):
-    CBOR_root = CBORF_ARRAY_OF("children", [], pkt_cls=PR43IndefChild)
+class IndefPacketArray(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("children", [], pkt_cls=IndefChild)
 
 wire = b"\x9f\x01\x02\xff"
-pkt = PR43IndefPacketArray(wire)
+pkt = IndefPacketArray(wire)
 assert len(pkt.children) == 2
 assert pkt.children[0].n == 1
 assert pkt.children[0].parent is pkt

@@ -560,7 +560,7 @@ try:
 except ValueError:
     pass
 
-########### Code review 5075 regressions ################################
++ Validation and CRC regressions
 
 + Truncated canonical block
 
@@ -663,8 +663,6 @@ bundle = BundleV7(
 )
 codes = [i.code for i in bundle.validate()]
 assert "bad-payload-count" in codes
-
-########### Merged from bpv7_pr5075_review.uts #################
 
 + Review test helpers
 
@@ -1151,7 +1149,7 @@ rebuilt = bytes(pkt)
 assert rebuilt != raw
 assert BundleV7(rebuilt).primary.lifetime == 1
 
-+ Merge-gate: validator refinements
++ Validator refinements
 
 = BTSD validation errors are emitted exactly once
 from scapy.contrib.bpv7 import HopCountBlock
@@ -1194,8 +1192,6 @@ wire = prefix + crc_value + b"\xff"
 block = CanonicalBlock(wire)
 codes = {issue.code for issue in block.validate("blocks[0]")}
 assert "non-deterministic-cbor" in codes
-
-########### Merged from bpv7_pr5075_followup.uts #################
 
 + Shared helpers
 
@@ -1618,8 +1614,6 @@ finally:
     if "BPV7_BLOCK_TYPE" in RRRegisteredOnce.__dict__:
         delattr(RRRegisteredOnce, "BPV7_BLOCK_TYPE")
 
-########### Merged from bpv7_pr5075_latest_review.uts #################
-
 + Finding 3 - Opaque BTSD must not be interpreted as CBOR
 
 = Payload bytes that resemble non-deterministic CBOR remain opaque
@@ -2007,9 +2001,7 @@ received = IpnSsp.from_wire([0, 0, 7])
 assert received.is_null_endpoint()
 assert received.service == 7
 
-########### Merged from pr43_bpv7_review_findings.uts #################
-
-+ PR43 review - RFC 9758 invalid Null-IPN composition
++ RFC 9758 invalid Null-IPN composition
 
 = Invalid Null-IPN plus nonzero service cannot be composed from text
 from scapy.contrib.bpv7 import EidStruct
@@ -2047,7 +2039,7 @@ for source in ("ipn:0.9", "ipn:0.0.9"):
             % source
         )
 
-+ PR43 review - BundleV7 validation robustness
++ BundleV7 validation robustness
 
 = BundleV7 validate reports a non-CanonicalBlock entry instead of crashing
 from scapy.contrib.bpv7 import BundleV7, PrimaryBlock
@@ -2069,9 +2061,7 @@ assert any(
     for issue in issues
 ), [(issue.code, issue.path, issue.message) for issue in issues]
 
-########### Merged from pr43_latest_review_bpv7_findings.uts #################
-
-+ PR43 latest review - RFC 9758 Null endpoint semantic identity
++ RFC 9758 Null endpoint semantic identity
 
 = Received invalid Null-IPN service forms have canonical Null semantic identity
 from scapy.contrib.bpv7 import EidStruct
@@ -2117,7 +2107,7 @@ for ipn_null in (ipn_null_two, ipn_null_three):
 assert ipn_null_two.to_text() == "ipn:0.0"
 assert ipn_null_three.to_text() == "ipn:0.0.0"
 
-+ PR43 review - DTN EID syntax and Node-ID validation
++ DTN EID syntax and Node-ID validation
 
 = Local DTN composition rejects syntactically invalid URIs
 from scapy.contrib.bpv7 import EidStruct
@@ -2203,7 +2193,7 @@ nonpref = FloatBtsd(b"\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00")
 block = CanonicalBlock(block_num=2, type_code=99, btsd=nonpref)
 assert "non-deterministic-cbor" in {i.code for i in block.validate()}
 
-+ PR43 in-depth review - private-use EIDs and DTN reg-name grammar
++ private-use EIDs and DTN reg-name grammar
 
 = Private-use EID scheme 65536 dissects and round-trips without aborting the bundle
 from scapy.contrib.bpv7 import BundleV7, CanonicalBlock, EidStruct, PrimaryBlock
@@ -2248,7 +2238,7 @@ for text in (
     else:
         raise AssertionError("invalid DTN reg-name was accepted: %s" % text)
 
-+ PR43 re-review - EID wire CBOR type enforcement
++ EID wire CBOR type enforcement
 
 = EID scheme rejects non-unsigned CBOR integer types
 from scapy.contrib.bpv7 import EidStruct

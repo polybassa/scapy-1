@@ -246,6 +246,8 @@ _DTN_WELL_KNOWN_SSP = {
 
 
 _IPN_LOCALNODE = 0xFFFFFFFF
+# RFC 9758 Table 4: Default Allocator Node Numbers reserved for Private Use.
+_IPN_PRIVATE_USE_NODE_MAX = 0x3FFF
 _IPN_ASCII_DIGITS = frozenset("0123456789")
 
 
@@ -428,10 +430,25 @@ class IpnSsp:
         # RFC 9758: allocator 0 and node 0 is the Null Endpoint for any service.
         return self.allocator == 0 and self.node == 0
 
+    def is_local_node(self) -> bool:
+        """Return True for Default Allocator LocalNode FQNN (RFC 9758)."""
+        return self.allocator == 0 and self.node == _IPN_LOCALNODE
+
+    def is_private_use(self) -> bool:
+        """Return True for Default Allocator Private Use Node Numbers."""
+        return (
+            self.allocator == 0
+            and 1 <= self.node <= _IPN_PRIVATE_USE_NODE_MAX
+        )
+
     def to_text(self) -> str:
         # RFC 9758: "!" is the entire FQNN (allocator 0 + LocalNode), never a
-        # lone allocator or service component.
+        # lone allocator or service component. Prefer bang for the usual
+        # 2-element wire form; keep an explicit 3-element numeric URI when
+        # that arity was received so text round-trips preserve CBOR shape.
         if self.allocator == 0 and self.node == _IPN_LOCALNODE:
+            if self.wire_elements == 3:
+                return "ipn:0.%d.%d" % (_IPN_LOCALNODE, self.service)
             return "ipn:!.%d" % self.service
         if self.wire_elements == 2 and self.allocator == 0:
             return "ipn:%d.%d" % (self.node, self.service)
@@ -530,6 +547,26 @@ class EidStruct:
                 return self.ssp.is_null_endpoint()
             return IpnSsp.from_wire(list(self.ssp)).is_null_endpoint()
         return False
+
+    def _ipn_ssp(self) -> Optional[IpnSsp]:
+        if _known_eid_scheme(self.scheme) != EidScheme.ipn:
+            return None
+        if isinstance(self.ssp, IpnSsp):
+            return self.ssp
+        try:
+            return IpnSsp.from_wire(list(self.ssp))
+        except (TypeError, ValueError):
+            return None
+
+    def is_local_node(self) -> bool:
+        """Return True for an IPN LocalNode EID (``ipn:!.service``)."""
+        ssp = self._ipn_ssp()
+        return ssp is not None and ssp.is_local_node()
+
+    def is_private_use(self) -> bool:
+        """Return True for Default Allocator Private Use IPN EIDs."""
+        ssp = self._ipn_ssp()
+        return ssp is not None and ssp.is_private_use()
 
     def is_valid(self) -> bool:
         """Return True when this EID has a RFC-conformant structure.
@@ -957,14 +994,24 @@ def _append_non_deterministic_issues(
     raw: Optional[bytes],
     path: str,
 ) -> None:
+    """Flag non-shortest encodings and indefinite items in block CBOR.
+
+    RFC 9171 requires definite-length CBOR for primary and canonical blocks
+    (only the outer bundle array is indefinite). Dissection still accepts
+    indefinite block arrays for interop/fuzzing; ``validate()`` reports them.
+    """
     if not raw:
         return
     for offset, message in cbor_find_non_deterministic(
-        raw, allow_indefinite=True
+        raw, allow_indefinite=False
     ):
+        if message.startswith("Indefinite-length item"):
+            code = "indefinite-length-cbor"
+        else:
+            code = "non-deterministic-cbor"
         issues.append(
             ValidationIssue(
-                "non-deterministic-cbor",
+                code,
                 path,
                 "%s at offset %d" % (message, offset),
             )
@@ -1044,6 +1091,17 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
             if not isinstance(eid, EidStruct):
                 continue
             if not eid.is_known_scheme():
+                # Private-use / unallocated schemes stay opaque: Scapy cannot
+                # apply dtn/ipn Node-ID rules, so only warn.
+                issues.append(
+                    ValidationIssue(
+                        "unknown-scheme-eid",
+                        "%s.%s" % (path, fname) if path else fname,
+                        "EID scheme %d is not semantically validated "
+                        "(private-use or unallocated)" % eid.scheme,
+                        severity="warning",
+                    )
+                )
                 continue
             if not eid.is_valid():
                 issues.append(
@@ -1080,6 +1138,22 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
                         "Total application data length required for fragments",
                     )
                 )
+            else:
+                offset = self.getfieldval("fragment_offset")
+                total = self.getfieldval("total_app_data_len")
+                if (
+                    offset is not None
+                    and total is not None
+                    and _as_int(offset) > _as_int(total)
+                ):
+                    issues.append(
+                        ValidationIssue(
+                            "fragment-offset-exceeds-total",
+                            path,
+                            "Fragment offset must not exceed total "
+                            "application data length",
+                        )
+                    )
         return issues
 
 
@@ -1331,7 +1405,15 @@ class HopCountBlock(CBOR_Packet):
                     "Hop Count limit must be in 1..255",
                 )
             )
-        elif count is not None and _as_int(count) > _as_int(limit):
+        if count is None:
+            issues.append(
+                ValidationIssue(
+                    "missing-hop-count",
+                    path,
+                    "Hop Count block requires a count value",
+                )
+            )
+        elif limit is not None and _as_int(count) > _as_int(limit):
             issues.append(
                 ValidationIssue(
                     "hop-count-exceeds-limit",
@@ -1619,8 +1701,107 @@ class BundleV7(CBOR_Packet):
             )
         return issues
 
-    def assert_valid(self) -> None:
-        issues = self.validate()
+    def validate_lifecycle(
+        self,
+        direction: str = "ingress",
+        crossing_admin_domain: bool = False,
+    ) -> list[ValidationIssue]:
+        """Apply RFC 9758 context-dependent LocalNode / Private Use rules.
+
+        Structural checks remain in :meth:`validate`. This method covers rules
+        that require deployment context:
+
+        - ``direction="ingress"``: externally received LocalNode source,
+          destination, report-to, or Previous Node EIDs are invalid.
+        - ``direction="egress"``: LocalNode source/destination/report-to
+          (and Previous Node) EIDs must not leave the local node.
+        - ``crossing_admin_domain=True``: Private Use IPN EIDs on those
+          fields must not cross administrative domains.
+
+        Call :meth:`assert_valid` with ``lifecycle=`` to combine both.
+        """
+        if direction not in ("ingress", "egress"):
+            raise ValueError(
+                "direction must be 'ingress' or 'egress', got %r" % direction
+            )
+        issues = []  # type: list[ValidationIssue]
+        primary = self.primary
+        if primary is None:
+            return issues
+
+        def _check_eid(eid: Any, path: str) -> None:
+            if not isinstance(eid, EidStruct):
+                return
+            if eid.is_local_node():
+                if direction == "ingress":
+                    issues.append(
+                        ValidationIssue(
+                            "localnode-eid-on-ingress",
+                            path,
+                            "Externally received LocalNode IPN EIDs are invalid",
+                        )
+                    )
+                else:
+                    issues.append(
+                        ValidationIssue(
+                            "localnode-eid-on-egress",
+                            path,
+                            "LocalNode IPN EIDs must not leave the local node",
+                        )
+                    )
+            elif crossing_admin_domain and eid.is_private_use():
+                issues.append(
+                    ValidationIssue(
+                        "private-use-eid-cross-domain",
+                        path,
+                        "Private Use IPN EIDs must not cross administrative "
+                        "domains",
+                    )
+                )
+
+        for fname in ("destination", "source", "report_to"):
+            _check_eid(
+                primary.getfieldval(fname),
+                "primary.%s" % fname,
+            )
+
+        for index, blk in enumerate(self.blocks or []):
+            if not isinstance(blk, CanonicalBlock):
+                continue
+            if blk._effective_type_code() != self.BLOCK_TYPE_PREVIOUS_NODE:
+                continue
+            btsd = blk.getfieldval("btsd")
+            if isinstance(btsd, PreviousNodeBlock):
+                _check_eid(
+                    btsd.getfieldval("node"),
+                    "blocks[%d].btsd.node" % index,
+                )
+        return issues
+
+    def assert_valid(
+        self,
+        primary_integrity_protected: bool = False,
+        lifecycle: Optional[str] = None,
+        crossing_admin_domain: bool = False,
+    ) -> None:
+        """Raise ``ValueError`` when structural (and optional lifecycle) errors exist.
+
+        Warnings (e.g. ``unknown-scheme-eid``) do not fail this check.
+        Pass ``lifecycle="ingress"`` or ``"egress"`` to also enforce
+        :meth:`validate_lifecycle`.
+        """
+        issues = list(
+            self.validate(
+                primary_integrity_protected=primary_integrity_protected
+            )
+        )
+        if lifecycle is not None:
+            issues.extend(
+                self.validate_lifecycle(
+                    direction=lifecycle,
+                    crossing_admin_domain=crossing_admin_domain,
+                )
+            )
         errors = [issue for issue in issues if issue.severity == "error"]
         if errors:
             raise ValueError(

@@ -363,7 +363,9 @@ def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
     """Scan *s* for non-shortest CBOR argument encodings.
 
     Returns a list of ``(absolute_offset, message)`` issues. Indefinite-length
-    containers are accepted when *allow_indefinite* is true (RFC 9171).
+    items are accepted only when *allow_indefinite* is true (e.g. a BPv7
+    bundle outer array). Callers that require definite-length encoding
+    (primary/canonical blocks per RFC 9171) must pass ``False``.
     """
     issues = []  # type: List[Tuple[int, str]]
     index = [0]

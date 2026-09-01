@@ -540,10 +540,28 @@ class CBORMapData(object):
     def __eq__(self, other):
         # type: (Any) -> bool
         if isinstance(other, dict):
-            try:
-                return dict(self.items()) == other
-            except TypeError:
+            # Do not use dict(self.items()): Python collapses True/1 (and
+            # similar) as equal keys, which is not the CBOR data model.
+            if len(other) != len(self._pairs):
                 return False
+            other_items = list(other.items())
+            used = [False] * len(other_items)
+            for map_key, value in self._pairs:
+                want = self._key_identity(map_key)
+                matched = False
+                for idx, (other_key, other_value) in enumerate(other_items):
+                    if used[idx]:
+                        continue
+                    if self._key_identity(other_key) != want:
+                        continue
+                    if value != other_value:
+                        return False
+                    used[idx] = True
+                    matched = True
+                    break
+                if not matched:
+                    return False
+            return True
         if isinstance(other, CBORMapData):
             return self._pairs == other._pairs
         return NotImplemented

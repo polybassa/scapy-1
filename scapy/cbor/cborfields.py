@@ -1712,6 +1712,12 @@ class CBORF_MAP(CBORF_element):
     """
     CBOR map with a fixed set of named, typed fields (major type 5).
 
+    This is a **JSON-like named-field** schema helper, not a general CBOR map
+    codec: keys must be CBOR text strings (the field ``name``, or unknown
+    extension names). Integer / byte-string / other key types are rejected.
+    Protocols that need arbitrary CBOR map keys should use :class:`CBORF_ANY`
+    or a dedicated field.
+
     Each field in ``seq`` represents one key-value pair.  The key is the
     field's ``name`` encoded as a CBOR text string.  The value is encoded
     and decoded by the corresponding :class:`CBORF_field`.

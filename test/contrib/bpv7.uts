@@ -2216,6 +2216,12 @@ assert decoded.primary.getfieldval("source").to_cbor() == [65536, b"private"]
 assert len(decoded.blocks) == 1
 assert not decoded.primary.getfieldval("source").is_known_scheme()
 assert "invalid-eid" not in {i.code for i in decoded.primary.validate()}
+assert "unknown-scheme-eid" in {i.code for i in decoded.primary.validate()}
+assert all(
+    i.severity == "warning"
+    for i in decoded.primary.validate()
+    if i.code == "unknown-scheme-eid"
+)
 
 = DTN node-name accepts RFC 3986 reg-name and rejects illegal gen-delimiters
 from scapy.contrib.bpv7 import EidStruct
@@ -2275,3 +2281,144 @@ codes = {i.code for i in BundleAgeBlock().validate()}
 assert "missing-bundle-age" in codes, codes
 assert not BundleAgeBlock(age=0).validate()
 assert not BundleAgeBlock(age=100).validate()
+
++ RFC 9758 contextual lifecycle validation
+
+= LocalNode and Private Use EID helpers classify RFC 9758 special FQNNs
+from scapy.contrib.bpv7 import EidStruct
+
+local = EidStruct.from_text("ipn:!.7")
+priv = EidStruct.from_text("ipn:100.1")
+normal = EidStruct.from_text("ipn:16384.1")
+assert local.is_local_node() and not local.is_private_use()
+assert priv.is_private_use() and not priv.is_local_node()
+assert not normal.is_local_node() and not normal.is_private_use()
+
+= Ingress rejects LocalNode source or destination EIDs
+from scapy.contrib.bpv7 import BundleV7, PrimaryBlock
+
+bundle = BundleV7(primary=PrimaryBlock(source="ipn:!.1", destination="ipn:1.1"))
+codes = {i.code for i in bundle.validate_lifecycle(direction="ingress")}
+assert "localnode-eid-on-ingress" in codes, codes
+
+bundle = BundleV7(primary=PrimaryBlock(source="ipn:1.1", destination="ipn:!.2"))
+codes = {i.code for i in bundle.validate_lifecycle(direction="ingress")}
+assert "localnode-eid-on-ingress" in codes, codes
+
+= Egress rejects LocalNode source or destination EIDs
+from scapy.contrib.bpv7 import BundleV7, PrimaryBlock
+
+bundle = BundleV7(primary=PrimaryBlock(source="ipn:!.1"))
+codes = {i.code for i in bundle.validate_lifecycle(direction="egress")}
+assert "localnode-eid-on-egress" in codes, codes
+
+= Crossing administrative domains rejects Private Use IPN EIDs
+from scapy.contrib.bpv7 import BundleV7, PrimaryBlock
+
+bundle = BundleV7(primary=PrimaryBlock(source="ipn:100.1", destination="ipn:200.1"))
+assert not bundle.validate_lifecycle(direction="egress", crossing_admin_domain=False)
+codes = {i.code for i in bundle.validate_lifecycle(
+    direction="egress", crossing_admin_domain=True
+)}
+assert "private-use-eid-cross-domain" in codes, codes
+
+= Egress rejects LocalNode Previous Node EIDs
+from scapy.contrib.bpv7 import (
+    BundleV7, CanonicalBlock, PreviousNodeBlock, PrimaryBlock,
+)
+from scapy.packet import Raw
+
+bundle = BundleV7(
+    primary=PrimaryBlock(source="ipn:1.1", destination="ipn:2.1"),
+    blocks=[
+        CanonicalBlock(
+            block_num=2,
+            btsd=PreviousNodeBlock(node="ipn:!.0"),
+        ),
+        CanonicalBlock(type_code=1, block_num=1, btsd=Raw(load=b"x")),
+    ],
+)
+codes = {i.code for i in bundle.validate_lifecycle(direction="egress")}
+assert "localnode-eid-on-egress" in codes, codes
+ingress = {i.code for i in bundle.validate_lifecycle(direction="ingress")}
+assert "localnode-eid-on-ingress" in ingress, ingress
+
+= LocalNode three-element CBOR preserves arity through text
+from scapy.contrib.bpv7 import EidStruct
+
+eid = EidStruct.from_cbor([2, [0, 0xFFFFFFFF, 7]])
+assert eid.ssp.wire_elements == 3
+assert eid.to_text() == "ipn:0.4294967295.7"
+roundtrip = EidStruct.from_text(eid.to_text())
+assert roundtrip.ssp.wire_elements == 3
+assert roundtrip.to_cbor() == [2, [0, 0xFFFFFFFF, 7]]
+assert EidStruct.from_text("ipn:!.7").ssp.wire_elements == 2
+
+= Indefinite-length primary and canonical arrays are reported by validate
+import struct
+from scapy.contrib.bpv7 import CanonicalBlock, PrimaryBlock
+from scapy.libs.crc import CRC_16_X25
+
+# [_ 1, 1, 0, CRC16, h'6869', h'0000' _] with CRC over indefinite wire
+prefix = b"\x9f\x01\x01\x00\x01\x42\x68\x69\x42"
+zeroed_wire = prefix + b"\x00\x00\xff"
+crc_value = struct.pack(">H", CRC_16_X25(zeroed_wire))
+wire = prefix + crc_value + b"\xff"
+block = CanonicalBlock(wire)
+assert block.check_crc()
+assert "indefinite-length-cbor" in {i.code for i in block.validate()}, [
+    (i.code, i.message) for i in block.validate()
+]
+
+primary_prefix = (
+    b"\x9f"          # indefinite array
+    b"\x07"          # version
+    b"\x00"          # flags
+    b"\x01"          # CRC16
+    b"\x82\x01\x00"  # destination
+    b"\x82\x01\x00"  # source
+    b"\x82\x01\x00"  # report-to
+    b"\x82\x00\x00"  # creation timestamp
+    b"\x00"          # lifetime
+    b"\x42"          # two-byte CRC byte string
+)
+primary_zeroed = primary_prefix + b"\x00\x00\xff"
+pcrc = struct.pack(">H", CRC_16_X25(primary_zeroed))
+pwire = primary_prefix + pcrc + b"\xff"
+primary = PrimaryBlock(pwire)
+assert primary.check_crc()
+assert "indefinite-length-cbor" in {i.code for i in primary.validate()}, [
+    (i.code, i.message) for i in primary.validate()
+]
+
+= Fragment offset exceeding total length is reported
+from scapy.contrib.bpv7 import PrimaryBlock
+
+primary = PrimaryBlock(
+    destination="ipn:1.1",
+    source="ipn:2.1",
+    report_to="ipn:2.1",
+    bundle_flags=int(PrimaryBlock.Flag.IS_FRAGMENT),
+    fragment_offset=100,
+    total_app_data_len=50,
+)
+assert "fragment-offset-exceeds-total" in {i.code for i in primary.validate()}
+
+= assert_valid optionally includes lifecycle checks
+from scapy.contrib.bpv7 import BundleV7, PrimaryBlock
+
+bad = BundleV7(primary=PrimaryBlock(source="ipn:!.1", destination="ipn:2.1"))
+try:
+    bad.assert_valid()
+except ValueError as exc:
+    assert "localnode-eid-on-ingress" not in str(exc), exc
+else:
+    # Structurally incomplete bundles may still raise; LocalNode alone must not.
+    pass
+
+try:
+    bad.assert_valid(lifecycle="ingress")
+except ValueError as exc:
+    assert "localnode-eid-on-ingress" in str(exc), exc
+else:
+    raise AssertionError("assert_valid ignored lifecycle LocalNode")

@@ -713,6 +713,17 @@ assert obj.val[1].val == "a"
 assert obj.val[True].val == "b"
 assert obj.val[1] is not obj.val[True]
 
+= CBORMapData equality with dict keeps True and 1 distinct
+from scapy.cbor.cbor import CBORMapData, CBOR_TRUE, CBOR_UNSIGNED_INTEGER
+
+m = CBORMapData([(CBOR_TRUE(), "a"), (CBOR_UNSIGNED_INTEGER(1), "b")])
+# Python dict cannot hold both True and 1; equality must not collapse them.
+assert m != {True: "b"}
+assert m != {1: "b"}
+assert m != {True: "a"}
+assert m == CBORMapData([(CBOR_TRUE(), "a"), (CBOR_UNSIGNED_INTEGER(1), "b")])
+assert len(dict(m.items())) == 1
+
 + optional major-type-7 lookahead and absence
 
 = Optional boolean leaves a required float for the next field

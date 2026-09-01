@@ -1217,6 +1217,9 @@ def _encode_cbor_item(item):
     elif isinstance(item, dict):
         return CBORcodec_MAP.enc(item)
     elif isinstance(item, float):
+        encoded = getattr(item, "cbor_encoded", None)
+        if encoded is not None:
+            return encoded
         return CBORcodec_SIMPLE_AND_FLOAT.enc(item)
     elif item is None:
         return CBORcodec_SIMPLE_AND_FLOAT.enc(None)
@@ -1314,6 +1317,11 @@ def _encode_cbor_item_deterministic(item):
     if isinstance(item, str):
         return CBORcodec_TEXT_STRING.enc(item)
     if isinstance(item, float):
+        # Preserve dissected wire (e.g. NaN payloads) when known; otherwise
+        # fall back to preferred-width encoding.
+        encoded = getattr(item, "cbor_encoded", None)
+        if encoded is not None:
+            return encoded
         return CBORcodec_SIMPLE_AND_FLOAT.enc(item)
     if item is None:
         return CBORcodec_SIMPLE_AND_FLOAT.enc(None)

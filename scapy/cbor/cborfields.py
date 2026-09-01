@@ -221,6 +221,9 @@ def cbor_object_to_python(obj):
         return CBORTagValue(tag_num, cbor_object_to_python(item))
     if isinstance(obj, CBOR_SIMPLE_VALUE):
         return CBORSimpleValue(obj.val)
+    if isinstance(obj, CBOR_FLOAT):
+        from scapy.cbor.cbor import CBORFloatValue
+        return CBORFloatValue(obj.val, encoded=getattr(obj, "_encoded", None))
     return obj.val
 
 

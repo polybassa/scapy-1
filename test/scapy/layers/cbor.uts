@@ -2897,3 +2897,98 @@ except TypeError:
     pass
 else:
     raise AssertionError("bytes were coerced via str(bytes)")
+
+= CBORF_ANY preserves non-preferred float wire after cache clear
+from scapy.cbor.cbor import CBORFloatValue
+from scapy.cbor.cborfields import CBORF_ANY
+from scapy.cborpacket import CBOR_Packet
+
+class AnyFloatPkt(CBOR_Packet):
+    CBOR_root = CBORF_ANY("value", None)
+
+# binary64 NaN with a low payload bit
+wire = bytes.fromhex("fb7ff8000000000001")
+pkt = AnyFloatPkt(wire)
+assert isinstance(pkt.value, CBORFloatValue)
+assert pkt.value != pkt.value  # NaN
+assert pkt.value.cbor_encoded == wire
+pkt.raw_packet_cache = None
+pkt.raw_packet_cache_fields = None
+assert bytes(pkt) == wire
+
+= RandCBORObject generates encodable objects including nested containers
+import random
+from scapy.cbor.cbor import (
+    RandCBORObject,
+    CBOR_UNSIGNED_INTEGER,
+    CBOR_ARRAY,
+    CBOR_MAP,
+    CBOR_TEXT_STRING,
+    CBOR_NULL,
+)
+
+random.seed(42)
+obj = RandCBORObject()._fix()
+assert bytes(obj)  # encodable
+# Custom list forces deep recursion fallbacks and array/map nesting.
+nested = RandCBORObject(objlist=[CBOR_ARRAY, CBOR_MAP])._fix(n=0)
+assert isinstance(nested, (CBOR_ARRAY, CBOR_MAP))
+assert bytes(nested)
+# Depth cap strips recursive types.
+leaf = RandCBORObject(objlist=[CBOR_ARRAY, CBOR_MAP])._fix(n=10)
+assert not isinstance(leaf, (CBOR_ARRAY, CBOR_MAP))
+assert bytes(leaf)
+# Only recursive types at high depth still yields a leaf via fallback.
+only_recursive = RandCBORObject(objlist=[CBOR_ARRAY])._fix(n=10)
+assert isinstance(only_recursive, CBOR_UNSIGNED_INTEGER)
+simple = RandCBORObject(objlist=[CBOR_TEXT_STRING, CBOR_NULL])._fix()
+assert bytes(simple)
+
+= CBOR object display helpers and decoding-error repr
+import copy
+from scapy.cbor.cbor import (
+    CBOR_ARRAY,
+    CBOR_BYTE_STRING,
+    CBOR_DECODING_ERROR,
+    CBOR_Error,
+    CBOR_FALSE,
+    CBOR_FLOAT,
+    CBOR_MAP,
+    CBOR_NULL,
+    CBORMapData,
+    CBOR_Object,
+    CBOR_TRUE,
+    CBORSimpleValue,
+    CBORTagValue,
+    CBOR_UNDEFINED_VALUE,
+    CBOR_UNSIGNED_INTEGER,
+)
+
+assert "h'6162'" in repr(CBOR_BYTE_STRING(b"ab"))
+assert "CBOR_ARRAY" in CBOR_ARRAY([CBOR_UNSIGNED_INTEGER(1), 2]).strshow()
+assert "CBOR_MAP" in CBOR_MAP(CBORMapData([(1, CBOR_TRUE())])).strshow()
+assert "CBOR_MAP" in CBOR_MAP({1: CBOR_FALSE()}).strshow()
+assert "CBORMapData" in repr(CBORMapData([(b"k", 1)]))
+assert "CBORTagValue" in repr(CBORTagValue(1, "x"))
+assert "CBORSimpleValue" in repr(CBORSimpleValue(41))
+assert repr(CBOR_UNDEFINED_VALUE) == "CBOR_UNDEFINED"
+assert not CBOR_UNDEFINED_VALUE
+assert copy.copy(CBOR_UNDEFINED_VALUE) is CBOR_UNDEFINED_VALUE
+assert copy.deepcopy(CBOR_UNDEFINED_VALUE) is CBOR_UNDEFINED_VALUE
+bad = bytes.fromhex("ff")
+err = CBOR_DECODING_ERROR(bad, exc=ValueError("boom"))
+assert "boom" in repr(err)
+assert err.enc() == bad
+assert CBOR_DECODING_ERROR(CBOR_NULL()).enc() == bytes(CBOR_NULL())
+untagged_ok = False
+try:
+    CBOR_Object(None).enc()
+except CBOR_Error:
+    untagged_ok = True
+
+assert untagged_ok
+assert CBOR_TRUE() == CBOR_TRUE()
+assert CBOR_TRUE() != CBOR_FALSE()
+encoded = bytes.fromhex("fa3fc00000")
+assert CBOR_FLOAT(1.5, encoded=encoded).enc() == encoded
+True

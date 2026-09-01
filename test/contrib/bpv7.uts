@@ -2507,3 +2507,72 @@ del received._crc_content_span
 assert received.check_crc() is False, (
     "without span, non-preferred CRC head must not use unsafe rfind fallback"
 )
+
+= IS_FRAGMENT and NO_FRAGMENT together is reported
+from scapy.contrib.bpv7 import PrimaryBlock
+
+flags = int(PrimaryBlock.Flag.IS_FRAGMENT | PrimaryBlock.Flag.NO_FRAGMENT)
+primary = PrimaryBlock(
+    destination="ipn:1.1",
+    source="ipn:2.1",
+    report_to="ipn:2.1",
+    bundle_flags=flags,
+    fragment_offset=0,
+    total_app_data_len=10,
+)
+assert "conflicting-fragment-flags" in {i.code for i in primary.validate()}
+
+= Fragment offset plus payload must not exceed total ADU length
+from scapy.contrib.bpv7 import (
+    BundleV7,
+    CanonicalBlock,
+    CrcType,
+    PrimaryBlock,
+    BundleTimestamp,
+)
+from scapy.packet import Raw
+
+primary = PrimaryBlock(
+    bundle_flags=int(PrimaryBlock.Flag.IS_FRAGMENT),
+    crc_type=CrcType.CRC16,
+    destination="ipn:1.1",
+    source="ipn:2.1",
+    report_to="ipn:2.1",
+    create_ts=BundleTimestamp(dtntime=1, seqno=0),
+    lifetime=60000,
+    fragment_offset=10,
+    total_app_data_len=20,
+)
+primary.freeze_crc()
+payload = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC16,
+    btsd=Raw(load=b"abcdefghijkl"),  # 12 bytes: 10+12 > 20
+)
+payload.freeze_crc()
+bundle = BundleV7(primary=primary, blocks=[payload])
+codes = {i.code for i in bundle.validate()}
+assert "fragment-extends-past-total" in codes, codes
+
+# Boundary fit is accepted.
+ok_payload = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC16,
+    btsd=Raw(load=b"abcdefghij"),  # 10 bytes: 10+10 == 20
+)
+ok_payload.freeze_crc()
+ok = BundleV7(primary=primary, blocks=[ok_payload])
+assert "fragment-extends-past-total" not in {i.code for i in ok.validate()}
+
+= Previous Node unknown-scheme EID emits a warning
+from scapy.contrib.bpv7 import EidStruct, PreviousNodeBlock
+
+pn = PreviousNodeBlock(node=EidStruct.from_cbor([65536, b"private"]))
+issues = pn.validate()
+assert any(
+    i.code == "unknown-scheme-eid" and i.severity == "warning"
+    for i in issues
+), [(i.code, i.severity) for i in issues]
+assert not any(i.severity == "error" for i in issues)

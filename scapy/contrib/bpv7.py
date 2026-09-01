@@ -1081,6 +1081,17 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
                     "Primary block version must be 7",
                 )
             )
+        flags = int(self.getfieldval("bundle_flags") or 0)
+        if (flags & int(PrimaryBlock.Flag.IS_FRAGMENT)) and (
+            flags & int(PrimaryBlock.Flag.NO_FRAGMENT)
+        ):
+            issues.append(
+                ValidationIssue(
+                    "conflicting-fragment-flags",
+                    path,
+                    "IS_FRAGMENT and NO_FRAGMENT must not both be set",
+                )
+            )
         for fname in ("destination", "source", "report_to"):
             eid = self.getfieldval(fname)
             if not isinstance(eid, EidStruct):
@@ -1331,7 +1342,15 @@ class PreviousNodeBlock(CBOR_Packet):
             )
         elif isinstance(node, EidStruct):
             if not node.is_known_scheme():
-                pass
+                issues.append(
+                    ValidationIssue(
+                        "unknown-scheme-eid",
+                        path + ".node" if path else "node",
+                        "EID scheme %d is not semantically validated "
+                        "(private-use or unallocated)" % node.scheme,
+                        severity="warning",
+                    )
+                )
             elif not node.is_valid():
                 issues.append(
                     ValidationIssue(
@@ -1694,6 +1713,40 @@ class BundleV7(CBOR_Packet):
                     "Payload block number must be 1",
                 )
             )
+        elif (
+            primary is not None
+            and primary.is_fragment()
+            and primary.getfieldval("fragment_offset") is not None
+            and primary.getfieldval("total_app_data_len") is not None
+        ):
+            # RFC 9171: fragment ADU bytes must fit in [offset, total).
+            offset = _as_int(primary.getfieldval("fragment_offset"))
+            total = _as_int(primary.getfieldval("total_app_data_len"))
+            payload_blk = self.blocks[payload_blocks[0][0]]
+            btsd = payload_blk.getfieldval("btsd")
+            payload_len = None  # type: Optional[int]
+            if btsd is not None:
+                load = getattr(btsd, "load", None)
+                if isinstance(load, (bytes, bytearray)):
+                    payload_len = len(load)
+                else:
+                    raw = getattr(btsd, "raw_packet_cache", None)
+                    if not raw:
+                        try:
+                            raw = bytes(btsd)
+                        except Exception:
+                            raw = None
+                    if raw is not None:
+                        payload_len = len(raw)
+            if payload_len is not None and offset + payload_len > total:
+                issues.append(
+                    ValidationIssue(
+                        "fragment-extends-past-total",
+                        "blocks[%d]" % payload_blocks[0][0],
+                        "Fragment offset plus payload length must not "
+                        "exceed total application data length",
+                    )
+                )
         return issues
 
     def validate_lifecycle(

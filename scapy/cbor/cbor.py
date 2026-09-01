@@ -781,9 +781,10 @@ class CBOR_FLOAT(CBOR_Object[float]):
 class CBORFloatValue(float):
     """Native float that optionally retains the exact CBOR encoding.
 
-    Used by :class:`~scapy.cbor.cborfields.CBORF_FLOAT` so dissected half /
-    single / double (and NaN payloads) survive field storage and rebuild when
-    the packet raw cache is cleared, until the value is replaced by a plain
+    Used by :class:`~scapy.cbor.cborfields.CBORF_FLOAT` and
+    :class:`~scapy.cbor.cborfields.CBORF_ANY` so dissected half / single /
+    double (and NaN payloads) survive field storage and rebuild when the
+    packet raw cache is cleared, until the value is replaced by a plain
     ``float``.
     """
 

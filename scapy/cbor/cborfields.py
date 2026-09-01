@@ -792,6 +792,12 @@ class CBORF_TEXT_STRING(CBORF_field[str]):
             x = x.val
         if x is None:
             return None  # type: ignore
+        # Reject bytes: str(b"hi") == "b'hi'", which silently corrupts the value.
+        if isinstance(x, (bytes, bytearray, memoryview)):
+            raise TypeError(
+                "CBOR text string field %r requires str, got %s"
+                % (self.name, type(x).__name__)
+            )
         return str(x)
 
     def m2i(self, pkt, s):

@@ -2768,3 +2768,68 @@ issues = cbor_find_non_deterministic(b"\xff")
 assert issues and "break" in issues[0][1].lower()
 issues = cbor_find_non_deterministic(b"\xf8\x14")  # simple 20 via AI=24
 assert issues and "simple" in issues[0][1].lower()
+
+= CBORF_MAP rejects non-text map keys
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER, CBOR_Decoding_Error
+from scapy.cborpacket import CBOR_Packet
+
+class NamedMap(CBOR_Packet):
+    CBOR_root = CBORF_MAP(CBORF_UNSIGNED_INTEGER("a", 0))
+
+# {1: 2} — integer key is not allowed for schema maps
+try:
+    NamedMap(b"\xa1\x01\x02")
+except CBOR_Decoding_Error:
+    pass
+else:
+    raise AssertionError("CBORF_MAP accepted an integer key")
+
+= Indefinite text rejects a UTF-8 code point split across chunks
+from scapy.cbor import CBOR_Codecs
+from scapy.cbor.cborcodec import CBOR_Codec_Decoding_Error
+
+# U+00E4 is UTF-8 C3 A4; RFC 8949 forbids splitting a code point across chunks.
+wire = b"\x7f\x61\xc3\x61\xa4\xff"
+try:
+    CBOR_Codecs.CBOR.dec(wire)
+except CBOR_Codec_Decoding_Error:
+    pass
+else:
+    raise AssertionError("split UTF-8 code point across chunks was accepted")
+
+# Valid split on a code-point boundary still works.
+obj, rem = CBOR_Codecs.CBOR.dec(b"\x7f\x62\xc3\xa4\x61\x61\xff")
+assert rem == b"" and obj.val == "äa"
+
+= CBORF_FLOAT preserves non-preferred NaN payload wire after cache clear
+from scapy.cbor.cbor import CBORFloatValue
+from scapy.cbor.cborfields import CBORF_FLOAT
+from scapy.cborpacket import CBOR_Packet
+
+class FloatPkt(CBOR_Packet):
+    CBOR_root = CBORF_FLOAT("value", 0.0)
+
+# binary64 NaN with a low payload bit (preferred width stays binary64)
+wire = bytes.fromhex("fb7ff8000000000001")
+pkt = FloatPkt(wire)
+assert isinstance(pkt.value, CBORFloatValue)
+assert pkt.value != pkt.value  # NaN
+assert pkt.value.cbor_encoded == wire
+pkt.raw_packet_cache = None
+pkt.raw_packet_cache_fields = None
+assert bytes(pkt) == wire
+
+= CBORF_TEXT_STRING rejects bytes values instead of str(bytes) corruption
+from scapy.cbor.cborfields import CBORF_TEXT_STRING
+from scapy.cborpacket import CBOR_Packet
+
+class TextPkt(CBOR_Packet):
+    CBOR_root = CBORF_TEXT_STRING("label", "")
+
+pkt = TextPkt()
+try:
+    pkt.label = b"hi"
+except TypeError:
+    pass
+else:
+    raise AssertionError("bytes were coerced via str(bytes)")

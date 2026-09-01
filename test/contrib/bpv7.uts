@@ -2422,3 +2422,88 @@ except ValueError as exc:
     assert "localnode-eid-on-ingress" in str(exc), exc
 else:
     raise AssertionError("assert_valid ignored lifecycle LocalNode")
+
+= HopCountBlock.validate reports a missing count value
+from scapy.contrib.bpv7 import HopCountBlock
+
+codes = {i.code for i in HopCountBlock(limit=5, count=None).validate()}
+assert "missing-hop-count" in codes, codes
+assert not HopCountBlock(limit=5, count=0).validate()
+
+= CRC check without span uses only a final preferred-length CRC bstr
+from scapy.contrib.bpv7 import CanonicalBlock, CrcType
+from scapy.packet import Raw
+
+block = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC16,
+    btsd=Raw(load=b"payload"),
+)
+wire = bytes(block)
+parsed = CanonicalBlock(wire)
+assert parsed.check_crc()
+assert hasattr(parsed, "_crc_content_span")
+del parsed._crc_content_span
+assert parsed.check_crc(), (
+    "preferred CRC at end of definite array must verify via fallback"
+)
+
+= CRC fallback does not match an embedded preferred bstr inside BTSD
+from scapy.contrib.bpv7 import CanonicalBlock, CrcType
+from scapy.libs.crc import CRC_16_X25
+from scapy.packet import Raw
+
+# Build a block, then craft BTSD that embeds the same preferred CRC bstr
+# earlier in the array so a naive rfind would zero the wrong region.
+base = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC16,
+    btsd=Raw(load=b"xx"),
+)
+wire = bytes(base)
+parsed = CanonicalBlock(wire)
+crc = parsed.getfieldval("crc_value")
+assert len(crc) == 2
+# Replace BTSD with bytes that contain \x42||crc as a decoy payload, keep CRC.
+# Canonical layout: [type, num, flags, crc_type, btsd, crc]
+# Use dissect with span cleared after embedding decoy in load.
+decoy = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC16,
+    btsd=Raw(load=b"\x42" + crc + b"tail"),
+)
+decoy_wire = bytes(decoy)
+decoy_parsed = CanonicalBlock(decoy_wire)
+assert decoy_parsed.check_crc()
+del decoy_parsed._crc_content_span
+assert decoy_parsed.check_crc(), (
+    "fallback must use the final CRC field, not an embedded bstr in BTSD"
+)
+
+= Non-preferred CRC header still verifies with span but not after span loss
+from scapy.contrib.bpv7 import CanonicalBlock, CrcType
+from scapy.libs.crc import CRC_16_X25
+from scapy.packet import Raw
+
+base = CanonicalBlock(
+    type_code=1,
+    block_num=1,
+    crc_type=CrcType.CRC16,
+    btsd=Raw(load=b"payload"),
+)
+wire = bytes(base)
+crc = CanonicalBlock(wire).getfieldval("crc_value")
+needle = b"\x42" + crc
+idx = wire.rfind(needle)
+zero_wire = wire[:idx] + b"\x58\x02\x00\x00" + wire[idx + len(needle):]
+new_crc = CRC_16_X25(zero_wire).to_bytes(2, "big")
+nonpreferred = wire[:idx] + b"\x58\x02" + new_crc + wire[idx + len(needle):]
+received = CanonicalBlock(nonpreferred)
+assert received.check_crc() is True
+del received._crc_content_span
+assert received.check_crc() is False, (
+    "without span, non-preferred CRC head must not use unsafe rfind fallback"
+)

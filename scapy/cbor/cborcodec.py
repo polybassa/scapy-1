@@ -377,6 +377,13 @@ def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
             raise CBOR_Codec_Decoding_Error(
                 "Empty CBOR data", remaining=s[start:])
         initial = s[start]
+        if initial == 0xff:
+            issues.append((
+                base_offset + start,
+                "Standalone break byte (0xff)",
+            ))
+            index[0] = start + 1
+            return
         major = initial >> 5
         ai = initial & 0x1f
         pos = start + 1
@@ -415,6 +422,12 @@ def cbor_find_non_deterministic(s, allow_indefinite=True, base_offset=0):
 
         # Major type 7: simple values and floats. Check float preferred width.
         if major == 7:
+            if ai == 24 and isinstance(value, int) and value < 32:
+                issues.append((
+                    base_offset + start,
+                    "Non-shortest CBOR simple value encoding "
+                    "(AI=24, value=%d)" % value,
+                ))
             if ai in (25, 26, 27) and value is not CBOR_INDEFINITE:
                 preferred = _cbor_preferred_float_ai_from_encoded(ai, int(value))
                 if preferred is not None and preferred < ai:
@@ -1235,16 +1248,43 @@ def _encode_cbor_item_deterministic(item):
     Unlike :func:`_encode_cbor_item`, map keys at every nesting level are
     sorted by their deterministic encoded bytes. Intended for schema-driven
     rebuild paths such as preserved unknown ``CBORF_MAP`` members.
+
+    :class:`~scapy.cbor.cbor.CBOR_Object` wrappers are accepted and reduced to
+    native values (preferred float encoding, deterministic nested maps).
     """
     from scapy.cbor.cbor import (
+        CBOR_Object,
+        CBOR_ARRAY,
+        CBOR_MAP,
+        CBOR_SEMANTIC_TAG,
+        CBOR_SIMPLE_VALUE,
         CBOR_UNDEFINED,
         CBOR_UNDEFINED_VALUE,
         CBORMapData,
         CBORTagValue,
         CBORSimpleValue,
-        CBOR_SIMPLE_VALUE,
     )
 
+    if isinstance(item, CBOR_Object):
+        if isinstance(item, CBOR_UNDEFINED):
+            return CBOR_UNDEFINED().enc()
+        if isinstance(item, CBOR_ARRAY):
+            return _encode_cbor_item_deterministic(list(item.val))
+        if isinstance(item, CBOR_MAP):
+            if isinstance(item.val, CBORMapData):
+                return _encode_cbor_map_deterministic(item.val.cbor_pairs())
+            if isinstance(item.val, list):
+                return _encode_cbor_map_deterministic(item.val)
+            return _encode_cbor_map_deterministic(list(item.val.items()))
+        if isinstance(item, CBOR_SEMANTIC_TAG):
+            tag_num, inner = item.val
+            return (
+                CBOR_encode_head(6, tag_num)
+                + _encode_cbor_item_deterministic(inner)
+            )
+        if isinstance(item, CBOR_SIMPLE_VALUE):
+            return CBORcodec_SIMPLE_AND_FLOAT.enc(item)
+        return _encode_cbor_item_deterministic(item.val)
     if item is CBOR_UNDEFINED_VALUE:
         return CBOR_UNDEFINED().enc()
     if isinstance(item, CBORTagValue):

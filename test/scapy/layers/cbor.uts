@@ -2698,3 +2698,73 @@ assert len(pkt.children) == 2
 assert pkt.children[0].n == 1
 assert pkt.children[0].parent is pkt
 assert pkt.children[1].parent is pkt
+
++ Medium-severity review follow-ups
+
+= CBORF_FLOAT preserves received half-float wire after cache clear
+from scapy.cbor.cbor import CBORFloatValue
+from scapy.cbor.cborfields import CBORF_FLOAT
+from scapy.cborpacket import CBOR_Packet
+
+class FloatPkt(CBOR_Packet):
+    CBOR_root = CBORF_FLOAT("value", 0.0)
+
+wire = b"\xf9\x3e\x00"  # 1.5 as half
+pkt = FloatPkt(wire)
+assert isinstance(pkt.value, CBORFloatValue)
+assert abs(pkt.value - 1.5) < 1e-6
+assert pkt.value.cbor_encoded == wire
+pkt.raw_packet_cache = None
+pkt.raw_packet_cache_fields = None
+assert bytes(pkt) == wire
+pkt.value = 1.5
+assert bytes(pkt) == wire  # preferred half for 1.5
+
+= Unframed CBORF_SEQUENCE leaves trailing CBOR items
+from scapy.cbor.cborfields import CBORF_SEQUENCE, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class TwoInts(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_UNSIGNED_INTEGER("a", 0),
+        CBORF_UNSIGNED_INTEGER("b", 0),
+    )
+
+pkt = TwoInts(b"\x01\x02\x03")
+assert pkt.a == 1 and pkt.b == 2
+assert isinstance(pkt.payload, Raw) or pkt.original.endswith(b"\x03")
+# Remaining third item is not consumed by the schema
+remain = TwoInts.CBOR_root.dissect_result(TwoInts(), b"\x01\x02\x03").remaining
+assert remain == b"\x03"
+
+= CBORF_SEMANTIC_TAG.m2i rejects the wrong tag number
+from scapy.cbor.cborfields import (
+    CBORF_SEMANTIC_TAG, CBORF_INTEGER, CBOR_Type_Mismatch,
+)
+
+fld = CBORF_SEMANTIC_TAG("tag", None, 1, CBORF_INTEGER("ts", 0))
+try:
+    fld.m2i(None, b"\xc2\x00")  # tag 2
+except CBOR_Type_Mismatch:
+    pass
+else:
+    raise AssertionError("wrong tag accepted by m2i")
+
+= Deterministic encoder accepts CBOR_Object wrappers
+from scapy.cbor.cbor import CBOR_UNSIGNED_INTEGER, CBOR_TEXT_STRING, CBOR_MAP, CBORMapData
+from scapy.cbor.cborcodec import CBORcodec_Object
+
+obj = CBOR_MAP(CBORMapData([
+    (CBOR_TEXT_STRING("b"), CBOR_UNSIGNED_INTEGER(1)),
+    (CBOR_TEXT_STRING("a"), CBOR_UNSIGNED_INTEGER(2)),
+]))
+wire = CBORcodec_Object.encode_cbor_item_deterministic(obj)
+assert wire == b"\xa2\x61a\x02\x61b\x01"
+
+= Non-determinism scanner reports bare break and short simples
+from scapy.cbor.cborcodec import cbor_find_non_deterministic
+
+issues = cbor_find_non_deterministic(b"\xff")
+assert issues and "break" in issues[0][1].lower()
+issues = cbor_find_non_deterministic(b"\xf8\x14")  # simple 20 via AI=24
+assert issues and "simple" in issues[0][1].lower()

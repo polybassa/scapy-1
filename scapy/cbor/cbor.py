@@ -754,6 +754,37 @@ class CBOR_FLOAT(CBOR_Object[float]):
         return super(CBOR_FLOAT, self).enc(codec)
 
 
+class CBORFloatValue(float):
+    """Native float that optionally retains the exact CBOR encoding.
+
+    Used by :class:`~scapy.cbor.cborfields.CBORF_FLOAT` so dissected half /
+    single / double (and NaN payloads) survive field storage and rebuild when
+    the packet raw cache is cleared, until the value is replaced by a plain
+    ``float``.
+    """
+
+    __slots__ = ("_cbor_encoded",)
+
+    def __new__(cls, value, encoded=None):
+        # type: (float, Optional[bytes]) -> CBORFloatValue
+        self = float.__new__(cls, value)
+        object.__setattr__(self, "_cbor_encoded", encoded)
+        return self
+
+    @property
+    def cbor_encoded(self):
+        # type: () -> Optional[bytes]
+        return getattr(self, "_cbor_encoded", None)
+
+    def __copy__(self):
+        # type: () -> CBORFloatValue
+        return CBORFloatValue(float(self), self.cbor_encoded)
+
+    def __deepcopy__(self, memo):
+        # type: (dict) -> CBORFloatValue
+        return self.__copy__()
+
+
 class _CBOR_ERROR(CBOR_Object[Union[bytes, CBOR_Object[Any]]]):
     """CBOR decoding error wrapper"""
     tag = None  # type: ignore  # Error objects don't have a CBOR tag

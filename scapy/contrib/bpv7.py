@@ -895,31 +895,26 @@ class AbstractBlock:
                         for i in range(content_len):
                             zeroed[start + i] = 0
                         return defn.encode(defn.cls(bytes(zeroed)))
-            # Fall back: locate content after any legal definite byte-string head.
+            # Fall back: CRC is the final array element (preferred bstr head
+            # only). Do not rfind overlong heads — BTSD may embed matching
+            # short sequences. Missing span + non-preferred CRC head rebuilds.
             from scapy.cbor.cborcodec import CBOR_encode_head
-            import struct as _struct
             n = len(actual)
-            heads = [CBOR_encode_head(2, n)]
-            if n < 256:
-                heads.append(b"\x58" + bytes([n]))
-            if n < 65536:
-                heads.append(b"\x59" + _struct.pack(">H", n))
-            if n < 2**32:
-                heads.append(b"\x5a" + _struct.pack(">I", n))
-            heads.append(b"\x5b" + _struct.pack(">Q", n))
-            seen = set()
-            for head in heads:
-                if head in seen:
-                    continue
-                seen.add(head)
-                needle = head + actual
-                idx = raw.rfind(needle)
-                if idx >= 0:
-                    zeroed = bytearray(raw)
-                    content_off = idx + len(head)
-                    for i in range(len(actual)):
-                        zeroed[content_off + i] = 0
-                    return defn.encode(defn.cls(bytes(zeroed)))
+            head = CBOR_encode_head(2, n)
+            payload = head + actual
+            if raw.endswith(b"\xff"):
+                if not raw.endswith(payload + b"\xff"):
+                    return self.calculate_crc() or b""
+                start = len(raw) - 1 - len(payload)
+            else:
+                if not raw.endswith(payload):
+                    return self.calculate_crc() or b""
+                start = len(raw) - len(payload)
+            zeroed = bytearray(raw)
+            content_off = start + len(head)
+            for i in range(n):
+                zeroed[content_off + i] = 0
+            return defn.encode(defn.cls(bytes(zeroed)))
         return self.calculate_crc() or b""
 
     def check_crc(self) -> bool:

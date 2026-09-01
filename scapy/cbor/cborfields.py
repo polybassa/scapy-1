@@ -962,7 +962,13 @@ class CBORF_UNDEFINED(CBORF_field[None]):
 
 
 class CBORF_FLOAT(CBORF_field[float]):
-    """CBOR float field (major type 7, double precision)."""
+    """CBOR float field (major type 7).
+
+    Dissected values retain the received encoding (half / single / double,
+    including NaN payloads) via :class:`~scapy.cbor.cbor.CBORFloatValue`.
+    Assigning a plain ``float`` uses preferred serialization on the next
+    rebuild.
+    """
     CBOR_tag = CBOR_MajorTypes.SIMPLE_AND_FLOAT
 
     def matches_next_item(self, pkt, s):
@@ -974,27 +980,48 @@ class CBORF_FLOAT(CBORF_field[float]):
 
     def any2i(self, pkt, x):
         # type: (CBOR_Packet, Any) -> float
+        from scapy.cbor.cbor import CBORFloatValue
         if x is CBOR_ABSENT:
             return CBOR_ABSENT  # type: ignore
         if x is None:
             return None  # type: ignore
+        if isinstance(x, CBORFloatValue):
+            return x
         if isinstance(x, CBOR_FLOAT):
-            return x.val
+            return CBORFloatValue(x.val, encoded=x._encoded)
         if isinstance(x, CBOR_Object):
-            return float(x.val)
+            return float(cbor_object_to_python(x))
         return float(x)
 
     def m2i(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> Tuple[float, bytes]
+        from scapy.cbor.cbor import CBORFloatValue
         obj, remain = CBORcodec_SIMPLE_AND_FLOAT.dec(s)
         if not isinstance(obj, CBOR_FLOAT):
             raise CBOR_Type_Mismatch(
                 "Expected float, got %r" % obj)
-        return obj.val, remain
+        return CBORFloatValue(obj.val, encoded=obj._encoded), remain
 
     def encode_value(self, x):
         # type: (Any) -> bytes
+        from scapy.cbor.cbor import CBORFloatValue
+        if isinstance(x, CBOR_FLOAT):
+            return x.enc()
+        if isinstance(x, CBORFloatValue) and x.cbor_encoded is not None:
+            return x.cbor_encoded
         return CBORcodec_SIMPLE_AND_FLOAT.enc(float(x))
+
+    def i2h(self, pkt, x):
+        # type: (CBOR_Packet, Any) -> Any
+        if isinstance(x, CBOR_FLOAT):
+            return x.val
+        return x
+
+    def i2repr(self, pkt, x):
+        # type: (CBOR_Packet, Any) -> str
+        if isinstance(x, CBOR_FLOAT):
+            return repr(x.val)
+        return repr(x)
 
     def randval(self):
         # type: () -> RandFloat
@@ -1219,13 +1246,13 @@ class CBORF_SEQUENCE(_CBORF_compound):
 
     def dissect_result(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> CBORParseResult
-        # Count top-level items once via memoryview so optional / SEQUENCE_OF
-        # fields can reserve for later required members without quadratic
-        # suffix copies.
+        # Count only up to this schema's max so trailing CBOR items remain for
+        # a parent (e.g. Raw / Padding), matching definite ARRAY roots.
         view = memoryview(s) if not isinstance(s, memoryview) else s
         probe = view
         item_count = 0
-        while probe and not cbor_is_break(probe):
+        max_count = self.max_items(pkt)
+        while probe and not cbor_is_break(probe) and item_count < max_count:
             _obj, probe = CBORcodec_Object.decode_cbor_item(probe)
             item_count += 1
         remaining = self._dissect_children_budgeted(pkt, s, item_count)
@@ -1993,7 +2020,7 @@ class CBORF_SEMANTIC_TAG(CBORF_field[int]):
 
     def m2i(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> Tuple[int, bytes]
-        return self._parse_tag_head(s, require_match=False)
+        return self._parse_tag_head(s, require_match=True)
 
     def matches_next_item(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> bool

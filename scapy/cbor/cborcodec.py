@@ -906,6 +906,9 @@ class CBORcodec_MAP(CBORcodec_Object[Any]):
 
         def _add_pair(key, value):
             # type: (Any, Any) -> None
+            # CBOR_FLOAT preserves received wire bytes in enc(), so distinct
+            # float/NaN encodings remain distinct while semantic duplicates
+            # (e.g. 1 vs 0x18 0x01) still collapse via preferred encoding.
             key_wire = CBORcodec_Object.encode_cbor_item(key)
             if key_wire in seen_keys:
                 raise CBOR_Codec_Decoding_Error(
@@ -1116,21 +1119,21 @@ class CBORcodec_SIMPLE_AND_FLOAT(CBORcodec_Object[Union[int, float, bool, None]]
                     (1 + fraction / 1024.0) *
                     (2 ** (exponent - 15)))
 
-            return CBOR_FLOAT(float_val), remainder
+            return CBOR_FLOAT(float_val, encoded=_cbor_buf_bytes(s[:3])), remainder
         elif additional_info == 26:
             # Single precision float (4 bytes)
             if len(s) < 5:
                 raise CBOR_Codec_Decoding_Error(
                     "Not enough bytes for single float", remaining=s)
             float_val = struct.unpack(">f", s[1:5])[0]
-            return CBOR_FLOAT(float_val), s[5:]
+            return CBOR_FLOAT(float_val, encoded=_cbor_buf_bytes(s[:5])), s[5:]
         elif additional_info == 27:
             # Double precision float (8 bytes)
             if len(s) < 9:
                 raise CBOR_Codec_Decoding_Error(
                     "Not enough bytes for double float", remaining=s)
             float_val = struct.unpack(">d", s[1:9])[0]
-            return CBOR_FLOAT(float_val), s[9:]
+            return CBOR_FLOAT(float_val, encoded=_cbor_buf_bytes(s[:9])), s[9:]
         elif additional_info < 24:
             # Simple value 0-23
             return CBOR_SIMPLE_VALUE(additional_info), s[1:]
@@ -1207,6 +1210,76 @@ def _encode_cbor_item(item):
             "Cannot encode type: %s" % type(item))
 
 
+def _encode_cbor_map_deterministic(pairs):
+    # type: (Any) -> bytes
+    """Encode map pairs in RFC 8949 core-deterministic key order."""
+    encoded_pairs = []  # type: List[Tuple[bytes, bytes]]
+    for key, value in pairs:
+        key_bytes = _encode_cbor_item_deterministic(key)
+        value_bytes = _encode_cbor_item_deterministic(value)
+        encoded_pairs.append((key_bytes, value_bytes))
+    encoded_pairs.sort(key=lambda item: item[0])
+    parts = [CBOR_encode_head(5, len(encoded_pairs))]
+    for key_bytes, value_bytes in encoded_pairs:
+        parts.append(key_bytes)
+        parts.append(value_bytes)
+    return b"".join(parts)
+
+
+def _encode_cbor_item_deterministic(item):
+    # type: (Any) -> bytes
+    """Encode a Python value using RFC 8949 core-deterministic rules.
+
+    Unlike :func:`_encode_cbor_item`, map keys at every nesting level are
+    sorted by their deterministic encoded bytes. Intended for schema-driven
+    rebuild paths such as preserved unknown ``CBORF_MAP`` members.
+    """
+    from scapy.cbor.cbor import (
+        CBOR_UNDEFINED,
+        CBOR_UNDEFINED_VALUE,
+        CBORMapData,
+        CBORTagValue,
+        CBORSimpleValue,
+        CBOR_SIMPLE_VALUE,
+    )
+
+    if item is CBOR_UNDEFINED_VALUE:
+        return CBOR_UNDEFINED().enc()
+    if isinstance(item, CBORTagValue):
+        return (
+            CBOR_encode_head(6, item.tag)
+            + _encode_cbor_item_deterministic(item.value)
+        )
+    if isinstance(item, CBORSimpleValue):
+        return CBORcodec_SIMPLE_AND_FLOAT.enc(CBOR_SIMPLE_VALUE(item.value))
+    if isinstance(item, CBORMapData):
+        return _encode_cbor_map_deterministic(item.cbor_pairs())
+    if isinstance(item, dict):
+        return _encode_cbor_map_deterministic(list(item.items()))
+    if isinstance(item, list):
+        encoded_items = [
+            _encode_cbor_item_deterministic(element) for element in item
+        ]
+        return CBOR_encode_head(4, len(encoded_items)) + b"".join(encoded_items)
+    if isinstance(item, bool):
+        return CBORcodec_SIMPLE_AND_FLOAT.enc(item)
+    if isinstance(item, int):
+        if item >= 0:
+            return CBORcodec_UNSIGNED_INTEGER.enc(item)
+        return CBORcodec_NEGATIVE_INTEGER.enc(item)
+    if isinstance(item, bytes):
+        return CBORcodec_BYTE_STRING.enc(item)
+    if isinstance(item, str):
+        return CBORcodec_TEXT_STRING.enc(item)
+    if isinstance(item, float):
+        return CBORcodec_SIMPLE_AND_FLOAT.enc(item)
+    if item is None:
+        return CBORcodec_SIMPLE_AND_FLOAT.enc(None)
+    raise CBOR_Codec_Encoding_Error(
+        "Cannot deterministically encode type: %s" % type(item)
+    )
+
+
 def _decode_cbor_item(s, safe=False, depth=0):
     # type: (Any, bool, int) -> Tuple[CBOR_Object[Any], Any]
     """Decode CBOR bytes to a CBOR_Object.
@@ -1257,4 +1330,7 @@ def _decode_cbor_item(s, safe=False, depth=0):
 
 # Add helper methods to CBORcodec_Object
 CBORcodec_Object.encode_cbor_item = staticmethod(_encode_cbor_item)
+CBORcodec_Object.encode_cbor_item_deterministic = staticmethod(
+    _encode_cbor_item_deterministic
+)
 CBORcodec_Object.decode_cbor_item = staticmethod(_decode_cbor_item)

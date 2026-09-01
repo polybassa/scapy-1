@@ -348,7 +348,26 @@ class CBOR_Object(Generic[_K], metaclass=CBOR_Object_metaclass):
 
     def __eq__(self, other):
         # type: (Any) -> bool
-        return bool(self.val == other)
+        if isinstance(other, CBOR_Object):
+            return (
+                type(self) is type(other)
+                and self.val == other.val
+            )
+        return NotImplemented
+
+    def __ne__(self, other):
+        # type: (Any) -> bool
+        equal = self.__eq__(other)
+        if equal is NotImplemented:
+            return NotImplemented
+        return not equal
+
+    def __hash__(self):
+        # type: () -> int
+        try:
+            return hash((type(self), self.val))
+        except TypeError:
+            return hash((type(self), id(self)))
 
 
 #######################
@@ -703,6 +722,18 @@ CBOR_NO_ITEM = _CBORNoItem()
 class CBOR_FLOAT(CBOR_Object[float]):
     """CBOR floating-point number (major type 7)"""
     tag = CBOR_MajorTypes.SIMPLE_AND_FLOAT
+
+    def __init__(self, val, encoded=None):
+        # type: (float, Optional[bytes]) -> None
+        CBOR_Object.__init__(self, val)
+        # Exact received float encoding when known; preferred width when None.
+        self._encoded = encoded
+
+    def enc(self, codec=None):
+        # type: (Any) -> bytes
+        if self._encoded is not None:
+            return self._encoded
+        return super(CBOR_FLOAT, self).enc(codec)
 
 
 class _CBOR_ERROR(CBOR_Object[Union[bytes, CBOR_Object[Any]]]):

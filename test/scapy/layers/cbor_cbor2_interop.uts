@@ -802,12 +802,17 @@ for wire in wires:
     assert obj.val == 1.5
     assert cbor2.loads(obj.enc()) == 1.5
 
-= Scapy double-precision output is accepted by cbor2 for finite floats ~ external_cbor2
+= Scapy preferred float encodings are accepted by cbor2 for finite floats ~ external_cbor2
 values = [-1.0e300, -123.5, -0.0, 0.0, 1.5, 1.1, 1.0e300]
 for value in values:
     wire = rr_assert_scapy_native(value)
-    assert wire[0] == 0xfb
-
+    # Preferred serialization may use half/single/double; cbor2 must accept it.
+    assert wire[0] in (0xf9, 0xfa, 0xfb), wire.hex()
+    loaded = cbor2.loads(wire)
+    assert loaded == value or (
+        math.copysign(1.0, loaded) == math.copysign(1.0, value)
+        and loaded == 0.0 and value == 0.0
+    )
 = Different NaN payloads remain semantic NaNs after Scapy re-encoding ~ external_cbor2
 for wire in (b"\xf9\x7e\x00", b"\xfa\x7f\xc0\x00\x01",
              b"\xfb\x7f\xf8\x00\x00\x00\x00\x00\x01"):

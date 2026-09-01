@@ -151,6 +151,17 @@ bytes(obj) == b'\xf9\x3e\x00'
 obj = CBOR_FLOAT(1.0e300)
 bytes(obj) == b'\xfb\x7e\x37\xe4\x3c\x88\x00\x75\x9c'
 
+= Decoded floats preserve their exact received encoding on rebuild
+obj, rem = CBOR_Codecs.CBOR.dec(b'\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00')
+abs(obj.val - 1.5) < 0.0001 and rem == b'' and bytes(obj) == b'\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00'
+
+= CBOR_Object equality compares type and value
+from scapy.cbor import CBOR_UNSIGNED_INTEGER, CBOR_TRUE
+assert CBOR_UNSIGNED_INTEGER(1) == CBOR_UNSIGNED_INTEGER(1)
+assert CBOR_UNSIGNED_INTEGER(1) != CBOR_UNSIGNED_INTEGER(2)
+assert CBOR_UNSIGNED_INTEGER(1) != CBOR_TRUE()
+assert CBOR_UNSIGNED_INTEGER(1) != 1
+
 = Decode double precision float
 obj, remainder = CBOR_Codecs.CBOR.dec(b'\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00')
 abs(obj.val - 1.5) < 0.0001 and remainder == b''
@@ -2609,7 +2620,24 @@ pkt.z = 2
 assert bytes(pkt) == b"\xa2\x61a\x01\x61z\x02"
 
 
-= CBORF_MAP copy isolates unknown extension storage from the original packet
+= CBORF_MAP recursively determinizes nested unknown map keys after mutation
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43NestedUnknownMap(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("z", 0),
+    )
+
+# known z:1, unknown x:{b:1,a:2} with nested keys out of deterministic order
+wire = b"\xa2\x61z\x01\x61x\xa2\x61b\x01\x61a\x02"
+pkt = PR43NestedUnknownMap(wire)
+assert bytes(pkt) == wire
+pkt.z = 2
+assert bytes(pkt) == b"\xa2\x61x\xa2\x61a\x02\x61b\x01\x61z\x02"
+
+
+= CBORF_MAP copy isolates nested unknown extension values from the original packet
 from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
 from scapy.cborpacket import CBOR_Packet
 
@@ -2618,12 +2646,20 @@ class PR43MapCopyIsolation(CBOR_Packet):
         CBORF_UNSIGNED_INTEGER("a", 0),
     )
 
-wire = b"\xa2\x61x\x01\x61a\x07"
+wire = (
+    b"\xbf"
+    b"\x61x"
+    b"\x9f\x01\xbf\x61k\x02\xff\xff"
+    b"\x61a\x07"
+    b"\xff"
+)
 orig = PR43MapCopyIsolation(wire)
 clone = orig.copy()
 assert clone._cbor_unknown_map_pairs is not orig._cbor_unknown_map_pairs
-clone._cbor_unknown_map_pairs.clear()
-assert orig._cbor_unknown_map_pairs == [("x", 1)]
+assert clone._cbor_unknown_map_pairs[0][1] is not orig._cbor_unknown_map_pairs[0][1]
+clone._cbor_unknown_map_pairs[0][1].append(3)
+assert len(orig._cbor_unknown_map_pairs[0][1]) == 2
+assert clone._cbor_unknown_map_pairs[0][1] == [1, {"k": 2}, 3]
 
 
 + PR43 in-depth review - CBORF_ARRAY_OF indefinite decoding

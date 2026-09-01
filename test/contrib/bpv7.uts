@@ -898,7 +898,7 @@ assert "forbidden-block-status-report" in codes
 
 + Registered block-type-specific data failures
 
-= Malformed data for a registered block type is never a silent Raw fallback
+= Malformed data for a registered block type raises on dissection
 from scapy.cbor.cbor import CBOR_Decoding_Error
 from scapy.contrib.bpv7 import CanonicalBlock
 
@@ -906,13 +906,12 @@ from scapy.contrib.bpv7 import CanonicalBlock
 # string instead contains the CBOR text string "x".
 wire = b"\x85\x07\x02\x00\x00\x42\x61x"
 try:
-    block = CanonicalBlock(wire)
+    CanonicalBlock(wire)
 except CBOR_Decoding_Error:
     pass
 else:
-    codes = {issue.code for issue in block.validate()}
-    assert "known-btsd-decode-failed" in codes, (
-        "Malformed registered BTSD was downgraded without a validation issue"
+    raise AssertionError(
+        "Malformed registered BTSD was accepted without a decoding error"
     )
 
 = Data for an unregistered block type remains available as Raw
@@ -927,6 +926,27 @@ assert bytes(block.btsd) == b"abc"
 assert "known-btsd-decode-failed" not in {
     issue.code for issue in block.validate()
 }
+
+
+= Auto CRC build remains correct when BTSD contains zero-byte sequences
+from scapy.contrib.bpv7 import CanonicalBlock, CrcType
+from scapy.packet import Raw
+
+# Payload deliberately contains CRC16 / CRC32C zero placeholders so a
+# naive rfind(zero) patch would hit the wrong offset.
+for crc_type, zeros in (
+    (CrcType.CRC16, b"\x00\x00"),
+    (CrcType.CRC32C, b"\x00\x00\x00\x00"),
+):
+    block = CanonicalBlock(
+        type_code=1,
+        block_num=1,
+        crc_type=crc_type,
+        btsd=Raw(load=b"pre" + zeros + b"post"),
+    )
+    raw = bytes(block)
+    decoded = CanonicalBlock(raw)
+    assert decoded.check_crc(), (crc_type, raw.hex())
 
 
 + Canonical block-number reservation
@@ -1389,7 +1409,7 @@ parsed = CanonicalBlock(result.data)
 assert len(parsed.crc_value) == 4
 assert parsed.check_crc()
 
-= Building a directly serialized CRC block traverses its root once
+= Building a directly serialized CRC block traverses its root twice for auto-CRC
 block = _rr_payload(load=b"x", freeze=False)
 root = CanonicalBlock.CBOR_root
 original = root.build_result
@@ -1406,9 +1426,11 @@ finally:
     root.build_result = original
 
 assert CanonicalBlock(wire).check_crc()
-assert calls["count"] == 1, calls
+# Auto-CRC builds twice: once with a zero placeholder to compute the CRC,
+# then again with the final CRC value (avoids ambiguous rfind patching).
+assert calls["count"] == 2, calls
 
-= Building a CRC block nested in BundleV7 traverses its root once
+= Building a CRC block nested in BundleV7 traverses its root twice for auto-CRC
 payload = _rr_payload(load=b"x", freeze=False)
 bundle = _rr_bundle(payload=payload)
 root = CanonicalBlock.CBOR_root
@@ -1426,7 +1448,7 @@ finally:
     root.build_result = original
 
 assert BundleV7(wire).check_crc()
-assert calls["count"] == 1, calls
+assert calls["count"] == 2, calls
 
 
 + Blind spot: parsed CRC checks must observe later nested mutations
@@ -2225,3 +2247,41 @@ for text in (
         pass
     else:
         raise AssertionError("invalid DTN reg-name was accepted: %s" % text)
+
++ PR43 re-review - EID wire CBOR type enforcement
+
+= EID scheme rejects non-unsigned CBOR integer types
+from scapy.contrib.bpv7 import EidStruct
+
+for scheme in (-1, True, "1", 1.0):
+    try:
+        EidStruct.from_cbor([scheme, b"private"])
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("malformed EID scheme accepted: %r" % scheme)
+
+= IPN SSP components reject non-unsigned CBOR integer types
+from scapy.contrib.bpv7 import EidStruct
+
+for bad in (True, "1", 1.0, -1):
+    try:
+        EidStruct.from_cbor([2, [bad, 1]])
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("malformed IPN SSP component accepted: %r" % bad)
+
+= Valid unsigned EID scheme and IPN SSP still decode
+from scapy.contrib.bpv7 import EidStruct
+
+assert EidStruct.from_cbor([65536, b"private"]).scheme == 65536
+assert EidStruct.from_cbor([2, [1, 2, 3]]).to_text() == "ipn:1.2.3"
+
+= BundleAgeBlock.validate reports a missing age value
+from scapy.contrib.bpv7 import BundleAgeBlock
+
+codes = {i.code for i in BundleAgeBlock().validate()}
+assert "missing-bundle-age" in codes, codes
+assert not BundleAgeBlock(age=0).validate()
+assert not BundleAgeBlock(age=100).validate()

@@ -53,6 +53,18 @@ def _as_int(val: Any) -> int:
     return int(val)
 
 
+def _require_uint(val: Any, what: str = "unsigned integer") -> int:
+    """Require a RFC 9171 CBOR unsigned integer already normalized to Python.
+
+    Uses ``type(val) is int`` so ``bool`` subclasses of ``int`` are rejected.
+    """
+    if type(val) is not int or val < 0:
+        raise TypeError(
+            "%s must be a CBOR unsigned integer, got %r" % (what, val)
+        )
+    return val
+
+
 def _as_bytes(val: Any) -> bytes:
     if val is None or val is _MISSING:
         return b""
@@ -611,7 +623,9 @@ class EidStruct:
     def _wire_parts(ssp_item: Any) -> list[int]:
         if not isinstance(ssp_item, (list, tuple)):
             raise TypeError("IPN SSP must be a list, have %r" % (ssp_item,))
-        return [_as_int(item) for item in ssp_item]
+        return [
+            _require_uint(item, "IPN SSP component") for item in ssp_item
+        ]
 
     @staticmethod
     def from_cbor(item: Any) -> EidStruct:
@@ -619,12 +633,12 @@ class EidStruct:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             raise TypeError("Need a 2-element EID array, have %r" % (item,))
         scheme_id, ssp_item = item
-        scheme_num = _as_int(scheme_id)
+        scheme_num = _require_uint(scheme_id, "EID scheme")
         known = _known_eid_scheme(scheme_num)
 
         if known == EidScheme.dtn:
             if isinstance(ssp_item, int):
-                ssp = ssp_item
+                ssp = _require_uint(ssp_item, "DTN compressed SSP")
                 if ssp not in _DTN_WELL_KNOWN_SSP:
                     raise ValueError(
                         "Unknown compressed DTN SSP value: %r" % (ssp,)
@@ -817,12 +831,9 @@ class AbstractBlock:
         crc_bytes = defn.encode(defn.cls(pre_crc))
         if len(crc_bytes) != len(zero):
             raise CBOR_Encoding_Error("CRC width mismatch during patch")
-        idx = pre_crc.rfind(zero)
-        if idx < 0:
-            return self._build_root_with_crc_value(crc_bytes)
-        patched = bytearray(pre_crc)
-        patched[idx:idx + len(zero)] = crc_bytes
-        return bytes(patched)
+        # Rebuild with the computed CRC rather than searching for the zero
+        # placeholder (BTSD may contain identical zero sequences).
+        return self._build_root_with_crc_value(crc_bytes)
 
     def freeze_crc(self) -> None:
         crc_type = _as_int(self.getfieldval(self._crc_type_name))
@@ -1276,6 +1287,27 @@ class BundleAgeBlock(CBOR_Packet):
     """Block data content from Section 4.4.2 of RFC 9171."""
 
     CBOR_root = CBORF_UNSIGNED_INTEGER("age", default=None)
+
+    def validate(self, path: str = "") -> list[ValidationIssue]:
+        issues = []  # type: list[ValidationIssue]
+        age = self.getfieldval("age")
+        if age is None:
+            issues.append(
+                ValidationIssue(
+                    "missing-bundle-age",
+                    path,
+                    "Bundle Age block requires an age value",
+                )
+            )
+        elif type(age) is not int or age < 0:
+            issues.append(
+                ValidationIssue(
+                    "bad-bundle-age",
+                    path,
+                    "Bundle Age must be an unsigned integer",
+                )
+            )
+        return issues
 
 
 @CanonicalBlock.register_type(10)

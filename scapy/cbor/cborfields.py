@@ -1786,7 +1786,7 @@ class CBORF_MAP(CBORF_element):
         unknown = getattr(pkt, "_cbor_unknown_map_pairs", None) or []
         for key, value in unknown:
             key_bytes = CBORcodec_TEXT_STRING.enc(key)
-            value_bytes = CBORcodec_Object.encode_cbor_item(value)
+            value_bytes = CBORcodec_Object.encode_cbor_item_deterministic(value)
             pairs.append((key_bytes, value_bytes))
         pairs.sort(key=lambda item: item[0])
         parts = []  # type: List[bytes]

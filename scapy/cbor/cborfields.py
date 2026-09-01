@@ -5,6 +5,12 @@
 """
 Classes that implement CBOR (Concise Binary Object Representation) data
 structures as packet fields.  Modelled after scapy/asn1fields.py.
+
+Public leaf/compound hooks follow Scapy/ASN.1 style (``any2i`` / ``i2m`` /
+``m2i``, ``build`` / ``dissect``). Compounds additionally use
+``build_result`` / ``dissect_result`` so unframed sequences and array
+budgeting can return an item count for raw-cache fidelity; callers outside
+this module should prefer ``build`` / ``dissect``.
 """
 
 import copy
@@ -390,14 +396,6 @@ class CBORF_field(CBORF_element, Generic[_I]):
             data=self.i2m(pkt, self.any2i(pkt, value)),
             items=1,
         )
-
-    def dissect_value_result(self, pkt, s):
-        # type: (CBOR_Packet, bytes) -> CBORParseResult
-        return self.parse_value(pkt, s)
-
-    def build_value_result(self, pkt, value):
-        # type: (CBOR_Packet, Any) -> CBORBuildResult
-        return self.build_value(pkt, value)
 
     def build(self, pkt):
         # type: (CBOR_Packet) -> bytes
@@ -1214,31 +1212,14 @@ class _CBORF_compound(CBORF_element):
             raise CBOR_Decoding_Error("CBOR item count mismatch")
         return remaining
 
-    def _later_non_any_matches(self, pkt, s, fields):
-        # type: (CBOR_Packet, bytes, Any) -> bool
-        """Return True if a later required non-ANY field claims the next item."""
-        for field in fields:
-            if field.min_items(pkt) <= 0:
-                continue
-            cand = field
-            if isinstance(field, CBORF_optional):
-                continue
-            if isinstance(field, CBORF_CONDITIONAL):
-                if not field._evalcond(pkt):
-                    continue
-                cand = field.fld
-            if isinstance(cand, CBORF_ANY):
-                continue
-            if hasattr(cand, "matches_next_item") and cand.matches_next_item(pkt, s):
-                return True
-        return False
-
 
 class CBORF_SEQUENCE(_CBORF_compound):
     """
-    Unframed fixed sequence of named, typed fields.
-    Analogous to ASN1F_SEQUENCE: each positional element corresponds to a
-    specific CBORF_field.
+    Unframed fixed sequence of named, typed fields (no CBOR array head).
+
+    Unlike :class:`CBORF_ARRAY`, this emits/consumes a stream of top-level
+    CBOR items. Use it when a schema is a field list without a major-type-4
+    envelope (ASN.1 SEQUENCE analogy belongs on :class:`CBORF_ARRAY`).
 
     Example::
 
@@ -1297,9 +1278,11 @@ class CBORF_SEQUENCE(_CBORF_compound):
 class CBORF_ARRAY(_CBORF_compound):
     """
     CBOR array with a fixed sequence of named, typed fields (major type 4).
-    Analogous to ASN1F_SEQUENCE: each positional element corresponds to a
-    specific CBORF_field.  The CBOR array count must match the number of
-    declared fields.
+
+    Analogous to ASN1F_SEQUENCE: each positional element is a
+    :class:`CBORF_field`, wrapped in one definite (or indefinite) CBOR array.
+    Prefer this over :class:`CBORF_SEQUENCE` when the wire form is a single
+    array item.
 
     Example::
 
@@ -1411,12 +1394,16 @@ _ARRAY_T = Union[
 
 class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
     """
-    CBOR sequence of homogeneous elements (no enveloping head).
-    Analogous to ASN1F_SEQUENCE_OF: variable-length array where every
-    element shares the same type, specified by ``cls``.
+    Unframed sequence of homogeneous elements (no CBOR array head).
 
-    ``cls`` may be a :class:`CBORF_field` class/instance (leaf type) or a
-    :class:`CBOR_Packet` subclass (structured type).
+    Preferred constructors (ASN1F_SEQUENCE_OF / PacketListField style)::
+
+        CBORF_SEQUENCE_OF("items", [], cls=MyPacket)
+        CBORF_SEQUENCE_OF("items", [], cls=CBORF_UNSIGNED_INTEGER)
+        CBORF_SEQUENCE_OF("items", [], next_cls_cb=choose_next)
+
+    ``pkt_cls`` is accepted as an alias of ``cls`` for PacketListField
+    familiarity. Pass only one of ``cls`` / ``pkt_cls`` / ``next_cls_cb``.
     """
     CBOR_tag = None
     islist = 1
@@ -1425,50 +1412,26 @@ class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
                  name,  # type: str
                  default,  # type: Any
                  cls=None,  # type: _ARRAY_T
-                 cls_cb=None,  # type: Optional[Callable[..., Optional[Type[Packet]]]]  # noqa: E501
                  pkt_cls=None,  # type: Optional[Type[Packet]]
                  next_cls_cb=None,  # type: Optional[Callable[..., Optional[Type[Packet]]]]  # noqa: E501
-                 item_field=None,  # type: Optional[Union[Type[CBORF_field[Any]], CBORF_field[Any]]]  # noqa: E501
                  ):
         # type: (...) -> None
-        # PacketListField semantics: next_cls_cb takes precedence over pkt_cls.
-        # Wrap legacy cls_cb(pkt, remain) once at construction — never probe
-        # signatures with TypeError at decode time.
         self.next_cls_cb = None  # type: Optional[Callable[..., Optional[Type[Packet]]]]
         self.cls = None
         self.item_field = None
         self.holds_packets = 0
 
-        if next_cls_cb is not None and cls_cb is not None:
-            raise ValueError("Pass only one of next_cls_cb or cls_cb")
         if next_cls_cb is not None:
+            if cls is not None or pkt_cls is not None:
+                raise ValueError(
+                    "Pass only next_cls_cb, or only cls/pkt_cls"
+                )
             self.next_cls_cb = next_cls_cb
             self.holds_packets = 1
-        elif cls_cb is not None:
-            legacy_cb = cls_cb
-
-            def _legacy_next_cls(pkt, lst, cur, remain, _cb=legacy_cb):
-                # type: (Packet, List[Any], Optional[Packet], bytes) -> Optional[Type[Packet]]  # noqa: E501
-                return _cb(pkt, remain)
-
-            self.next_cls_cb = _legacy_next_cls
-            self.holds_packets = 1
         else:
-            selectors = []
-            if cls is not None:
-                selectors.append("cls")
-            if pkt_cls is not None:
-                selectors.append("pkt_cls")
-            if item_field is not None:
-                selectors.append("item_field")
-            if len(selectors) > 1:
-                raise ValueError(
-                    "Conflicting SEQUENCE_OF selectors: %s"
-                    % ", ".join(selectors)
-                )
-            chosen = item_field if item_field is not None else (
-                pkt_cls if pkt_cls is not None else cls
-            )
+            if cls is not None and pkt_cls is not None:
+                raise ValueError("Pass only one of cls or pkt_cls")
+            chosen = pkt_cls if pkt_cls is not None else cls
             if isinstance(chosen, type) and issubclass(chosen, CBORF_field) or \
                     isinstance(chosen, CBORF_field):
                 if isinstance(chosen, type):
@@ -1481,9 +1444,8 @@ class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
                 self.holds_packets = 1
             else:
                 raise ValueError(
-                    "Provide pkt_cls/cls, item_field, or next_cls_cb/cls_cb"
+                    "Provide cls, pkt_cls, or next_cls_cb"
                 )
-        self.cls_cb = self.next_cls_cb
         super(CBORF_SEQUENCE_OF, self).__init__(name, default)
 
     def any2i(self, pkt, x):
@@ -1532,7 +1494,7 @@ class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
                 consumed += 1
                 remaining = next_remaining
             else:
-                result = self.item_field.dissect_value_result(pkt, remaining)
+                result = self.item_field.parse_value(pkt, remaining)
                 if result.items != 1:
                     raise CBOR_Decoding_Error(
                         "SEQUENCE_OF element must consume exactly one item"
@@ -1575,7 +1537,7 @@ class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
                 )
                 total_items += 1
             else:
-                result = self.item_field.build_value_result(pkt, item)
+                result = self.item_field.build_value(pkt, item)
                 if result.items != 1:
                     raise CBOR_Encoding_Error(
                         "SEQUENCE_OF element must emit exactly one item"
@@ -1611,11 +1573,13 @@ class CBORF_SEQUENCE_OF(CBORF_field[List[Any]]):
 class CBORF_ARRAY_OF(CBORF_field[List[Any]]):
     """
     CBOR array of homogeneous elements (major type 4).
-    Analogous to ASN1F_SEQUENCE_OF: variable-length array where every
-    element shares the same type, specified by ``cls``.
 
-    ``cls`` may be a :class:`CBORF_field` class/instance (leaf type) or a
-    :class:`CBOR_Packet` subclass (structured type).
+    Preferred constructors::
+
+        CBORF_ARRAY_OF("items", [], cls=MyPacket)
+        CBORF_ARRAY_OF("items", [], cls=CBORF_UNSIGNED_INTEGER)
+
+    ``pkt_cls`` is accepted as an alias of ``cls``. Pass only one of them.
     """
     CBOR_tag = CBOR_MajorTypes.ARRAY
     islist = 1
@@ -1625,35 +1589,22 @@ class CBORF_ARRAY_OF(CBORF_field[List[Any]]):
                  default,  # type: Any
                  cls=None,  # type: _ARRAY_T
                  pkt_cls=None,  # type: Optional[Type[Packet]]
-                 item_field=None,  # type: Optional[Union[Type[CBORF_field[Any]], CBORF_field[Any]]]  # noqa: E501
                  ):
         # type: (...) -> None
-        selectors = []
-        if cls is not None:
-            selectors.append("cls")
-        if pkt_cls is not None:
-            selectors.append("pkt_cls")
-        if item_field is not None:
-            selectors.append("item_field")
-        if len(selectors) > 1:
-            raise ValueError(
-                "Conflicting ARRAY_OF selectors: %s" % ", ".join(selectors)
-            )
-        if item_field is not None:
-            cls = item_field  # type: ignore
-        elif pkt_cls is not None:
-            cls = pkt_cls  # type: ignore
-        if cls is None:
-            raise ValueError("Provide pkt_cls/cls or item_field")
-        if isinstance(cls, type) and issubclass(cls, CBORF_field) or \
-                isinstance(cls, CBORF_field):
-            if isinstance(cls, type):
-                self.item_field = cls("_item", None)  # type: ignore
+        if cls is not None and pkt_cls is not None:
+            raise ValueError("Pass only one of cls or pkt_cls")
+        chosen = pkt_cls if pkt_cls is not None else cls
+        if chosen is None:
+            raise ValueError("Provide cls or pkt_cls")
+        if isinstance(chosen, type) and issubclass(chosen, CBORF_field) or \
+                isinstance(chosen, CBORF_field):
+            if isinstance(chosen, type):
+                self.item_field = chosen("_item", None)  # type: ignore
             else:
-                self.item_field = cls
+                self.item_field = chosen
             self.holds_packets = 0
-        elif hasattr(cls, "CBOR_root") or callable(cls):
-            self.cls = cast("Type[CBOR_Packet]", cls)
+        elif hasattr(chosen, "CBOR_root") or callable(chosen):
+            self.cls = cast("Type[CBOR_Packet]", chosen)
             self.holds_packets = 1
         else:
             raise ValueError("cls must be a CBORF_field or CBOR_Packet")
@@ -1694,7 +1645,7 @@ class CBORF_ARRAY_OF(CBORF_field[List[Any]]):
                     raise CBOR_Decoding_Error(str(exc))
                 lst.append(child)
             else:
-                result = self.item_field.dissect_value_result(pkt, s)
+                result = self.item_field.parse_value(pkt, s)
                 if result.items != 1:
                     raise CBOR_Decoding_Error(
                         "ARRAY_OF element must consume exactly one item"
@@ -1728,7 +1679,7 @@ class CBORF_ARRAY_OF(CBORF_field[List[Any]]):
                     )
                 )
             else:
-                result = self.item_field.build_value_result(pkt, item)
+                result = self.item_field.build_value(pkt, item)
                 if result.items != 1:
                     raise CBOR_Encoding_Error(
                         "ARRAY_OF element must emit exactly one item"
@@ -2089,14 +2040,6 @@ class CBORF_SEMANTIC_TAG(CBORF_field[int]):
             raise CBOR_Encoding_Error(
                 "Semantic tag content must be exactly one CBOR item")
         return CBORBuildResult(data=self._encode_tagged(inner.data), items=1)
-
-    def dissect_value_result(self, pkt, s):
-        # type: (CBOR_Packet, bytes) -> CBORParseResult
-        return self.parse_value(pkt, s)
-
-    def build_value_result(self, pkt, value):
-        # type: (CBOR_Packet, Any) -> CBORBuildResult
-        return self.build_value(pkt, value)
 
     def get_fields_list(self):
         # type: () -> List[CBORF_field[Any]]

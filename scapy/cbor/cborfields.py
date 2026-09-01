@@ -1168,8 +1168,21 @@ class _CBORF_compound(CBORF_element):
             if available == 0:
                 if needed > 0:
                     raise CBOR_Decoding_Error("CBOR item count mismatch")
-                # Zero budget: later required fields already reserved every
-                # remaining item. Mark optionals absent unconditionally.
+                # Zero budget: later required fields reserved every remaining
+                # item. Optionals stay absent for reservation, but a *matching*
+                # optional must still be well-formed — otherwise a malformed
+                # present value would silently migrate into a trailing ANY.
+                if (
+                    isinstance(field, CBORF_optional)
+                    and remaining
+                    and field._field.matches_next_item(pkt, remaining)
+                ):
+                    probe = pkt.__class__()
+                    try:
+                        field.dissect_result(probe, remaining)
+                    except CBORF_badsequence:
+                        pass
+                    # CBOR_Decoding_Error / Type_Mismatch propagate.
                 self._mark_absent(pkt, field)
                 continue
             try:

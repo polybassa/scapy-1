@@ -425,9 +425,9 @@ except CBOR_Decoding_Error:
 
 = Zero-budget optional stays absent so a trailing CBORF_ANY can consume the item
 # Finding 2: when the optional has available==0 because a required trailing
-# field reserved the only item, mark the optional absent unconditionally.
-# Rejecting the packet (or letting a mismatched optional claim the item) is
-# wrong; the only complete valid allocation is optional=absent, ANY=item.
+# field reserved the only item, mark the optional absent if the item does not
+# match the optional type. A *matching* but malformed optional must still
+# raise (see "Malformed optional semantic tag does not migrate...").
 from scapy.cbor.cborfields import (
     CBOR_ABSENT,
     CBORF_ANY,
@@ -451,7 +451,8 @@ class OptionalTaggedBeforeAny(CBOR_Packet):
         CBORF_ANY("fallback", None),
     )
 
-pkt = OptionalTaggedBeforeAny(b"\x81\xc1\x61x")
+# Tag 2 does not match optional tag 1 → absent; ANY consumes the item.
+pkt = OptionalTaggedBeforeAny(b"\x81\xc2\x01")
 assert pkt.getfieldval("tag_number") is CBOR_ABSENT
 assert pkt.getfieldval("fallback") is not None
 assert pkt.getfieldval("fallback") is not CBOR_ABSENT
@@ -2768,6 +2769,55 @@ issues = cbor_find_non_deterministic(b"\xff")
 assert issues and "break" in issues[0][1].lower()
 issues = cbor_find_non_deterministic(b"\xf8\x14")  # simple 20 via AI=24
 assert issues and "simple" in issues[0][1].lower()
+
+= CBORMapData lookup distinguishes +0.0 from -0.0 map keys
+from scapy.cbor import CBOR_Codecs
+
+# {+0.0: 1, -0.0: 2} as half floats
+wire = b"\xa2\xf9\x00\x00\x01\xf9\x80\x00\x02"
+obj, remaining = CBOR_Codecs.CBOR.dec(wire)
+assert remaining == b""
+md = obj.val
+assert md[0.0].val == 1
+assert md[-0.0].val == 2
+assert md[0.0] is not md[-0.0]
+
+= Malformed optional semantic tag does not migrate into trailing CBORF_ANY
+from scapy.cbor.cbor import CBOR_Decoding_Error
+from scapy.cbor.cborfields import (
+    CBORF_ANY,
+    CBORF_ARRAY,
+    CBORF_SEMANTIC_TAG,
+    CBORF_UNSIGNED_INTEGER,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptionalTaggedBeforeAny(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_optional(
+            CBORF_SEMANTIC_TAG(
+                "tag_number",
+                None,
+                1,
+                CBORF_UNSIGNED_INTEGER("tagged_value", None),
+            )
+        ),
+        CBORF_ANY("fallback", None),
+    )
+
+try:
+    OptionalTaggedBeforeAny(b"\x81\xc1\x61x")
+except CBOR_Decoding_Error:
+    pass
+else:
+    raise AssertionError("Malformed tagged data migrated into the fallback field")
+
+# Matching well-formed optional still yields to reserved trailing ANY.
+ok = OptionalTaggedBeforeAny(b"\x81\xc1\x01")
+assert ok.getfieldval("tag_number") is CBOR_ABSENT
+assert ok.fallback is not None
 
 = CBORF_MAP rejects non-text map keys
 from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER, CBOR_Decoding_Error

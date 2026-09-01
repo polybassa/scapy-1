@@ -8,7 +8,9 @@ Following the ASN.1 paradigm
 """
 
 import copy
+import math
 import random
+import struct
 from typing import (
     Any,
     Dict,
@@ -458,8 +460,20 @@ class CBORMapData(object):
         return iter(self.keys())
 
     @staticmethod
+    def _float_key_identity(val, encoded=None):
+        # type: (float, Optional[bytes]) -> Tuple[Any, ...]
+        """Identity that distinguishes +0.0 / -0.0 and NaN payloads."""
+        fval = float(val)
+        if math.isnan(fval):
+            if encoded is not None:
+                return (float, "nan", bytes(encoded))
+            return (float, "nan", struct.pack(">d", fval))
+        # struct.pack preserves the IEEE sign bit so +0.0 != -0.0.
+        return (float, "f", struct.pack(">d", fval))
+
+    @staticmethod
     def _key_identity(key):
-        # type: (Any) -> Tuple[Any, Any]
+        # type: (Any) -> Tuple[Any, ...]
         """Return a typed identity for map-key lookup."""
         if isinstance(key, CBOR_Object):
             # Normalize CBOR wrappers to the native Python type they encode.
@@ -475,7 +489,9 @@ class CBORMapData(object):
             if isinstance(key, CBOR_NEGATIVE_INTEGER):
                 return (int, int(key.val))
             if isinstance(key, CBOR_FLOAT):
-                return (float, float(key.val))
+                return CBORMapData._float_key_identity(
+                    key.val, getattr(key, "_encoded", None)
+                )
             if isinstance(key, CBOR_BYTE_STRING):
                 return (bytes, bytes(key.val))
             if isinstance(key, CBOR_TEXT_STRING):
@@ -489,6 +505,14 @@ class CBORMapData(object):
             if isinstance(key, CBOR_SIMPLE_VALUE):
                 return (CBOR_SIMPLE_VALUE, key.val)
             return (type(key), key.val)
+        # bool is a subclass of int; float includes CBORFloatValue.
+        if isinstance(key, bool):
+            return (bool, key)
+        if isinstance(key, float):
+            encoded = getattr(key, "cbor_encoded", None)
+            return CBORMapData._float_key_identity(key, encoded)
+        if isinstance(key, int):
+            return (int, key)
         return (type(key), key)
 
     def keys(self):

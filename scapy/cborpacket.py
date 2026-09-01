@@ -196,12 +196,17 @@ class CBOR_Packet(Packet, metaclass=CBORPacket_metaclass):
         ):
             if hasattr(self, attr):
                 val = getattr(self, attr)
-                if attr == "_cbor_unknown_map_pairs" and isinstance(val, dict):
-                    setattr(
-                        clone,
-                        attr,
-                        {k: list(pairs) for k, pairs in val.items()},
-                    )
+                if attr == "_cbor_unknown_map_pairs":
+                    if isinstance(val, dict):
+                        setattr(
+                            clone,
+                            attr,
+                            {k: list(pairs) for k, pairs in val.items()},
+                        )
+                    elif isinstance(val, list):
+                        setattr(clone, attr, list(val))
+                    else:
+                        setattr(clone, attr, val)
                 else:
                     setattr(clone, attr, val)
         from scapy.cbor.cborfields import _cbor_attach_parent

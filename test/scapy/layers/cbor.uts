@@ -2561,12 +2561,12 @@ pkt = PR43ExtensibleNestedMap(wire)
 assert pkt.a == 7
 pkt.a = 8
 
-# CBORF_MAP's normal rebuild is definite and deterministic, while the unknown
-# member value should survive byte-for-byte.
+# CBORF_MAP's normal rebuild is definite and deterministic; unknown members
+# are re-encoded canonically after mutation (not as the original wire spans).
 assert bytes(pkt) == (
     b"\xa2"
     b"\x61a\x08"
-    b"\x61x\x9f\x01\xbf\x61k\x02\xff\xff"
+    b"\x61x\x82\x01\xa1\x61k\x02"
 )
 
 + PR43 review - CBOR_Packet.copy re-parents embedded children
@@ -2588,3 +2588,72 @@ assert b.child is not a.child
 assert b.child.parent is b, b.child.parent
 assert a.child.parent is a
 assert b.child.n == 1
+
+
++ PR43 in-depth review - CBORF_MAP deterministic unknown rebuild
+
+= CBORF_MAP re-encodes non-preferred unknown members after a known-field mutation
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43DeterministicUnknownMap(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("z", 0),
+    )
+
+# known "z":1, unknown "a":1 with non-preferred key (78 01 61) and value (18 01)
+wire = b"\xa2\x61z\x01\x78\x01\x61\x18\x01"
+pkt = PR43DeterministicUnknownMap(wire)
+assert bytes(pkt) == wire
+pkt.z = 2
+assert bytes(pkt) == b"\xa2\x61a\x01\x61z\x02"
+
+
+= CBORF_MAP copy isolates unknown extension storage from the original packet
+from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43MapCopyIsolation(CBOR_Packet):
+    CBOR_root = CBORF_MAP(
+        CBORF_UNSIGNED_INTEGER("a", 0),
+    )
+
+wire = b"\xa2\x61x\x01\x61a\x07"
+orig = PR43MapCopyIsolation(wire)
+clone = orig.copy()
+assert clone._cbor_unknown_map_pairs is not orig._cbor_unknown_map_pairs
+clone._cbor_unknown_map_pairs.clear()
+assert orig._cbor_unknown_map_pairs == [("x", 1)]
+
+
++ PR43 in-depth review - CBORF_ARRAY_OF indefinite decoding
+
+= CBORF_ARRAY_OF decodes indefinite-length scalar arrays
+from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43IndefUIntArray(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("values", [], item_field=CBORF_UNSIGNED_INTEGER)
+
+wire = b"\x9f\x01\x02\x03\xff"
+pkt = PR43IndefUIntArray(wire)
+assert pkt.values == [1, 2, 3]
+assert bytes(pkt) == wire
+
+
+= CBORF_ARRAY_OF decodes indefinite-length packet arrays
+from scapy.cbor.cborfields import CBORF_ARRAY_OF, CBORF_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class PR43IndefChild(CBOR_Packet):
+    CBOR_root = CBORF_UNSIGNED_INTEGER("n", 0)
+
+class PR43IndefPacketArray(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("children", [], pkt_cls=PR43IndefChild)
+
+wire = b"\x9f\x01\x02\xff"
+pkt = PR43IndefPacketArray(wire)
+assert len(pkt.children) == 2
+assert pkt.children[0].n == 1
+assert pkt.children[0].parent is pkt
+assert pkt.children[1].parent is pkt

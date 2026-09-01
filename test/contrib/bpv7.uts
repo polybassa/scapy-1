@@ -2180,3 +2180,48 @@ class FloatBtsd(CBOR_Packet):
 nonpref = FloatBtsd(b"\xfb\x3f\xf8\x00\x00\x00\x00\x00\x00")
 block = CanonicalBlock(block_num=2, type_code=99, btsd=nonpref)
 assert "non-deterministic-cbor" in {i.code for i in block.validate()}
+
++ PR43 in-depth review - private-use EIDs and DTN reg-name grammar
+
+= Private-use EID scheme 65536 dissects and round-trips without aborting the bundle
+from scapy.contrib.bpv7 import BundleV7, CanonicalBlock, EidStruct, PrimaryBlock
+from scapy.packet import Raw
+
+private = EidStruct.from_cbor([65536, b"private"])
+primary = PrimaryBlock()
+primary.setfieldval("source", private)
+primary.setfieldval("destination", EidStruct.from_text("dtn:none"))
+primary.setfieldval("report_to", EidStruct.from_text("dtn:none"))
+bundle = BundleV7(
+    primary=primary,
+    blocks=[CanonicalBlock(type_code=1, block_num=1, btsd=Raw(load=b"payload"))],
+)
+wire = bytes(bundle)
+decoded = BundleV7(wire)
+assert decoded.primary.getfieldval("source").scheme == 65536
+assert decoded.primary.getfieldval("source").ssp == b"private"
+assert decoded.primary.getfieldval("source").to_cbor() == [65536, b"private"]
+assert len(decoded.blocks) == 1
+assert not decoded.primary.getfieldval("source").is_known_scheme()
+assert "invalid-eid" not in {i.code for i in decoded.primary.validate()}
+
+= DTN node-name accepts RFC 3986 reg-name and rejects illegal gen-delimiters
+from scapy.contrib.bpv7 import EidStruct
+
+assert EidStruct.from_text("dtn://node%20/svc").is_valid()
+assert EidStruct.from_text("dtn://node!$/service").is_valid()
+
+for text in (
+    "dtn://node?foo/svc",
+    "dtn://node#foo/svc",
+    "dtn://node@foo/svc",
+    "dtn://node:foo/svc",
+    "dtn://node%ZZ/svc",
+    "dtn://node%/svc",
+):
+    try:
+        EidStruct.from_text(text)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid DTN reg-name was accepted: %s" % text)

@@ -251,6 +251,34 @@ def _dtn_is_vchar(text: str) -> bool:
     return all(0x21 <= ord(ch) <= 0x7E for ch in text)
 
 
+_DTN_REG_NAME_UNRESERVED = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+)
+_DTN_REG_NAME_SUB_DELIMS = frozenset("!$&'()*+,;=")
+_DTN_REG_NAME_HEXDIG = frozenset("0123456789ABCDEFabcdef")
+
+
+def _dtn_is_reg_name(text: str) -> bool:
+    """Return True when *text* matches RFC 3986 ``reg-name``."""
+    i = 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "%":
+            if i + 2 >= len(text):
+                return False
+            if (
+                text[i + 1] not in _DTN_REG_NAME_HEXDIG
+                or text[i + 2] not in _DTN_REG_NAME_HEXDIG
+            ):
+                return False
+            i += 3
+        elif ch in _DTN_REG_NAME_UNRESERVED or ch in _DTN_REG_NAME_SUB_DELIMS:
+            i += 1
+        else:
+            return False
+    return True
+
+
 def _parse_dtn_hier_ssp(ssp_text: str) -> tuple[str, str]:
     """Split a DTN hierarchical SSP into ``(node_name, demux)``.
 
@@ -272,8 +300,10 @@ def _parse_dtn_hier_ssp(ssp_text: str) -> tuple[str, str]:
     demux = rest[slash + 1:]
     if not node_name:
         raise ValueError("DTN node-name must not be empty")
-    if not _dtn_is_vchar(node_name):
-        raise ValueError("DTN node-name must be printable VCHAR: %r" % node_name)
+    if not _dtn_is_reg_name(node_name):
+        raise ValueError(
+            "DTN node-name must be an RFC 3986 reg-name: %r" % node_name
+        )
     if not _dtn_is_vchar(demux):
         raise ValueError("DTN demux must be *VCHAR: %r" % demux)
     return node_name, demux
@@ -286,6 +316,14 @@ def _parse_dtn_composed_ssp(ssp_text: str) -> Union[int, str]:
             return key
     _parse_dtn_hier_ssp(ssp_text)
     return ssp_text
+
+
+def _known_eid_scheme(scheme: int) -> Optional[EidScheme]:
+    """Return a known :class:`EidScheme` or ``None`` for private-use values."""
+    try:
+        return EidScheme(_as_int(scheme))
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -394,8 +432,12 @@ class EidStruct:
     Internal state for the :class:`BundleEidField` class.
     """
 
-    scheme: EidScheme
-    ssp: Union[int, str, IpnSsp]
+    scheme: int
+    ssp: Any
+
+    def is_known_scheme(self) -> bool:
+        """Return True when Scapy has semantic support for this scheme."""
+        return _known_eid_scheme(self.scheme) is not None
 
     @staticmethod
     def from_text(text: str) -> EidStruct:
@@ -447,10 +489,11 @@ class EidStruct:
         else:
             raise ValueError("Invalid scheme state")
 
-        return EidStruct(scheme=scheme, ssp=ssp)
+        return EidStruct(scheme=int(scheme), ssp=ssp)
 
     def to_text(self) -> str:
-        if self.scheme == EidScheme.dtn:
+        known = _known_eid_scheme(self.scheme)
+        if known == EidScheme.dtn:
             if isinstance(self.ssp, int):
                 try:
                     ssp = _DTN_WELL_KNOWN_SSP[self.ssp]
@@ -459,17 +502,18 @@ class EidStruct:
             else:
                 ssp = str(self.ssp)
             return "dtn:" + ssp
-        if self.scheme == EidScheme.ipn:
+        if known == EidScheme.ipn:
             if isinstance(self.ssp, IpnSsp):
                 return self.ssp.to_text()
             return IpnSsp.from_wire(list(self.ssp)).to_text()
-        raise ValueError("Invalid scheme state")
+        return "%d:%r" % (self.scheme, self.ssp)
 
     def is_null_endpoint(self) -> bool:
         """Return True for the BPv7 Null Endpoint (dtn:none / ipn:0.*)."""
-        if self.scheme == EidScheme.dtn:
+        known = _known_eid_scheme(self.scheme)
+        if known == EidScheme.dtn:
             return self.ssp == 0 or self.ssp == "none"
-        if self.scheme == EidScheme.ipn:
+        if known == EidScheme.ipn:
             if isinstance(self.ssp, IpnSsp):
                 return self.ssp.is_null_endpoint()
             return IpnSsp.from_wire(list(self.ssp)).is_null_endpoint()
@@ -481,8 +525,14 @@ class EidStruct:
         Received wire forms may still dissect when ``False``; use this (and
         :meth:`validate`) to report protocol issues. Local text composition
         already rejects invalid DTN/IPN forms in :meth:`from_text`.
+
+        Private-use / unknown schemes are not judged invalid merely because
+        Scapy lacks semantic rules for them.
         """
-        if self.scheme == EidScheme.dtn:
+        known = _known_eid_scheme(self.scheme)
+        if known is None:
+            return True
+        if known == EidScheme.dtn:
             if isinstance(self.ssp, int):
                 return self.ssp in _DTN_WELL_KNOWN_SSP
             if not isinstance(self.ssp, str):
@@ -494,7 +544,7 @@ class EidStruct:
             except ValueError:
                 return False
             return True
-        if self.scheme == EidScheme.ipn:
+        if known == EidScheme.ipn:
             if isinstance(self.ssp, IpnSsp):
                 return True
             try:
@@ -511,12 +561,16 @@ class EidStruct:
         - ``dtn:`` Node IDs require an empty demux (``dtn://node-name/``).
         - RFC 9758: any IPN EID may identify the node named by its FQNN
           (do not require service number zero).
+        - Unknown/private-use schemes cannot be classified as Node IDs.
         """
-        if self.is_null_endpoint() or not self.is_valid():
+        if self.is_null_endpoint() or not self.is_known_scheme():
             return False
-        if self.scheme == EidScheme.ipn:
+        if not self.is_valid():
+            return False
+        known = _known_eid_scheme(self.scheme)
+        if known == EidScheme.ipn:
             return True
-        if self.scheme == EidScheme.dtn:
+        if known == EidScheme.dtn:
             if isinstance(self.ssp, int):
                 return False
             try:
@@ -537,20 +591,21 @@ class EidStruct:
         """Stable logical identity key independent of wire arity / text form."""
         if self.is_null_endpoint():
             return ("bpv7-null-endpoint",)
-        if self.scheme == EidScheme.dtn:
+        known = _known_eid_scheme(self.scheme)
+        if known == EidScheme.dtn:
             if isinstance(self.ssp, int):
                 return ("dtn", self.ssp)
             # Normalize well-known text SSP to the compressed code.
             if self.ssp == "none":
                 return ("dtn", 0)
             return ("dtn", self.ssp)
-        if self.scheme == EidScheme.ipn:
+        if known == EidScheme.ipn:
             if isinstance(self.ssp, IpnSsp):
                 ssp = self.ssp
             else:
                 ssp = IpnSsp.from_wire(list(self.ssp))
             return ("ipn", ssp.allocator, ssp.node, ssp.service)
-        return ("unknown",)
+        return ("unknown-scheme", self.scheme, repr(self.ssp))
 
     @staticmethod
     def _wire_parts(ssp_item: Any) -> list[int]:
@@ -564,12 +619,10 @@ class EidStruct:
         if not isinstance(item, (list, tuple)) or len(item) != 2:
             raise TypeError("Need a 2-element EID array, have %r" % (item,))
         scheme_id, ssp_item = item
-        try:
-            scheme = EidScheme(_as_int(scheme_id))
-        except ValueError:
-            raise ValueError(f"BP EID scheme {scheme_id} not understood")
+        scheme_num = _as_int(scheme_id)
+        known = _known_eid_scheme(scheme_num)
 
-        if scheme == EidScheme.dtn:
+        if known == EidScheme.dtn:
             if isinstance(ssp_item, int):
                 ssp = ssp_item
                 if ssp not in _DTN_WELL_KNOWN_SSP:
@@ -580,25 +633,27 @@ class EidStruct:
                 ssp = ssp_item
             else:
                 raise TypeError("Invalid DTN SSP: %r" % (ssp_item,))
-        elif scheme == EidScheme.ipn:
+        elif known == EidScheme.ipn:
             ssp = IpnSsp.from_wire(EidStruct._wire_parts(ssp_item))
         else:
-            raise ValueError("Invalid scheme state")
+            # Private-use / future schemes: preserve the SSP generically.
+            ssp = ssp_item
 
-        return EidStruct(scheme=scheme, ssp=ssp)
+        return EidStruct(scheme=scheme_num, ssp=ssp)
 
     def to_cbor(self) -> list[Any]:
-        if self.scheme == EidScheme.dtn:
+        known = _known_eid_scheme(self.scheme)
+        if known == EidScheme.dtn:
             ssp_item = self.ssp
-        elif self.scheme == EidScheme.ipn:
+        elif known == EidScheme.ipn:
             if isinstance(self.ssp, IpnSsp):
                 ssp_item = self.ssp.to_wire()
             else:
                 ssp_item = IpnSsp.from_wire(list(self.ssp)).to_wire()
         else:
-            raise ValueError("Invalid scheme state")
+            ssp_item = self.ssp
 
-        return [int(self.scheme), ssp_item]
+        return [self.scheme, ssp_item]
 
 
 class BundleEidField(CBORF_field[EidStruct]):
@@ -977,6 +1032,8 @@ class PrimaryBlock(CBOR_Packet, AbstractBlock):
             eid = self.getfieldval(fname)
             if not isinstance(eid, EidStruct):
                 continue
+            if not eid.is_known_scheme():
+                continue
             if not eid.is_valid():
                 issues.append(
                     ValidationIssue(
@@ -1193,7 +1250,9 @@ class PreviousNodeBlock(CBOR_Packet):
                 )
             )
         elif isinstance(node, EidStruct):
-            if not node.is_valid():
+            if not node.is_known_scheme():
+                pass
+            elif not node.is_valid():
                 issues.append(
                     ValidationIssue(
                         "invalid-eid",

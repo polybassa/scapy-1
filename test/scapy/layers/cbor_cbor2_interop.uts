@@ -1113,14 +1113,11 @@ for length in (0, 1, 23, 24, 255, 256):
     rr_clear_cache(pkt)
     assert bytes(pkt) == wire
 
-= CBORF_ARRAY_OF deliberately rejects indefinite cbor2 arrays ~ external_cbor2
+= CBORF_ARRAY_OF decodes indefinite cbor2 arrays ~ external_cbor2
 wire = cbor2.dumps([1, 2, 3], indefinite_containers=True)
-try:
-    RRCbor2UIntArray(wire)
-except CBOR_Decoding_Error:
-    pass
-else:
-    raise AssertionError("CBORF_ARRAY_OF accepted an indefinite array")
+pkt = RRCbor2UIntArray(wire)
+assert pkt.values == [1, 2, 3]
+assert bytes(pkt) == wire
 
 = CBORF_SEMANTIC_TAG decodes and rebuilds a cbor2-generated tag ~ external_cbor2
 value = cbor2.CBORTag(60000, "tagged")

@@ -1137,6 +1137,153 @@ pkt = OptThenReq(b"\x81\x07")
 assert pkt.opt is CBOR_ABSENT
 assert pkt.req == 7
 
+= Count default 5 with wire count 1 decodes on ARRAY SEQUENCE and indefinite
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_ARRAY_INDEFINITE,
+    CBORF_INTEGER,
+    CBORF_SEQUENCE,
+    CBORF_SEQUENCE_OF,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class CountDef5Array(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER("n", 5),
+        CBORF_SEQUENCE_OF("values", [], CBORF_INTEGER, count_from="n"),
+    )
+
+class CountDef5Seq(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_INTEGER("n", 5),
+        CBORF_SEQUENCE_OF("values", [], CBORF_INTEGER, count_from="n"),
+    )
+
+class CountDef5Indef(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_INDEFINITE(
+        CBORF_INTEGER("n", 5),
+        CBORF_SEQUENCE_OF("values", [], CBORF_INTEGER, count_from="n"),
+    )
+
+pkt = CountDef5Array(b"\x82\x01\x0a")
+assert pkt.n == 1 and pkt.values == [10]
+pkt = CountDef5Seq(b"\x01\x0a")
+assert pkt.n == 1 and pkt.values == [10]
+pkt = CountDef5Indef(b"\x9f\x01\x0a\xff")
+assert pkt.n == 1 and pkt.values == [10]
+
+= Count default None does not evaluate int(None) before the discriminator
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_ARRAY_INDEFINITE,
+    CBORF_INTEGER,
+    CBORF_SEQUENCE,
+    CBORF_SEQUENCE_OF,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class CountDefNoneArray(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER("n", None),
+        CBORF_SEQUENCE_OF("values", [], CBORF_INTEGER, count_from="n"),
+    )
+
+class CountDefNoneSeq(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_INTEGER("n", None),
+        CBORF_SEQUENCE_OF("values", [], CBORF_INTEGER, count_from="n"),
+    )
+
+class CountDefNoneIndef(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_INDEFINITE(
+        CBORF_INTEGER("n", None),
+        CBORF_SEQUENCE_OF("values", [], CBORF_INTEGER, count_from="n"),
+    )
+
+pkt = CountDefNoneArray(b"\x83\x02\x0a\x0b")
+assert pkt.n == 2 and pkt.values == [10, 11]
+pkt = CountDefNoneSeq(b"\x02\x0a\x0b")
+assert pkt.n == 2 and pkt.values == [10, 11]
+pkt = CountDefNoneIndef(b"\x9f\x02\x0a\x0b\xff")
+assert pkt.n == 2 and pkt.values == [10, 11]
+
+= Conditional disabled by default enables on wire with present value
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_ARRAY_INDEFINITE,
+    CBORF_CONDITIONAL,
+    CBORF_INTEGER,
+    CBORF_SEQUENCE,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class CondOffArray(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER("flag", 0),
+        CBORF_CONDITIONAL(CBORF_INTEGER("last", 8), lambda p: p.flag == 1),
+    )
+
+class CondOffSeq(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_INTEGER("flag", 0),
+        CBORF_CONDITIONAL(CBORF_INTEGER("last", 8), lambda p: p.flag == 1),
+    )
+
+class CondOffIndef(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_INDEFINITE(
+        CBORF_INTEGER("flag", 0),
+        CBORF_CONDITIONAL(CBORF_INTEGER("last", 8), lambda p: p.flag == 1),
+    )
+
+pkt = CondOffArray(b"\x82\x01\x08")
+assert pkt.flag == 1 and pkt.last == 8
+pkt = CondOffSeq(b"\x01\x08")
+assert pkt.flag == 1 and pkt.last == 8
+pkt = CondOffIndef(b"\x9f\x01\x08\xff")
+assert pkt.flag == 1 and pkt.last == 8
+
+= Optional before count_from collection reserves the collection items
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_INTEGER,
+    CBORF_SEQUENCE_OF,
+    CBORF_optional,
+    CBOR_ABSENT,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class OptBeforeCounted(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER("n", 0),
+        CBORF_optional(CBORF_INTEGER("opt", None)),
+        CBORF_SEQUENCE_OF("values", [], CBORF_INTEGER, count_from="n"),
+    )
+
+pkt = OptBeforeCounted(b"\x83\x02\x0a\x0b")
+assert pkt.n == 2
+assert pkt.opt is CBOR_ABSENT
+assert pkt.values == [10, 11]
+
+= Definite ARRAY rejects item count inconsistent with schema
+from scapy.cbor.cborfields import (
+    CBORF_ARRAY,
+    CBORF_INTEGER,
+    CBOR_Decoding_Error,
+)
+from scapy.cborpacket import CBOR_Packet
+
+class TwoIntsArray(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY(
+        CBORF_INTEGER("a", 0),
+        CBORF_INTEGER("b", 0),
+    )
+
+try:
+    TwoIntsArray(b"\x83\x01\x02\x03")
+    assert False, "inconsistent definite array count must raise"
+except CBOR_Decoding_Error:
+    pass
+
 = Indefinite array rejects nonterminal unbounded SEQUENCE_OF
 from scapy.cbor.cborfields import (
     CBORF_ARRAY_INDEFINITE,

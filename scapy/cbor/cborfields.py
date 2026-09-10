@@ -1151,6 +1151,45 @@ class _CBORF_compound(CBORF_element):
             total_items += result.items
         return b"".join(parts), total_items
 
+    def _count_from_ready(self, field, pkt):
+        # type: (Any, CBOR_Packet) -> bool
+        """Return True when *field*'s count_from can use dissected values."""
+        count_from = getattr(field, "count_from", None)
+        if count_from is None:
+            return True
+        if callable(count_from):
+            # No dependency graph: callables stay structural until current.
+            return False
+        if count_from not in pkt.fields:
+            return False
+        val = pkt.fields[count_from]
+        return val is not None and val is not CBOR_ABSENT
+
+    def _budget_min_items(self, field, pkt, current=False):
+        # type: (Any, CBOR_Packet, bool) -> int
+        """Item lower bound for budgeting without premature discriminators.
+
+        Suffix reservation prefers :meth:`structural_min_items`. Live
+        :meth:`min_items` is used for the current field when ready, and for
+        suffix ``SEQUENCE_OF`` fields whose string ``count_from`` source was
+        already dissected (optional-before-collection reservation).
+        """
+        if isinstance(field, CBORF_SEQUENCE_OF) and field.count_from is not None:
+            if callable(field.count_from):
+                if current:
+                    return field.min_items(pkt)
+                return field.structural_min_items(pkt)
+            if self._count_from_ready(field, pkt):
+                return field.min_items(pkt)
+            return field.structural_min_items(pkt)
+        if isinstance(field, CBORF_CONDITIONAL):
+            if current:
+                return field.min_items(pkt)
+            return field.structural_min_items(pkt)
+        if current:
+            return field.min_items(pkt)
+        return field.structural_min_items(pkt)
+
     def _mark_absent(self, pkt, field):
         # type: (CBOR_Packet, Any) -> None
         """Record that an optional field was not present on the wire."""
@@ -1185,13 +1224,14 @@ class _CBORF_compound(CBORF_element):
         remaining = s
         items_left = count
         for index, field in enumerate(self.seq):
-            # Live suffix reservation so count_from / conditionals see wire
-            # discriminators dissected earlier in this pass.
+            # Structural suffix reservation; live count_from only after the
+            # discriminator has been dissected into pkt.fields.
             reserved = sum(
-                f.min_items(pkt) for f in self.seq[index + 1:]
+                self._budget_min_items(f, pkt, current=False)
+                for f in self.seq[index + 1:]
             )
             available = items_left - reserved
-            needed = field.min_items(pkt)
+            needed = self._budget_min_items(field, pkt, current=True)
             if available < 0:
                 raise CBOR_Decoding_Error("CBOR item count mismatch")
             if available < needed:
@@ -1603,7 +1643,11 @@ class CBORF_SEQUENCE_OF(_CBORF_HOMOGENEOUS):
             if callable(self.count_from):
                 max_items = int(self.count_from(pkt))
             else:
-                max_items = int(pkt.getfieldval(self.count_from))
+                val = pkt.getfieldval(self.count_from)
+                if val is None or val is CBOR_ABSENT:
+                    max_items = 0
+                else:
+                    max_items = int(val)
         while remaining and not cbor_is_break(remaining):
             if max_items is not None and consumed >= max_items:
                 break
@@ -1649,7 +1693,10 @@ class CBORF_SEQUENCE_OF(_CBORF_HOMOGENEOUS):
         if self.count_from is not None and pkt is not None:
             if callable(self.count_from):
                 return int(self.count_from(pkt))
-            return int(pkt.getfieldval(self.count_from))
+            val = pkt.getfieldval(self.count_from)
+            if val is None or val is CBOR_ABSENT:
+                return 0
+            return int(val)
         return 0
 
     def max_items(self, pkt):

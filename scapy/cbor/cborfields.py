@@ -1515,7 +1515,11 @@ class _CBORF_HOMOGENEOUS(CBORF_field[List[Any]]):
                 self.item_field = pkt_cls("_item", None)  # type: ignore
             else:
                 self.item_field = pkt_cls
-            self.holds_packets = 0
+            # Packet-valued element fields must register as packet storage
+            # even though decode/encode still go through item_field.
+            self.holds_packets = 1 if getattr(
+                self.item_field, "holds_packets", False
+            ) else 0
         else:
             self.cls = self._require_packet_cls(pkt_cls)
             self.holds_packets = 1
@@ -1523,7 +1527,11 @@ class _CBORF_HOMOGENEOUS(CBORF_field[List[Any]]):
 
     def cache_fingerprint(self, x):
         # type: (Any) -> Any
-        """Compose item fingerprints when the element field provides them."""
+        """Compose item fingerprints when the element field provides them.
+
+        Packet-valued collections return ``None`` so the parent packet uses
+        nested ``_raw_packet_cache_field_value`` composition.
+        """
         if self.holds_packets or self.item_field is None or x is None:
             return None
         item_fp = getattr(self.item_field, "cache_fingerprint", None)
@@ -1564,63 +1572,63 @@ class _CBORF_HOMOGENEOUS(CBORF_field[List[Any]]):
         # type: (CBOR_Packet, Any) -> List[Any]
         if x is None:
             return None  # type: ignore
-        if self.holds_packets:
-            items = list(x)
-            for item in items:
-                _cbor_attach_parent(pkt, item)
-            return items
-        return [self.item_field.any2i(pkt, item) for item in x]
+        if self.item_field is not None:
+            return [self.item_field.any2i(pkt, item) for item in x]
+        items = list(x)
+        for item in items:
+            _cbor_attach_parent(pkt, item)
+        return items
 
     def _decode_element(self, pkt, s, values=None):
         # type: (CBOR_Packet, bytes, Optional[List[Any]]) -> Tuple[Any, bytes]
-        if self.holds_packets:
-            pkt_cls = self.cls
-            if self.next_cls_cb is not None:
-                values = values if values is not None else []
-                pkt_cls = self.next_cls_cb(
-                    pkt,
-                    values,
-                    values[-1] if values else None,
-                    s,
+        if self.item_field is not None:
+            result = self.item_field._parse_value(pkt, s)
+            if result.items != 1:
+                raise CBOR_Decoding_Error(
+                    "%s element must consume exactly one item"
+                    % self.__class__.__name__
                 )
-                if pkt_cls is CBOR_NO_ITEM or pkt_cls is None:
-                    return CBOR_NO_ITEM, s
-                pkt_cls = self._require_packet_cls(pkt_cls)
-            item_bytes, remaining = cbor_item_span(s)
-            try:
-                child = pkt_cls(item_bytes, _parent=pkt)  # type: ignore
-            except CBOR_Decoding_Error:
-                raise
-            except Exception as exc:
-                if config.conf.debug_dissector:
-                    raise
-                raise CBOR_Decoding_Error(str(exc))
-            return child, remaining
-        result = self.item_field._parse_value(pkt, s)
-        if result.items != 1:
-            raise CBOR_Decoding_Error(
-                "%s element must consume exactly one item"
-                % self.__class__.__name__
+            return result.value, result.remaining
+        pkt_cls = self.cls
+        if self.next_cls_cb is not None:
+            values = values if values is not None else []
+            pkt_cls = self.next_cls_cb(
+                pkt,
+                values,
+                values[-1] if values else None,
+                s,
             )
-        return result.value, result.remaining
+            if pkt_cls is CBOR_NO_ITEM or pkt_cls is None:
+                return CBOR_NO_ITEM, s
+            pkt_cls = self._require_packet_cls(pkt_cls)
+        item_bytes, remaining = cbor_item_span(s)
+        try:
+            child = pkt_cls(item_bytes, _parent=pkt)  # type: ignore
+        except CBOR_Decoding_Error:
+            raise
+        except Exception as exc:
+            if config.conf.debug_dissector:
+                raise
+            raise CBOR_Decoding_Error(str(exc))
+        return child, remaining
 
     def _encode_element(self, pkt, item):
         # type: (CBOR_Packet, Any) -> bytes
-        if self.holds_packets:
-            return _encode_exactly_one_cbor_item(
-                item, context="%s element" % self.__class__.__name__
-            )
-        result = self.item_field._build_value(pkt, item)
-        if result.items != 1:
-            raise CBOR_Encoding_Error(
-                "%s element must emit exactly one item"
-                % self.__class__.__name__
-            )
-        return result.data
+        if self.item_field is not None:
+            result = self.item_field._build_value(pkt, item)
+            if result.items != 1:
+                raise CBOR_Encoding_Error(
+                    "%s element must emit exactly one item"
+                    % self.__class__.__name__
+                )
+            return result.data
+        return _encode_exactly_one_cbor_item(
+            item, context="%s element" % self.__class__.__name__
+        )
 
     def i2repr(self, pkt, x):
         # type: (CBOR_Packet, Any) -> str
-        if self.holds_packets:
+        if self.item_field is None:
             return repr(x)
         if x is None:
             return self._empty_repr

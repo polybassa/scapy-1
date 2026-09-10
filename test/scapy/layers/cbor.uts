@@ -712,6 +712,77 @@ pkt = AnyArrayFloatPkt(bytes.fromhex("81f90000"))
 pkt.values[0].val = -0.0
 assert bytes(pkt) == bytes.fromhex("81f98000")
 
+= Packet-valued ARRAY_OF and SEQUENCE_OF fingerprint copy and wire cache
+from scapy.cbor.cborfields import (
+    CBORF_ANY,
+    CBORF_ARRAY_OF,
+    CBORF_PACKET,
+    CBORF_SEQUENCE,
+    CBORF_SEQUENCE_OF,
+)
+from scapy.cbor.cbor import CBOR_FLOAT, CBOR_UNSIGNED_INTEGER
+from scapy.cborpacket import CBOR_Packet
+
+class NestedAnyChild(CBOR_Packet):
+    CBOR_root = CBORF_ANY("value", None)
+
+# Packet-class constructor
+class ArrayOfChildCls(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF("items", [], NestedAnyChild)
+
+# Packet-field-instance constructor
+class ArrayOfChildFld(CBOR_Packet):
+    CBOR_root = CBORF_ARRAY_OF(
+        "items", [], CBORF_PACKET("item", None, NestedAnyChild)
+    )
+
+class SeqOfChildCls(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_SEQUENCE_OF("items", [], NestedAnyChild),
+    )
+
+class SeqOfChildFld(CBOR_Packet):
+    CBOR_root = CBORF_SEQUENCE(
+        CBORF_SEQUENCE_OF(
+            "items", [], CBORF_PACKET("item", None, NestedAnyChild)
+        ),
+    )
+
+wire = bytes.fromhex("81f90000")
+for cls in (ArrayOfChildCls, ArrayOfChildFld):
+    assert cls.CBOR_root.holds_packets == 1
+    pkt = cls(wire)
+    assert bytes(pkt) == wire
+    pkt.items[0].value.val = -0.0
+    assert bytes(pkt) == bytes.fromhex("81f98000")
+
+for cls in (ArrayOfChildCls, ArrayOfChildFld):
+    pkt = cls(wire)
+    pkt.items[0].value = CBOR_FLOAT(0.0)
+    assert getattr(pkt.items[0].value, "_encoded", None) is None
+    assert bytes(pkt) == bytes.fromhex("81f90000")
+
+for cls in (ArrayOfChildCls, ArrayOfChildFld):
+    pkt = cls(bytes.fromhex("81820102"))
+    pkt.items[0].value.val.append(CBOR_UNSIGNED_INTEGER(3))
+    assert bytes(pkt) == bytes.fromhex("8183010203")
+
+for cls in (ArrayOfChildCls, ArrayOfChildFld):
+    pkt = cls(wire)
+    clone = pkt.copy()
+    assert clone.items[0].parent is clone
+    clone.items[0].value.val = -0.0
+    assert bytes(pkt) == wire
+    assert bytes(clone) == bytes.fromhex("81f98000")
+
+seq_wire = bytes.fromhex("f90000")
+for cls in (SeqOfChildCls, SeqOfChildFld):
+    assert cls.CBOR_root.seq[0].holds_packets == 1
+    pkt = cls(seq_wire)
+    assert bytes(pkt) == seq_wire
+    pkt.items[0].value.val = -0.0
+    assert bytes(pkt) == bytes.fromhex("f98000")
+
 = Unknown map float mutation invalidates raw cache
 from scapy.cbor.cborfields import CBORF_MAP, CBORF_UNSIGNED_INTEGER, CBORF_optional
 from scapy.cborpacket import CBOR_Packet

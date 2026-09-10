@@ -1273,6 +1273,61 @@ class _CBORF_compound(CBORF_element):
             raise CBOR_Decoding_Error("CBOR item count mismatch")
         return remaining
 
+    def _dissect_children_streamed(self, pkt, s):
+        # type: (CBOR_Packet, bytes) -> Tuple[bytes, int]
+        """Consume schema fields from *s* without pre-counting trailing bytes."""
+        remaining = s
+        total_items = 0
+        for index, field in enumerate(self.seq):
+            if isinstance(field, CBORF_optional):
+                suffix_need = sum(
+                    self._budget_min_items(f, pkt, current=False)
+                    for f in self.seq[index + 1:]
+                )
+                if (
+                    not remaining
+                    or not field._field.matches_next_item(pkt, remaining)
+                ):
+                    self._mark_absent(pkt, field)
+                    continue
+                if suffix_need > 0:
+                    try:
+                        ahead = cbor_count_items(
+                            remaining,
+                            max_count=suffix_need + 1,
+                            until_break=False,
+                        )
+                    except CBOR_Codec_Decoding_Error as e:
+                        raise CBOR_Decoding_Error(str(e))
+                    if ahead <= suffix_need:
+                        if (
+                            ahead == suffix_need
+                            and field._field.matches_next_item(
+                                pkt, remaining
+                            )
+                        ):
+                            field._field._parse_value(pkt, remaining)
+                        self._mark_absent(pkt, field)
+                        continue
+                result = field._dissect_counted(pkt, remaining)
+            elif isinstance(field, CBORF_SEQUENCE_OF):
+                result = field._dissect_counted(pkt, remaining)
+                if field.count_from is not None:
+                    expected = self._budget_min_items(
+                        field, pkt, current=True
+                    )
+                    if result.items != expected:
+                        raise CBOR_Decoding_Error(
+                            "CBOR item count mismatch"
+                        )
+            else:
+                result = field._dissect_counted(pkt, remaining)
+            if result.items == 0:
+                self._mark_absent(pkt, field)
+            remaining = result.remaining
+            total_items += result.items
+        return remaining, total_items
+
 
 class CBORF_SEQUENCE(_CBORF_compound):
     """
@@ -1303,18 +1358,10 @@ class CBORF_SEQUENCE(_CBORF_compound):
 
     def _dissect_counted(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> _CBORParseResult
-        # Count only up to this schema's structural max so trailing CBOR items
-        # remain for a parent, without freezing count_from on defaults.
-        try:
-            item_count = cbor_count_items(
-                s,
-                max_count=self.structural_max_items(pkt),
-                until_break=False,
-            )
-        except CBOR_Codec_Decoding_Error as e:
-            raise CBOR_Decoding_Error(str(e))
-        remaining = self._dissect_children_budgeted(pkt, s, item_count)
-        return _CBORParseResult(remaining=remaining, items=item_count)
+        # Stream schema fields only; leave trailing bytes for the parent
+        # without requiring them to be well-formed CBOR.
+        remaining, items = self._dissect_children_streamed(pkt, s)
+        return _CBORParseResult(remaining=remaining, items=items)
 
     def min_items(self, pkt):
         # type: (CBOR_Packet) -> int

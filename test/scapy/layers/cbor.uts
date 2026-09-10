@@ -2304,7 +2304,7 @@ except ValueError:
 else:
     raise AssertionError("ambiguous separated unbounded sequences were accepted")
 
-+ Finding 8 - Nested _cbor_build_counted must preserve a valid child raw cache
++ Finding 8 - Nested rebuild must preserve a valid child raw cache
 
 = Parent rebuild preserves untouched child wire representation
 from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_PACKET, CBORF_UNSIGNED_INTEGER
@@ -2328,7 +2328,7 @@ assert bytes(pkt.child) == b"\x18\x01"
 # untouched nested child from 0x18 0x01 to 0x01.
 pkt.sibling = 1
 assert bytes(pkt) == b"\x82\x01\x18\x01"
-assert pkt.child._cbor_build_counted().data == bytes(pkt.child)
+assert bytes(pkt.child) == b"\x18\x01"
 
 = Parent rebuild preserves an untouched child encoded as an indefinite array
 from scapy.cbor.cborfields import CBORF_ARRAY, CBORF_PACKET, CBORF_UNSIGNED_INTEGER
@@ -2765,9 +2765,7 @@ assert cbor_find_non_deterministic(
 ) == []
 
 
-+ Cache item counts and packet-field cardinality
-
-+ Cached unframed packets preserve exact bytes and item counts
++ Cached unframed packets preserve exact bytes
 
 = Unframed SEQUENCE cache returns exact bytes without rebuild
 from scapy.cbor.cborfields import (
@@ -2788,11 +2786,7 @@ class SeqChild(CBOR_Packet):
 overlong = b"\x18\x01\x02"
 child = SeqChild(overlong)
 assert child.raw_packet_cache == overlong
-assert child._cbor_raw_cache_items == 2
-result = child._cbor_build_counted()
-assert result.data == overlong
-assert result.items == 2
-assert result.data == bytes(child)
+assert bytes(child) == overlong
 
 # CBORF_PACKET represents exactly one CBOR item: embedding a multi-item
 # SEQUENCE child must fail (do not put this child in a CBORF_PACKET parent

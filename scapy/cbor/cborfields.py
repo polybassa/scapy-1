@@ -9,8 +9,8 @@ structures as packet fields.  Modelled after scapy/asn1fields.py.
 Public leaf/compound hooks follow Scapy/ASN.1 style (``any2i`` / ``i2m`` /
 ``m2i``, ``build`` / ``dissect``). Compounds additionally use
 ``_build_counted`` / ``_dissect_counted`` so unframed sequences and array
-budgeting can return an item count for raw-cache fidelity; callers outside
-this module should prefer ``build`` / ``dissect``.
+budgeting can return an item count; callers outside this module should
+prefer ``build`` / ``dissect``.
 """
 
 import copy
@@ -735,6 +735,33 @@ class CBORF_INTEGER(CBORF_field[int]):
         return RandNum(-2 ** 64, 2 ** 64 - 1)
 
 
+def _cbor_decode_byte_string(s, definite_only=False):
+    # type: (bytes, bool) -> Tuple[bytes, bytes]
+    """Decode one CBOR byte string item; optionally reject indefinite form."""
+    if definite_only:
+        try:
+            major_type, length, _rem = CBOR_decode_head(s)
+        except CBOR_Codec_Decoding_Error as e:
+            raise CBOR_Decoding_Error(str(e))
+        if major_type != int(CBOR_MajorTypes.BYTE_STRING):
+            raise CBOR_Type_Mismatch(
+                "Expected byte string, got major type %d" % major_type)
+        if length is CBOR_INDEFINITE:
+            raise CBOR_Decoding_Error(
+                "Indefinite-length byte string not allowed here")
+    obj, remain = CBORcodec_BYTE_STRING.dec(s)
+    if not isinstance(obj, CBOR_BYTE_STRING):
+        raise CBOR_Type_Mismatch(
+            "Expected byte string, got %r" % obj)
+    return obj.val, remain
+
+
+def _cbor_encode_byte_string(x):
+    # type: (Any) -> bytes
+    """Encode *x* as a definite CBOR byte string item."""
+    return CBORcodec_BYTE_STRING.enc(bytes(x))
+
+
 class CBORF_BYTE_STRING(CBORF_field[bytes]):
     """CBOR byte string field (major type 2)."""
     CBOR_tag = CBOR_MajorTypes.BYTE_STRING
@@ -758,39 +785,24 @@ class CBORF_BYTE_STRING(CBORF_field[bytes]):
 
     def m2i(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> Tuple[bytes, bytes]
-        if self.definite_only:
-            try:
-                major_type, length, _rem = CBOR_decode_head(s)
-            except CBOR_Codec_Decoding_Error as e:
-                raise CBOR_Decoding_Error(str(e))
-            if major_type != int(CBOR_MajorTypes.BYTE_STRING):
-                raise CBOR_Type_Mismatch(
-                    "Expected byte string, got major type %d" % major_type)
-            if length is CBOR_INDEFINITE:
-                raise CBOR_Decoding_Error(
-                    "Indefinite-length byte string not allowed here")
-        obj, remain = CBORcodec_BYTE_STRING.dec(s)
-        if not isinstance(obj, CBOR_BYTE_STRING):
-            raise CBOR_Type_Mismatch(
-                "Expected byte string, got %r" % obj)
-        return obj.val, remain
+        return _cbor_decode_byte_string(s, definite_only=self.definite_only)
 
     def encode_value(self, x):
         # type: (Any) -> bytes
-        return CBORcodec_BYTE_STRING.enc(bytes(x))
+        return _cbor_encode_byte_string(x)
 
     def randval(self):
         # type: () -> RandString
         return RandString(RandNum(0, 1000))
 
 
-class CBORF_BYTE_STRING_PACKET(CBORF_BYTE_STRING):
+class CBORF_BYTE_STRING_PACKET(CBORF_field[Packet]):
     """CBOR byte string which wraps another packet field.
 
     The inner packet may or may not itself be CBOR or CBOR sequence data.
-    Inherits definite-length checks and byte-string encode/decode from
-    :class:`CBORF_BYTE_STRING`.
+    Shares byte-string wire helpers with :class:`CBORF_BYTE_STRING`.
     """
+    CBOR_tag = CBOR_MajorTypes.BYTE_STRING
     holds_packets = 1
 
     def __init__(self,
@@ -806,9 +818,8 @@ class CBORF_BYTE_STRING_PACKET(CBORF_BYTE_STRING):
         # any2i() needs these during default normalization in super().__init__.
         self.pkt_cls = pkt_cls
         self.cls_cb = cls_cb
-        super(CBORF_BYTE_STRING_PACKET, self).__init__(
-            name, default, definite_only=definite_only
-        )
+        self.definite_only = definite_only
+        super(CBORF_BYTE_STRING_PACKET, self).__init__(name, default)
 
     def _decode_packet_value(self, pkt, data):
         # type: (CBOR_Packet, bytes) -> Packet
@@ -841,8 +852,14 @@ class CBORF_BYTE_STRING_PACKET(CBORF_BYTE_STRING):
 
     def m2i(self, pkt, s):
         # type: (CBOR_Packet, bytes) -> Tuple[Packet, bytes]
-        data, remain = super(CBORF_BYTE_STRING_PACKET, self).m2i(pkt, s)
+        data, remain = _cbor_decode_byte_string(
+            s, definite_only=self.definite_only
+        )
         return self._decode_packet_value(pkt, data), remain
+
+    def encode_value(self, x):
+        # type: (Any) -> bytes
+        return _cbor_encode_byte_string(x)
 
 
 class CBORF_TEXT_STRING(CBORF_field[str]):

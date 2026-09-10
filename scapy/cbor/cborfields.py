@@ -1306,7 +1306,6 @@ class _CBORF_compound(CBORF_element):
         return remaining, total_items
 
 
-
 class CBORF_SEQUENCE(_CBORF_compound):
     """
     Unframed fixed sequence of named, typed fields (no CBOR array head).

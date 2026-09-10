@@ -204,6 +204,11 @@ class CBORF_element(object):
         """Upper bound independent of not-yet-dissected discriminators."""
         return self.max_items(pkt)
 
+    def reserve_min_items(self, pkt):
+        # type: (CBOR_Packet) -> int
+        """Items to reserve for this field while parsing earlier siblings."""
+        return self.structural_min_items(pkt)
+
 
 ##########################
 #    Basic CBOR Field    #
@@ -1168,50 +1173,46 @@ class _CBORF_compound(CBORF_element):
             total_items += result.items
         return b"".join(parts), total_items
 
-    def _count_from_ready(self, field, pkt):
-        # type: (Any, CBOR_Packet) -> bool
-        """Return True when *field*'s count_from can use dissected values."""
-        count_from = getattr(field, "count_from", None)
-        if count_from is None:
-            return True
-        if callable(count_from):
-            # No dependency graph: callables stay structural until current.
-            return False
-        if count_from not in pkt.fields:
-            return False
-        val = pkt.fields[count_from]
-        return val is not None and val is not CBOR_ABSENT
-
-    def _budget_min_items(self, field, pkt, current=False):
-        # type: (Any, CBOR_Packet, bool) -> int
-        """Item lower bound for budgeting without premature discriminators.
-
-        Suffix reservation prefers :meth:`structural_min_items`. Live
-        :meth:`min_items` is used for the current field when ready, and for
-        suffix ``SEQUENCE_OF`` fields whose string ``count_from`` source was
-        already dissected (optional-before-collection reservation).
-        """
-        if isinstance(field, CBORF_SEQUENCE_OF) and field.count_from is not None:
-            if callable(field.count_from):
-                if current:
-                    return field.min_items(pkt)
-                return field.structural_min_items(pkt)
-            if self._count_from_ready(field, pkt):
-                return field.min_items(pkt)
-            return field.structural_min_items(pkt)
-        if isinstance(field, CBORF_CONDITIONAL):
-            if current:
-                return field.min_items(pkt)
-            return field.structural_min_items(pkt)
-        if current:
-            return field.min_items(pkt)
-        return field.structural_min_items(pkt)
+    def _suffix_reserved(self, pkt, index):
+        # type: (CBOR_Packet, int) -> int
+        return sum(
+            f.reserve_min_items(pkt) for f in self.seq[index + 1:]
+        )
 
     def _mark_absent(self, pkt, field):
         # type: (CBOR_Packet, Any) -> None
         """Record that an optional field was not present on the wire."""
         if isinstance(field, CBORF_optional):
             field._field.mark_absent(pkt)
+
+    def _validate_skipped_optional(self, pkt, field, remaining):
+        # type: (CBOR_Packet, Any, bytes) -> None
+        """Reject a present-but-skipped optional that is malformed on the wire."""
+        if (
+            isinstance(field, CBORF_optional)
+            and remaining
+            and field._field.matches_next_item(pkt, remaining)
+        ):
+            field._field._parse_value(pkt, remaining)
+
+    def _dissect_field(self, pkt, field, remaining, max_items=None):
+        # type: (CBOR_Packet, Any, bytes, Optional[int]) -> _CBORParseResult
+        if isinstance(field, CBORF_optional):
+            if not remaining or not field._field.matches_next_item(
+                pkt, remaining
+            ):
+                self._mark_absent(pkt, field)
+                return _CBORParseResult(remaining=remaining, items=0)
+            result = field._dissect_counted(pkt, remaining)
+        elif isinstance(field, CBORF_SEQUENCE_OF):
+            result = field._dissect_counted(
+                pkt, remaining, max_items=max_items
+            )
+        else:
+            result = field._dissect_counted(pkt, remaining)
+        if result.items == 0:
+            self._mark_absent(pkt, field)
+        return result
 
     def _reject_ambiguous_unbounded_sequences(self):
         # type: () -> None
@@ -1241,49 +1242,22 @@ class _CBORF_compound(CBORF_element):
         remaining = s
         items_left = count
         for index, field in enumerate(self.seq):
-            # Structural suffix reservation; live count_from only after the
-            # discriminator has been dissected into pkt.fields.
-            reserved = sum(
-                self._budget_min_items(f, pkt, current=False)
-                for f in self.seq[index + 1:]
-            )
+            reserved = self._suffix_reserved(pkt, index)
             available = items_left - reserved
-            needed = self._budget_min_items(field, pkt, current=True)
-            if available < 0:
-                raise CBOR_Decoding_Error("CBOR item count mismatch")
-            if available < needed:
+            needed = field.min_items(pkt)
+            if available < 0 or available < needed:
                 raise CBOR_Decoding_Error("CBOR item count mismatch")
             if available == 0:
-                # Zero budget: later required fields reserved every remaining
-                # item. Optionals stay absent for reservation, but a matching
-                # optional must still be well-formed — otherwise a malformed
-                # present value would silently migrate into a trailing ANY.
-                if (
-                    isinstance(field, CBORF_optional)
-                    and remaining
-                    and field._field.matches_next_item(pkt, remaining)
-                ):
-                    # Validate without constructing a throwaway packet.
-                    field._field._parse_value(pkt, remaining)
+                self._validate_skipped_optional(pkt, field, remaining)
                 self._mark_absent(pkt, field)
                 continue
-            if isinstance(field, CBORF_SEQUENCE_OF):
-                result = field._dissect_counted(
-                    pkt, remaining, max_items=available
-                )
-            elif isinstance(field, CBORF_optional):
-                if not field._field.matches_next_item(pkt, remaining):
-                    self._mark_absent(pkt, field)
-                    continue
-                result = field._dissect_counted(pkt, remaining)
-            else:
-                result = field._dissect_counted(pkt, remaining)
+            result = self._dissect_field(
+                pkt, field, remaining, max_items=available
+            )
             if result.items > items_left:
                 raise CBOR_Decoding_Error(
                     "CBOR field consumed more items than remaining"
                 )
-            if result.items == 0:
-                self._mark_absent(pkt, field)
             remaining = result.remaining
             items_left -= result.items
         if items_left != 0:
@@ -1297,10 +1271,7 @@ class _CBORF_compound(CBORF_element):
         total_items = 0
         for index, field in enumerate(self.seq):
             if isinstance(field, CBORF_optional):
-                suffix_need = sum(
-                    self._budget_min_items(f, pkt, current=False)
-                    for f in self.seq[index + 1:]
-                )
+                suffix_need = self._suffix_reserved(pkt, index)
                 if (
                     not remaining
                     or not field._field.matches_next_item(pkt, remaining)
@@ -1317,33 +1288,23 @@ class _CBORF_compound(CBORF_element):
                     except CBOR_Codec_Decoding_Error as e:
                         raise CBOR_Decoding_Error(str(e))
                     if ahead <= suffix_need:
-                        if (
-                            ahead == suffix_need
-                            and field._field.matches_next_item(
-                                pkt, remaining
+                        if ahead == suffix_need:
+                            self._validate_skipped_optional(
+                                pkt, field, remaining
                             )
-                        ):
-                            field._field._parse_value(pkt, remaining)
                         self._mark_absent(pkt, field)
                         continue
-                result = field._dissect_counted(pkt, remaining)
-            elif isinstance(field, CBORF_SEQUENCE_OF):
-                result = field._dissect_counted(pkt, remaining)
-                if field.count_from is not None:
-                    expected = self._budget_min_items(
-                        field, pkt, current=True
-                    )
-                    if result.items != expected:
-                        raise CBOR_Decoding_Error(
-                            "CBOR item count mismatch"
-                        )
-            else:
-                result = field._dissect_counted(pkt, remaining)
-            if result.items == 0:
-                self._mark_absent(pkt, field)
+            result = self._dissect_field(pkt, field, remaining)
+            if (
+                isinstance(field, CBORF_SEQUENCE_OF)
+                and field.count_from is not None
+                and result.items != field.min_items(pkt)
+            ):
+                raise CBOR_Decoding_Error("CBOR item count mismatch")
             remaining = result.remaining
             total_items += result.items
         return remaining, total_items
+
 
 
 class CBORF_SEQUENCE(_CBORF_compound):
@@ -1715,11 +1676,7 @@ class CBORF_SEQUENCE_OF(_CBORF_HOMOGENEOUS):
             if callable(self.count_from):
                 max_items = int(self.count_from(pkt))
             else:
-                val = pkt.getfieldval(self.count_from)
-                if val is None or val is CBOR_ABSENT:
-                    max_items = 0
-                else:
-                    max_items = int(val)
+                max_items = self.min_items(pkt)
         while remaining and not cbor_is_break(remaining):
             if max_items is not None and consumed >= max_items:
                 break
@@ -1762,14 +1719,17 @@ class CBORF_SEQUENCE_OF(_CBORF_HOMOGENEOUS):
 
     def min_items(self, pkt):
         # type: (CBOR_Packet) -> int
-        if self.count_from is not None and pkt is not None:
-            if callable(self.count_from):
-                return int(self.count_from(pkt))
-            val = pkt.getfieldval(self.count_from)
-            if val is None or val is CBOR_ABSENT:
-                return 0
-            return int(val)
-        return 0
+        if self.count_from is None or pkt is None:
+            return 0
+        if callable(self.count_from):
+            return int(self.count_from(pkt))
+        # Only dissected values — never fall back to field defaults.
+        if self.count_from not in pkt.fields:
+            return 0
+        val = pkt.fields[self.count_from]
+        if val is None or val is CBOR_ABSENT:
+            return 0
+        return int(val)
 
     def max_items(self, pkt):
         # type: (CBOR_Packet) -> int
@@ -1784,6 +1744,13 @@ class CBORF_SEQUENCE_OF(_CBORF_HOMOGENEOUS):
     def structural_max_items(self, pkt):
         # type: (CBOR_Packet) -> int
         return self._list_limit()
+
+    def reserve_min_items(self, pkt):
+        # type: (CBOR_Packet) -> int
+        # Callables have no dependency tracking; reserve nothing until current.
+        if callable(self.count_from):
+            return 0
+        return self.min_items(pkt)
 
 
 class CBORF_ARRAY_OF(_CBORF_HOMOGENEOUS):

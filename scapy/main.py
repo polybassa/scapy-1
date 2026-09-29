@@ -73,7 +73,12 @@ def _probe_xdg_folder(var, default, *cf):
             # https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
             # "If, when attempting to write a file, the destination directory is
             # non-existent an attempt should be made to create it with permission 0700."
-            path.mkdir(mode=0o700, exist_ok=True)
+            if WINDOWS:
+                # https://github.com/secdev/scapy/issues/5190
+                # 0o700 on Windows is very specific and isn't what we expect.
+                path.mkdir(exist_ok=True)
+            else:
+                path.mkdir(mode=0o700, exist_ok=True)
     except Exception:
         # There is a gazillion ways this can fail. Most notably, a read-only fs or no
         # permissions to even check for folder to exist (e.x. privileges were dropped
@@ -211,18 +216,21 @@ else:
     DEFAULT_PRESTART_FILE = None
     DEFAULT_STARTUP_FILE = None
 
-# https://github.com/scop/bash-completion/blob/main/README.md#faq
-if "BASH_COMPLETION_USER_DIR" in os.environ:
-    BASH_COMPLETION_USER_DIR: Optional[pathlib.Path] = pathlib.Path(
-        os.environ["BASH_COMPLETION_USER_DIR"]
-    )
-else:
-    BASH_COMPLETION_USER_DIR = _probe_share_folder("bash-completion")
+if "/bash" in os.environ.get("SHELL", ""):
+    # https://github.com/scop/bash-completion/blob/main/README.md#faq
+    if "BASH_COMPLETION_USER_DIR" in os.environ:
+        BASH_COMPLETION_USER_DIR: Optional[pathlib.Path] = pathlib.Path(
+            os.environ["BASH_COMPLETION_USER_DIR"]
+        )
+    else:
+        BASH_COMPLETION_USER_DIR = _probe_share_folder("bash-completion")
 
-if BASH_COMPLETION_USER_DIR:
-    BASH_COMPLETION_FOLDER: Optional[pathlib.Path] = (
-        BASH_COMPLETION_USER_DIR / "completions"
-    )
+    if BASH_COMPLETION_USER_DIR:
+        BASH_COMPLETION_FOLDER: Optional[pathlib.Path] = (
+            BASH_COMPLETION_USER_DIR / "completions"
+        )
+    else:
+        BASH_COMPLETION_FOLDER = None
 else:
     BASH_COMPLETION_FOLDER = None
 
@@ -271,10 +279,9 @@ def _add_bash_autocompletion(fname: str, script: pathlib.Path) -> None:
     """
     Util function used most notably in setup.py to add a bash autocompletion script.
     """
+    if BASH_COMPLETION_FOLDER is None:
+        return
     try:
-        if BASH_COMPLETION_FOLDER is None:
-            raise OSError()
-
         # If already defined, exit.
         dest = BASH_COMPLETION_FOLDER / fname
         if dest.exists():
@@ -828,6 +835,7 @@ def interact(mydict=None,
         # repl.use_ui_colorscheme("scapy")
 
     # Extend banner text
+    banner = banner_text
     if conf.interactive_shell in ["ipython", "ptipython"]:
         import IPython
         if conf.interactive_shell == "ptipython":

@@ -104,7 +104,29 @@ class Packet(
         "comments",
         "process_information"
     ]
-    name = None
+    # Types of the __slots__ above: __init__ sets them through
+    # object.__setattr__, which leaves nowhere to put an inline type comment.
+    time: Union[EDecimal, float]
+    sent_time: Union[EDecimal, float, None]
+    default_fields: Dict[str, Any]
+    fields: Dict[str, Any]
+    fieldtype: Dict[str, AnyField]
+    overloaded_fields: Dict[str, Any]
+    packetfields: List[AnyField]
+    original: bytes
+    explicit: int
+    raw_packet_cache: Optional[bytes]
+    raw_packet_cache_fields: Optional[Dict[str, Any]]
+    stop_dissection_after: Optional[Type['Packet']]
+    payload: 'Packet'
+    underlayer: Optional['Packet']
+    parent: Optional['Packet']
+    direction: Optional[int]
+    sniffed_on: Optional[_GlobInterfaceType]
+    wirelen: Optional[int]
+    comments: Optional[List[bytes]]
+    process_information: Optional[Dict[str, Any]]
+    name = None  # type: Optional[str]
     fields_desc = []  # type: ClassVar[List[AnyField]]
     deprecated_fields = {}  # type: Dict[str, Tuple[str, str]]
     overload_fields = {}  # type: Dict[Type[Packet], Dict[str, Any]]
@@ -155,33 +177,35 @@ class Packet(
                  **fields  # type: Any
                  ):
         # type: (...) -> None
-        self.time = 0.0 if _internal else time.time()  # type: Union[EDecimal, float]
-        self.sent_time = None  # type: Union[EDecimal, float, None]
-        self.name = (self.__class__.__name__
-                     if self._name is None else
-                     self._name)
-        self.default_fields = {}  # type: Dict[str, Any]
-        self.overload_fields = self._overload_fields
-        self.overloaded_fields = {}  # type: Dict[str, Any]
-        self.fields = {}  # type: Dict[str, Any]
-        self.fieldtype = {}  # type: Dict[str, AnyField]
-        self.packetfields = []  # type: List[AnyField]
-        self.payload = NoPayload()  # type: Packet
+        # Every attribute set below is a __slots__ member, so bypass
+        # __setattr__: resolving field names there costs more than the
+        # assignment itself, and this runs for every dissected layer.
+        object.__setattr__(self, "time", 0.0 if _internal else time.time())
+        object.__setattr__(self, "sent_time", None)
+        object.__setattr__(self, "name", self.__class__.__name__
+                           if self._name is None else self._name)
+        object.__setattr__(self, "default_fields", {})
+        object.__setattr__(self, "overload_fields", self._overload_fields)
+        object.__setattr__(self, "overloaded_fields", {})
+        object.__setattr__(self, "fields", {})
+        object.__setattr__(self, "fieldtype", {})
+        object.__setattr__(self, "packetfields", [])
+        object.__setattr__(self, "payload", NoPayload())
         self.init_fields(bool(_pkt))
-        self.underlayer = _underlayer
-        self.parent = _parent
+        object.__setattr__(self, "underlayer", _underlayer)
+        object.__setattr__(self, "parent", _parent)
         if isinstance(_pkt, bytearray):
             _pkt = bytes(_pkt)
-        self.original = _pkt
-        self.explicit = 0
-        self.raw_packet_cache = None  # type: Optional[bytes]
-        self.raw_packet_cache_fields = None  # type: Optional[Dict[str, Any]]  # noqa: E501
-        self.wirelen = None  # type: Optional[int]
-        self.direction = None  # type: Optional[int]
-        self.sniffed_on = None  # type: Optional[_GlobInterfaceType]
-        self.comments = None  # type: Optional[List[bytes]]
-        self.process_information = None  # type: Optional[Dict[str, Any]]
-        self.stop_dissection_after = stop_dissection_after
+        object.__setattr__(self, "original", _pkt)
+        object.__setattr__(self, "explicit", 0)
+        object.__setattr__(self, "raw_packet_cache", None)
+        object.__setattr__(self, "raw_packet_cache_fields", None)
+        object.__setattr__(self, "wirelen", None)
+        object.__setattr__(self, "direction", None)
+        object.__setattr__(self, "sniffed_on", None)
+        object.__setattr__(self, "comments", None)
+        object.__setattr__(self, "process_information", None)
+        object.__setattr__(self, "stop_dissection_after", stop_dissection_after)
         if _pkt:
             self.dissect(_pkt)
             if not _internal:
@@ -367,14 +391,11 @@ class Packet(
             if for_dissect_only:
                 return
 
-            # Deepcopy default references
+            # Deepcopy default references into fields (list/dict/Packet/…)
             for fname in Packet.class_default_fields_ref[cls_name]:
                 value = self.default_fields[fname]
-                try:
-                    self.fields[fname] = value.copy()
-                except AttributeError:
-                    # Python 2.7 - list only
-                    self.fields[fname] = value[:]
+                fld = self.fieldtype[fname]
+                self.fields[fname] = fld.do_copy(value)
 
     def prepare_cached_fields(self, flist):
         # type: (Sequence[AnyField]) -> None
@@ -406,7 +427,7 @@ class Packet(
             if f.holds_packets:
                 class_packetfields.append(f)
 
-            # Remember references
+            # list/dict/set/Packet/RandField: promote copies into fields
             if isinstance(f.default, (list, dict, set, RandField, Packet)):
                 class_default_fields_ref.append(f.name)
 
@@ -536,11 +557,11 @@ class Packet(
         if self.deprecated_fields and attr in self.deprecated_fields:
             attr = self._resolve_alias(attr)
         if attr in self.fields:
-            return self.get_field(attr), self.fields[attr]
+            return self.fieldtype[attr], self.fields[attr]
         if attr in self.overloaded_fields:
-            return self.get_field(attr), self.overloaded_fields[attr]
+            return self.fieldtype[attr], self.overloaded_fields[attr]
         if attr in self.default_fields:
-            return self.get_field(attr), self.default_fields[attr]
+            return self.fieldtype[attr], self.default_fields[attr]
         raise ValueError
 
     def __getattr__(self, attr):
@@ -726,7 +747,8 @@ class Packet(
         # type: (_T) -> _T
         if fields is None:
             return None
-        return {fname: self.copy_field_value(fname, fval)
+        fieldtype = self.fieldtype
+        return {fname: fieldtype[fname].do_copy(fval)
                 for fname, fval in fields.items()}
 
     def _raw_packet_cache_field_value(self, fld, val, copy=False):
@@ -766,22 +788,30 @@ class Packet(
                         fsubval.clear_cache()
         self.payload.clear_cache()
 
+    def _raw_packet_cache_is_valid(self):
+        # type: () -> bool
+        """Return True if ``raw_packet_cache`` still matches nested field state.
+
+        On mismatch, clear the cache fingerprints and ``wirelen``.
+        """
+        if self.raw_packet_cache is None or self.raw_packet_cache_fields is None:
+            return False
+        for fname, fval in self.raw_packet_cache_fields.items():
+            fld, val = self.getfield_and_val(fname)
+            if self._raw_packet_cache_field_value(fld, val) != fval:
+                self.raw_packet_cache = None
+                self.raw_packet_cache_fields = None
+                self.wirelen = None
+                return False
+        return True
+
     def self_build(self):
         # type: () -> bytes
         """
         Create the default layer regarding fields_desc dict
         """
-        if self.raw_packet_cache is not None and \
-                self.raw_packet_cache_fields is not None:
-            for fname, fval in self.raw_packet_cache_fields.items():
-                fld, val = self.getfield_and_val(fname)
-                if self._raw_packet_cache_field_value(fld, val) != fval:
-                    self.raw_packet_cache = None
-                    self.raw_packet_cache_fields = None
-                    self.wirelen = None
-                    break
-            if self.raw_packet_cache is not None:
-                return self.raw_packet_cache
+        if self._raw_packet_cache_is_valid():
+            return cast(bytes, self.raw_packet_cache)
         p = b""
         for f in self.fields_desc:
             val = self.getfieldval(f.name)

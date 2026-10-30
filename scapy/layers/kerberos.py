@@ -954,8 +954,7 @@ class LSAP_TOKEN_INFO_INTEGRITY(Packet):
             },
         ),
         MayEnd(XStrFixedLenField("MachineID", b"", length=32)),
-        # KB 5068222 - still waiting for [MS-KILE] update (oct. 2025)
-        XStrFixedLenField("PermanentMachineID", b"", length=32),
+        XStrFixedLenField("CrossBootMachineID", b"", length=32),
     ]
 
 
@@ -2153,7 +2152,7 @@ class _KRBERROR_data_Field(ASN1F_STRING_PacketField):
             try:
                 return KERB_ERROR_DATA(val[0].val, _underlayer=pkt), val[1]
             except BER_Decoding_Error:
-                if pkt.errorCode.val in [18, 12]:
+                if pkt.errorCode.val in [12, 18, 41]:
                     # Some types can also happen in FAST sessions
                     # 18: KDC_ERR_CLIENT_REVOKED
                     return MethodData(val[0].val, _underlayer=pkt), val[1]
@@ -2520,7 +2519,9 @@ class KRB_InnerToken(Packet):
         PacketField(
             "root",
             KRB_AP_REQ(),
-            lambda x, _parent: _InitialContextTokens[_parent.TOK_ID](x),
+            lambda x, _parent: _InitialContextTokens.get(
+                _parent.TOK_ID, conf.raw_layer
+            )(x),
         ),
     ]
 
@@ -2809,6 +2810,8 @@ class KerberosTCPHeader(Packet):
         length = struct.unpack("!I", data[:4])[0]
         if len(data) == length + 4:
             return cls(data)
+        if len(data) > length + 4:
+            return cls(data[:length + 4]) / conf.padding_layer(data[length + 4:])
 
 
 bind_layers(KerberosTCPHeader, Kerberos)
@@ -2995,6 +2998,8 @@ class KpasswdTCPHeader(Packet):
         length = struct.unpack("!I", data[:4])[0]
         if len(data) == length + 4:
             return cls(data)
+        if len(data) > length + 4:
+            return cls(data[:length + 4]) / conf.padding_layer(data[length + 4:])
 
 
 bind_layers(KpasswdTCPHeader, Kpasswd)
@@ -3622,6 +3627,7 @@ class KerberosClient(Automaton):
         )
         if self.renew:
             kdcreq.kdcOptions.set(30, 1)  # set 'renew' (bit 30)
+        self.request_nonce = kdcreq.nonce.val
         return kdcreq
 
     def calc_fast_armorkey(self):
@@ -4026,13 +4032,15 @@ class KerberosClient(Automaton):
                 # "if the key's encryption type is RC4_HMAC_NT (23) the checksum type
                 # is rsa-md4 (2) as defined in section 6.2.6 of [RFC3961]."
                 pasfux509.checksum.make(
-                    self.key,
+                    self.subkey or self.key,
                     bytes(pasfux509.userId),
                     cksumtype=ChecksumType.RSA_MD4,
                 )
             else:
+                # Use subkey if available (=subkey), else TGT session key (=key).
+                # NB: undocumented right now -- gpo2
                 pasfux509.checksum.make(
-                    self.key,
+                    self.subkey or self.key,
                     bytes(pasfux509.userId),
                 )
             padata.append(
@@ -4058,6 +4066,7 @@ class KerberosClient(Automaton):
                         + paforuser.authPackage.val
                     ).encode()
                 )
+                # Always use TGT session key (=key)
                 paforuser.cksum.make(
                     self.key,
                     S4UByteArray,
@@ -4413,6 +4422,8 @@ class KerberosClient(Automaton):
         # Decrypt AS-REP response
         enc = pkt.root.encPart
         res = enc.decrypt(self.replykey)
+        if res.nonce.val != self.request_nonce:
+            raise ValueError("KDC reply nonce does not match request")
         self.result = self.RES_AS_MODE(
             pkt.root,
             res.key.toKey(),
@@ -4478,6 +4489,9 @@ class KerberosClient(Automaton):
             res = enc.decrypt(self.replykey, key_usage_number=9, cls=EncTGSRepPart)
         else:
             res = enc.decrypt(self.replykey)
+
+        if res.nonce.val != self.request_nonce:
+            raise ValueError("KDC reply nonce does not match request")
 
         # Store result
         self.result = self.RES_TGS_MODE(
@@ -5577,6 +5591,12 @@ class KerberosSSP(SSP):
                 Context.ST = self.ST
                 Context.STSessionKey = self.KEY
 
+                target_spn = self.SPN or target_name
+                if target_spn and not _spn_are_equal(Context.ST.getSPN(), target_spn):
+                    raise ValueError(
+                        "SPN from ST doesn't match the passed SPN/target_name."
+                    )
+
                 if Context.flags & GSS_C_FLAGS.GSS_C_DELEG_FLAG:
                     raise ValueError(
                         "Cannot use GSS_C_DELEG_FLAG when passed a service ticket !"
@@ -5669,7 +5689,7 @@ class KerberosSSP(SSP):
                                             adData=KERB_AD_RESTRICTION_ENTRY(
                                                 restriction=LSAP_TOKEN_INFO_INTEGRITY(
                                                     MachineID=bytes(RandBin(32)),
-                                                    PermanentMachineID=bytes(
+                                                    CrossBootMachineID=bytes(
                                                         RandBin(32)
                                                     ),
                                                 )

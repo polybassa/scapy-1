@@ -337,12 +337,14 @@ class ModbusPDU11ReportSlaveIdResponse(Packet):
     name = "Report Slave Id Response"
     fields_desc = [
         XByteField("funcCode", 0x11),
-        BitFieldLenField("byteCount", None, 8, length_of="slaveId"),
+        # byteCount covers slaveId and runIdicatorStatus
+        BitFieldLenField("byteCount", None, 8, length_of="slaveId",
+                         adjust=lambda pkt, x: x + 1),
         ConditionalField(StrLenField("slaveId", "",
-                                     length_from=lambda pkt: pkt.byteCount),
-                         lambda pkt: pkt.byteCount > 0),
+                                     length_from=lambda pkt: pkt.byteCount - 1),
+                         lambda pkt: pkt.byteCount != 0),
         ConditionalField(XByteField("runIdicatorStatus", 0x00),
-                         lambda pkt: pkt.byteCount > 0),
+                         lambda pkt: pkt.byteCount != 0),
     ]
 
 
@@ -869,6 +871,8 @@ class ModbusADURequest(Packet):
         function_code = payload[0]
 
         if function_code == 0x2B:
+            if len(payload) < 2:
+                return conf.raw_layer
             sub_code = payload[1]
             try:
                 return _mei_types_request[sub_code]
@@ -906,6 +910,8 @@ class ModbusADUResponse(Packet):
         function_code = payload[0]
 
         if function_code == 0x2B:
+            if len(payload) < 2:
+                return conf.raw_layer
             sub_code = payload[1]
             try:
                 return _mei_types_response[sub_code]

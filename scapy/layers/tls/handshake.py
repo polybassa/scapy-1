@@ -39,7 +39,7 @@ from scapy.config import conf, crypto_validator
 from scapy.packet import Packet, Raw, Padding
 from scapy.utils import randstring, repr_hex
 from scapy.layers.x509 import OCSP_Response
-from scapy.layers.tls.cert import Cert
+from scapy.layers.tls.cert import Cert, CertList
 from scapy.layers.tls.basefields import (_tls_version, _TLSVersionField,
                                          _TLSClientVersionField)
 from scapy.layers.tls.extensions import (_ExtensionsLenField, _ExtensionsField,
@@ -969,9 +969,9 @@ class TLSCertificate(_TLSHandshake):
         self.tls_session_update(msg_str)
         connection_end = self.tls_session.connection_end
         if connection_end == "client":
-            self.tls_session.server_certs = [x[1] for x in self.certs]
+            self.tls_session.server_certs = CertList([x[1] for x in self.certs])
         else:
-            self.tls_session.client_certs = [x[1] for x in self.certs]
+            self.tls_session.client_certs = CertList([x[1] for x in self.certs])
 
 
 class _ASN1CertAndExt(_GenericTLSSessionInheritance):
@@ -1270,6 +1270,7 @@ class TLSCertificateVerify(_TLSHandshake):
         if s.connection_end == "server":
             if s.client_certs and len(s.client_certs) > 0:
                 sig_test = self.sig._verify_sig(m, s.client_certs[0])
+                s.client_cert_verify_valid = sig_test
                 if not sig_test:
                     pkt_info = pkt.firstlayer().summary()
                     log_runtime.info("TLS: invalid CertificateVerify signature [%s]", pkt_info)  # noqa: E501
@@ -1277,6 +1278,7 @@ class TLSCertificateVerify(_TLSHandshake):
             # should be TLS 1.3 only
             if s.server_certs and len(s.server_certs) > 0:
                 sig_test = self.sig._verify_sig(m, s.server_certs[0])
+                s.server_cert_verify_valid = sig_test
                 if not sig_test:
                     pkt_info = pkt.firstlayer().summary()
                     log_runtime.info("TLS: invalid CertificateVerify signature [%s]", pkt_info)  # noqa: E501
@@ -1425,14 +1427,16 @@ class TLSFinished(_TLSHandshake):
                 con_end = s.connection_end
                 verify_data = s.rcs.prf.compute_verify_data(con_end, "read",
                                                             handshake_msg, ms)
-                if self.vdata != verify_data:
+                s.finished_valid = self.vdata == verify_data
+                if not s.finished_valid:
                     pkt_info = pkt.firstlayer().summary()
                     log_runtime.info("TLS: invalid Finished received [%s]", pkt_info)  # noqa: E501
             elif tls_version >= 0x0304:
                 con_end = s.connection_end
                 verify_data = s.compute_tls13_verify_data(con_end, "read",
                                                           handshake_msg)
-                if self.vdata != verify_data:
+                s.finished_valid = self.vdata == verify_data
+                if not s.finished_valid:
                     pkt_info = pkt.firstlayer().summary()
                     log_runtime.info("TLS: invalid Finished received [%s]", pkt_info)  # noqa: E501
 
@@ -1739,6 +1743,8 @@ class TLS13KeyUpdate(_TLSHandshake):
 
     def post_dissection_tls_session_update(self, msg_str):
         s = self.tls_session
+        if s.tls_version != 0x0304 or not s.post_handshake:
+            return
         s.prcs = writeConnState(ciphersuite=type(s.rcs.ciphersuite),
                                 connection_end=s.connection_end,
                                 tls_version=s.tls_version)

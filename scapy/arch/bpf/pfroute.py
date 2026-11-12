@@ -72,7 +72,11 @@ from typing import (
 
 # Missing attributes
 if not hasattr(socket, "PF_ROUTE"):
-    socket.PF_ROUTE = 17
+    # https://github.com/apple-oss-distributions/xnu/blob/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/sys/socket.h#L408
+    # https://github.com/freebsd/freebsd-src/blob/c6d7a2478c9eeb38ed1284e4ee1ff64c75ca8b09/sys/sys/socket.h#L243
+    # https://github.com/NetBSD/src/blob/5418d593532823da70a8aa69828bd2c26e07c980/sys/sys/socket.h#L247
+    # https://github.com/openbsd/src/blob/74bf4f178707d7daa0f177d9db18893aa18b8a42/sys/sys/socket.h#L186
+    socket.PF_ROUTE = 34 if NETBSD else 17
 
 # ctypes definitions
 
@@ -777,25 +781,46 @@ elif DARWIN:
 else:
     # FreeBSD
 
-    class rt_metrics(Packet):
-        fields_desc = [
-            Field("rmx_locks", 0, fmt="=Q"),
-            Field("rmx_mtu", 0, fmt="=Q"),
-            Field("rmx_hopcount", 0, fmt="=Q"),
-            Field("rmx_expire", 0, fmt="=Q"),
-            Field("rmx_recvpipe", 0, fmt="=Q"),
-            Field("rmx_sendpipe", 0, fmt="=Q"),
-            Field("rmx_sshthresh", 0, fmt="=Q"),
-            Field("rmx_rtt", 0, fmt="=Q"),
-            Field("rmx_rttvar", 0, fmt="=Q"),
-            Field("rmx_pksent", 0, fmt="=Q"),
-            Field("rmx_weight", 0, fmt="=Q"),
-            Field("rmx_nhidx", 0, fmt="=Q"),
-            StrFixedLenField("rmx_filler", 0, length=16 if IS_64BITS else 8),
-        ]
+    if IS_64BITS:
+        class rt_metrics(Packet):
+            fields_desc = [
+                Field("rmx_locks", 0, fmt="=Q"),
+                Field("rmx_mtu", 0, fmt="=Q"),
+                Field("rmx_hopcount", 0, fmt="=Q"),
+                Field("rmx_expire", 0, fmt="=Q"),
+                Field("rmx_recvpipe", 0, fmt="=Q"),
+                Field("rmx_sendpipe", 0, fmt="=Q"),
+                Field("rmx_sshthresh", 0, fmt="=Q"),
+                Field("rmx_rtt", 0, fmt="=Q"),
+                Field("rmx_rttvar", 0, fmt="=Q"),
+                Field("rmx_pksent", 0, fmt="=Q"),
+                Field("rmx_weight", 0, fmt="=Q"),
+                Field("rmx_nhidx", 0, fmt="=Q"),
+                StrFixedLenField("rmx_filler", 0, length=16),
+            ]
 
-        def default_payload_class(self, payload: bytes) -> Type[Packet]:
-            return conf.padding_layer
+            def default_payload_class(self, payload: bytes) -> Type[Packet]:
+                return conf.padding_layer
+    else:
+        class rt_metrics(Packet):
+            fields_desc = [
+                Field("rmx_locks", 0, fmt="=L"),
+                Field("rmx_mtu", 0, fmt="=L"),
+                Field("rmx_hopcount", 0, fmt="=L"),
+                Field("rmx_expire", 0, fmt="=L"),
+                Field("rmx_recvpipe", 0, fmt="=L"),
+                Field("rmx_sendpipe", 0, fmt="=L"),
+                Field("rmx_sshthresh", 0, fmt="=L"),
+                Field("rmx_rtt", 0, fmt="=L"),
+                Field("rmx_rttvar", 0, fmt="=L"),
+                Field("rmx_pksent", 0, fmt="=L"),
+                Field("rmx_weight", 0, fmt="=L"),
+                Field("rmx_nhidx", 0, fmt="=L"),
+                StrFixedLenField("rmx_filler", 0, length=8),
+            ]
+
+            def default_payload_class(self, payload: bytes) -> Type[Packet]:
+                return conf.padding_layer
 
 
 if OPENBSD:
@@ -921,7 +946,7 @@ else:
             Field("rtm_seq", 0, fmt="=I"),
             Field("rtm_errno", 0, fmt="=I"),
             Field("rtm_fmask", 0, fmt="=I"),
-            Field("rtm_inits", 0, fmt="=Q"),
+            Field("rtm_inits", 0, fmt="=Q" if IS_64BITS else "=I"),
             PadField(
                 PacketField("rtm_rmx", rt_metrics(), rt_metrics),
                 8,
@@ -1042,6 +1067,8 @@ def read_routes():
         if DARWIN and flags.RTF_WASCLONED and msg.rtm_parentflags.RTF_PRCLONING:
             # OSX needs filtering
             continue
+        if NETBSD and flags.RTF_LLDATA:
+            continue
         addrs = msg.rtm_addrs
         net = 0
         mask = 0xFFFFFFFF
@@ -1137,6 +1164,8 @@ def read_routes6():
             continue
         if DARWIN and flags.RTF_WASCLONED and msg.rtm_parentflags.RTF_PRCLONING:
             # OSX needs filtering
+            continue
+        if NETBSD and flags.RTF_LLDATA:
             continue
         addrs = msg.rtm_addrs
         prefix = "::"

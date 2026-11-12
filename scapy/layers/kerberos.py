@@ -142,8 +142,10 @@ from scapy.layers.gssapi import (
     GSS_S_BAD_MECH,
     GSS_S_COMPLETE,
     GSS_S_CONTINUE_NEEDED,
+    GSS_S_CREDENTIALS_EXPIRED,
     GSS_S_DEFECTIVE_CREDENTIAL,
     GSS_S_DEFECTIVE_TOKEN,
+    GSS_S_DUPLICATE_TOKEN,
     GSS_S_FAILURE,
     GSS_S_FLAGS,
     GSSAPI_BLOB,
@@ -954,8 +956,7 @@ class LSAP_TOKEN_INFO_INTEGRITY(Packet):
             },
         ),
         MayEnd(XStrFixedLenField("MachineID", b"", length=32)),
-        # KB 5068222 - still waiting for [MS-KILE] update (oct. 2025)
-        XStrFixedLenField("PermanentMachineID", b"", length=32),
+        XStrFixedLenField("CrossBootMachineID", b"", length=32),
     ]
 
 
@@ -1395,6 +1396,12 @@ class KRB_PKAuthenticator(ASN1_Packet):
             ASN1F_PACKET("paChecksum2", None, PAChecksum2, explicit_tag=0xA5),
         ),
     )
+
+    def getClientTime(self):
+        """
+        Return time from ctime + cusec
+        """
+        return self.ctime.datetime + timedelta(microseconds=self.cusec.val)
 
     def make_checksum(self, text, h: str = "sha256"):
         """
@@ -1961,6 +1968,18 @@ class KRB_Authenticator(ASN1_Packet):
         implicit_tag=ASN1_Class_KRB.Authenticator,
     )
 
+    def getUPN(self):
+        return "%s@%s" % (
+            self.cname.toString(),
+            self.crealm.val.decode(),
+        )
+
+    def getClientTime(self):
+        """
+        Return time from ctime + cusec
+        """
+        return self.ctime.datetime + timedelta(microseconds=self.cusec.val)
+
 
 # sect 5.5.2
 
@@ -1992,6 +2011,12 @@ class EncAPRepPart(ASN1_Packet):
         ),
         implicit_tag=ASN1_Class_KRB.EncAPRepPart,
     )
+
+    def getClientTime(self):
+        """
+        Return time from ctime + cusec
+        """
+        return self.ctime.datetime + timedelta(microseconds=self.cusec.val)
 
 
 # sect 5.7
@@ -2153,7 +2178,7 @@ class _KRBERROR_data_Field(ASN1F_STRING_PacketField):
             try:
                 return KERB_ERROR_DATA(val[0].val, _underlayer=pkt), val[1]
             except BER_Decoding_Error:
-                if pkt.errorCode.val in [18, 12]:
+                if pkt.errorCode.val in [12, 18, 41]:
                     # Some types can also happen in FAST sessions
                     # 18: KDC_ERR_CLIENT_REVOKED
                     return MethodData(val[0].val, _underlayer=pkt), val[1]
@@ -2291,6 +2316,12 @@ class KRB_ERROR(ASN1_Packet):
             self.sname.toString(),
             self.realm.val.decode(),
         )
+
+    def getServerTime(self):
+        """
+        Return time from stime + susec
+        """
+        return self.stime.datetime + timedelta(microseconds=self.susec.val)
 
 
 # PA-FX-ERROR
@@ -2520,7 +2551,9 @@ class KRB_InnerToken(Packet):
         PacketField(
             "root",
             KRB_AP_REQ(),
-            lambda x, _parent: _InitialContextTokens[_parent.TOK_ID](x),
+            lambda x, _parent: _InitialContextTokens.get(
+                _parent.TOK_ID, conf.raw_layer
+            )(x),
         ),
     ]
 
@@ -2809,6 +2842,8 @@ class KerberosTCPHeader(Packet):
         length = struct.unpack("!I", data[:4])[0]
         if len(data) == length + 4:
             return cls(data)
+        if len(data) > length + 4:
+            return cls(data[: length + 4]) / conf.padding_layer(data[length + 4 :])
 
 
 bind_layers(KerberosTCPHeader, Kerberos)
@@ -2995,6 +3030,8 @@ class KpasswdTCPHeader(Packet):
         length = struct.unpack("!I", data[:4])[0]
         if len(data) == length + 4:
             return cls(data)
+        if len(data) > length + 4:
+            return cls(data[: length + 4]) / conf.padding_layer(data[length + 4 :])
 
 
 bind_layers(KpasswdTCPHeader, Kpasswd)
@@ -3622,6 +3659,7 @@ class KerberosClient(Automaton):
         )
         if self.renew:
             kdcreq.kdcOptions.set(30, 1)  # set 'renew' (bit 30)
+        self.request_nonce = kdcreq.nonce.val
         return kdcreq
 
     def calc_fast_armorkey(self):
@@ -3749,7 +3787,7 @@ class KerberosClient(Automaton):
         )
 
     def as_req(self):
-        now_time = datetime.now(timezone.utc).replace(microsecond=0)
+        now_time = datetime.now(timezone.utc)
 
         # 1. Build and populate KDC-REQ
         kdc_req = self._base_kdc_req(now_time=now_time)
@@ -3807,8 +3845,8 @@ class KerberosClient(Automaton):
                 # RFC4556 - 3.2.1 - (5) AuthPack
                 authpack = KRB_AuthPack(
                     pkAuthenticator=KRB_PKAuthenticator(
-                        ctime=ASN1_GENERALIZED_TIME(now_time),
-                        cusec=ASN1_INTEGER(0),
+                        ctime=ASN1_GENERALIZED_TIME(now_time.replace(microsecond=0)),
+                        cusec=ASN1_INTEGER(now_time.microsecond),
                         nonce=ASN1_INTEGER(RandNum(0, 0x7FFFFFFF)._fix()),
                     ),
                     clientPublicValue=None,  # Used only in DH mode
@@ -3937,7 +3975,12 @@ class KerberosClient(Automaton):
                     )
                 pafactor.padataValue.encrypt(
                     ts_key,
-                    PA_ENC_TS_ENC(patimestamp=ASN1_GENERALIZED_TIME(now_time)),
+                    PA_ENC_TS_ENC(
+                        patimestamp=ASN1_GENERALIZED_TIME(
+                            now_time.replace(microsecond=0)
+                        ),
+                        pausec=ASN1_INTEGER(now_time.microsecond),
+                    ),
                 )
 
             # Insert Pre-Authentication data
@@ -3972,7 +4015,7 @@ class KerberosClient(Automaton):
         return asreq
 
     def tgs_req(self):
-        now_time = datetime.now(timezone.utc).replace(microsecond=0)
+        now_time = datetime.now(timezone.utc)
 
         # Compute armor key for FAST
         if self.fast:
@@ -4026,13 +4069,15 @@ class KerberosClient(Automaton):
                 # "if the key's encryption type is RC4_HMAC_NT (23) the checksum type
                 # is rsa-md4 (2) as defined in section 6.2.6 of [RFC3961]."
                 pasfux509.checksum.make(
-                    self.key,
+                    self.subkey or self.key,
                     bytes(pasfux509.userId),
                     cksumtype=ChecksumType.RSA_MD4,
                 )
             else:
+                # Use subkey if available (=subkey), else TGT session key (=key).
+                # NB: undocumented right now -- gpo2
                 pasfux509.checksum.make(
-                    self.key,
+                    self.subkey or self.key,
                     bytes(pasfux509.userId),
                 )
             padata.append(
@@ -4058,6 +4103,7 @@ class KerberosClient(Automaton):
                         + paforuser.authPackage.val
                     ).encode()
                 )
+                # Always use TGT session key (=key)
                 paforuser.cksum.make(
                     self.key,
                     S4UByteArray,
@@ -4108,8 +4154,8 @@ class KerberosClient(Automaton):
             crealm=ASN1_GENERAL_STRING(crealm),
             cname=PrincipalName.fromUPN(self.upn, canonicalize=self.canonicalize),
             cksum=None,
-            ctime=ASN1_GENERALIZED_TIME(now_time),
-            cusec=ASN1_INTEGER(0),
+            ctime=ASN1_GENERALIZED_TIME(now_time.replace(microsecond=0)),
+            cusec=ASN1_INTEGER(now_time.microsecond),
             subkey=EncryptionKey.fromKey(self.subkey) if self.subkey else None,
             seqNumber=None,
             encAuthorizationData=None,
@@ -4413,6 +4459,8 @@ class KerberosClient(Automaton):
         # Decrypt AS-REP response
         enc = pkt.root.encPart
         res = enc.decrypt(self.replykey)
+        if res.nonce.val != self.request_nonce:
+            raise ValueError("KDC reply nonce does not match request")
         self.result = self.RES_AS_MODE(
             pkt.root,
             res.key.toKey(),
@@ -4478,6 +4526,9 @@ class KerberosClient(Automaton):
             res = enc.decrypt(self.replykey, key_usage_number=9, cls=EncTGSRepPart)
         else:
             res = enc.decrypt(self.replykey)
+
+        if res.nonce.val != self.request_nonce:
+            raise ValueError("KDC reply nonce does not match request")
 
         # Store result
         self.result = self.RES_TGS_MODE(
@@ -4902,6 +4953,10 @@ def kpasswd(
 
 # SSP
 
+# [RFC4120] sect 1.6: "a reasonable value for allowable clock skew is
+# 5 minutes"
+KRB_MaxClockSkew = timedelta(minutes=5)
+
 
 class KerberosSSP(SSP):
     """
@@ -5036,6 +5091,7 @@ class KerberosSSP(SSP):
         self.IAKERB = IAKERB
         self.DC_IP = DC_IP
         self.debug = debug
+        self.ReplayCache = {}
         if SKEY_TYPE is None:
             SKEY_TYPE = EncryptionType.AES128_CTS_HMAC_SHA1_96
         self.SKEY_TYPE = SKEY_TYPE
@@ -5577,6 +5633,12 @@ class KerberosSSP(SSP):
                 Context.ST = self.ST
                 Context.STSessionKey = self.KEY
 
+                target_spn = self.SPN or target_name
+                if target_spn and not _spn_are_equal(Context.ST.getSPN(), target_spn):
+                    raise ValueError(
+                        "SPN from ST doesn't match the passed SPN/target_name."
+                    )
+
                 if Context.flags & GSS_C_FLAGS.GSS_C_DELEG_FLAG:
                     raise ValueError(
                         "Cannot use GSS_C_DELEG_FLAG when passed a service ticket !"
@@ -5600,7 +5662,7 @@ class KerberosSSP(SSP):
             )
 
             # Get the current time
-            now_time = datetime.now(timezone.utc).replace(microsecond=0)
+            now_time = datetime.now(timezone.utc)
             # Pick a random session key
             Context.KrbSessionKey = Key.new_random_key(
                 self.SKEY_TYPE,
@@ -5654,8 +5716,8 @@ class KerberosSSP(SSP):
                     cksum=Checksum(
                         cksumtype="KRB-AUTHENTICATOR", checksum=authenticator_checksum
                     ),
-                    ctime=ASN1_GENERALIZED_TIME(now_time),
-                    cusec=ASN1_INTEGER(0),
+                    ctime=ASN1_GENERALIZED_TIME(now_time.replace(microsecond=0)),
+                    cusec=ASN1_INTEGER(now_time.microsecond),
                     subkey=EncryptionKey.fromKey(Context.KrbSessionKey),
                     seqNumber=Context.SendSeqNum,
                     encAuthorizationData=AuthorizationData(
@@ -5669,7 +5731,7 @@ class KerberosSSP(SSP):
                                             adData=KERB_AD_RESTRICTION_ENTRY(
                                                 restriction=LSAP_TOKEN_INFO_INTEGRITY(
                                                     MachineID=bytes(RandBin(32)),
-                                                    PermanentMachineID=bytes(
+                                                    CrossBootMachineID=bytes(
                                                         RandBin(32)
                                                     ),
                                                 )
@@ -5750,12 +5812,13 @@ class KerberosSSP(SSP):
                 # The client MUST generate an additional AP exchange reply message
                 # exactly as the server would as the final message to send to the
                 # server.
-                now_time = datetime.now(timezone.utc).replace(microsecond=0)
+                now_time = datetime.now(timezone.utc)
                 cli_ap_rep = KRB_AP_REP(encPart=EncryptedData())
                 cli_ap_rep.encPart.encrypt(
                     Context.STSessionKey,
                     EncAPRepPart(
-                        ctime=ASN1_GENERALIZED_TIME(now_time),
+                        ctime=ASN1_GENERALIZED_TIME(now_time.replace(microsecond=0)),
+                        cusec=ASN1_INTEGER(now_time.microsecond),
                         seqNumber=repPart.seqNumber,
                         subkey=None,
                     ),
@@ -5840,7 +5903,7 @@ class KerberosSSP(SSP):
             if not self.KEY:
                 raise ValueError("Missing KEY attribute")
 
-            now_time = datetime.now(timezone.utc).replace(microsecond=0)
+            now_time = datetime.now(timezone.utc)
 
             # If using a UPN, require U2U
             if self.UPN and ap_req.apOptions.val[1] != "1":  # use-session-key
@@ -5851,7 +5914,10 @@ class KerberosSSP(SSP):
                         TOK_ID=b"\x03\x00",
                         root=KRB_ERROR(
                             errorCode="KRB_AP_ERR_USER_TO_USER_REQUIRED",
-                            stime=ASN1_GENERALIZED_TIME(now_time),
+                            stime=ASN1_GENERALIZED_TIME(
+                                now_time.replace(microsecond=0)
+                            ),
+                            susec=ASN1_INTEGER(now_time.microsecond),
                             realm=ap_req.ticket.realm,
                             sname=ap_req.ticket.sname,
                             eData=KRB_TGT_REP(
@@ -5873,6 +5939,7 @@ class KerberosSSP(SSP):
                         root=KRB_ERROR(
                             errorCode="KRB_AP_ERR_BADMATCH",
                             stime=ASN1_GENERALIZED_TIME(now_time),
+                            susec=ASN1_INTEGER(now_time.microsecond),
                             realm=ap_req.ticket.realm,
                             sname=ap_req.ticket.sname,
                             eData=None,
@@ -5892,6 +5959,7 @@ class KerberosSSP(SSP):
                         root=KRB_ERROR(
                             errorCode="KRB_AP_ERR_MODIFIED",
                             stime=ASN1_GENERALIZED_TIME(now_time),
+                            susec=ASN1_INTEGER(now_time.microsecond),
                             realm=ap_req.ticket.realm,
                             sname=ap_req.ticket.sname,
                             eData=None,
@@ -5911,6 +5979,52 @@ class KerberosSSP(SSP):
             # Get AP-REQ session key
             Context.STSessionKey = tkt.key.toKey()
             authenticator = ap_req.authenticator.decrypt(Context.STSessionKey)
+
+            # Check the ticket validity period, the authenticator timestamp and
+            # prevent against replays.
+            # [RFC4120] sect 3.2.3
+            if not Context.passive:
+                starttime = (tkt.starttime or tkt.authtime).datetime
+                endtime = tkt.endtime.datetime
+                ctime = authenticator.getClientTime()
+                replay_key = (authenticator.getUPN(), ctime)
+                errorCode = None
+                gssErrorCode = GSS_S_DEFECTIVE_CREDENTIAL
+                if not starttime or starttime - now_time > KRB_MaxClockSkew:
+                    errorCode = "KRB_AP_ERR_TKT_NYV"
+                elif not endtime or now_time - endtime > KRB_MaxClockSkew:
+                    errorCode = "KRB_AP_ERR_TKT_EXPIRED"
+                    gssErrorCode = GSS_S_CREDENTIALS_EXPIRED
+                elif not ctime or abs(ctime - now_time) > KRB_MaxClockSkew:
+                    errorCode = "KRB_AP_ERR_SKEW"
+                elif replay_key in self.ReplayCache:
+                    errorCode = "KRB_AP_ERR_REPEAT"
+                    gssErrorCode = GSS_S_DUPLICATE_TOKEN
+                # Don't check times in passive mode: the capture may be old.
+                if errorCode:
+                    warning("KerberosSSP: %s" % errorCode)
+                    err = KRB_GSSAPI_Token(
+                        innerToken=KRB_InnerToken(
+                            TOK_ID=b"\x03\x00",
+                            root=KRB_ERROR(
+                                errorCode=errorCode,
+                                stime=ASN1_GENERALIZED_TIME(now_time),
+                                susec=ASN1_INTEGER(now_time.microsecond),
+                                realm=ap_req.ticket.realm,
+                                sname=ap_req.ticket.sname,
+                                eData=None,
+                            ),
+                        )
+                    )
+                    return Context, err, gssErrorCode
+
+                # Store the time for future detections
+                self.ReplayCache[replay_key] = ctime + KRB_MaxClockSkew
+
+                # We take that opportunity to cleanup any expired items
+                for key, expiry in list(self.ReplayCache.items()):
+                    if expiry < now_time:
+                        self.ReplayCache.pop(key, None)
 
             # Compute an application session key ([MS-KILE] sect 3.1.1.2)
             subkey = None

@@ -34,6 +34,16 @@ You can turn auto-decompression/auto-compression off with::
 
 (Defaults to True)
 
+Automatic decompression is limited to 1 MiB by default. You can change the
+limit with::
+
+    >>> conf.contribs["http"]["max_decompression"] = 1024 * 1024
+
+Brotli and LZW decompression are disabled by default because their APIs do not
+provide an output size limit. You can enable them with::
+
+    >>> conf.contribs["http"]["unsafe_decompression"] = True
+
 You can also turn auto-chunking/dechunking off with::
 
     >>> conf.contribs["http"]["auto_chunk"] = False
@@ -55,15 +65,23 @@ import socket
 import ssl
 import struct
 import subprocess
+import zlib
 
 from enum import Enum
+from urllib.parse import urlsplit
 
 from scapy.compat import plain_str, bytes_encode
 
 from scapy.automaton import Automaton, ATMT
 from scapy.config import conf
 from scapy.consts import WINDOWS
-from scapy.error import warning, log_loading, log_interactive, Scapy_Exception
+from scapy.error import (
+    log_interactive,
+    log_loading,
+    log_runtime,
+    warning,
+    Scapy_Exception,
+)
 from scapy.fields import StrField
 from scapy.packet import Packet, bind_layers, bind_bottom_up, Raw
 from scapy.supersocket import StreamSocket, SSLStreamSocket
@@ -104,8 +122,11 @@ except ImportError:
 
 if "http" not in conf.contribs:
     conf.contribs["http"] = {}
-    conf.contribs["http"]["auto_compression"] = True
-    conf.contribs["http"]["auto_chunk"] = True
+
+conf.contribs["http"].setdefault("auto_compression", True)
+conf.contribs["http"].setdefault("auto_chunk", True)
+conf.contribs["http"].setdefault("max_decompression", 1024 * 1024)
+conf.contribs["http"].setdefault("unsafe_decompression", False)
 
 # https://en.wikipedia.org/wiki/List_of_HTTP_header_fields
 
@@ -352,25 +373,54 @@ class _HTTPContent(Packet):
 
         # Decompress
         try:
+            max_decompression = conf.contribs["http"]["max_decompression"]
             if "deflate" in encodings:
-                import zlib
-
-                s = zlib.decompress(s)
+                decompressor = zlib.decompressobj()
+                decompressed = decompressor.decompress(s, max_decompression + 1)
+                if not decompressor.eof or len(decompressed) > max_decompression:
+                    log_runtime.warning(
+                        'conf.contribs["http"]["max_decompression"] reached.'
+                    )
+                else:
+                    s = decompressed
             elif "gzip" in encodings:
-                s = gzip.decompress(s)
+                with gzip.GzipFile(fileobj=io.BytesIO(s)) as reader:
+                    decompressed = reader.read(max_decompression + 1)
+                if len(decompressed) > max_decompression:
+                    log_runtime.warning(
+                        'conf.contribs["http"]["max_decompression"] reached.'
+                    )
+                else:
+                    s = decompressed
             elif "compress" in encodings:
-                if _is_lzw_available:
-                    s = lzw.decompress(s)
+                if conf.contribs["http"]["unsafe_decompression"]:
+                    if _is_lzw_available:
+                        s = lzw.decompress(s)
+                    else:
+                        log_loading.info(
+                            "Can't import lzw. compress decompression "
+                            "will be ignored !"
+                        )
                 else:
                     log_loading.info(
-                        "Can't import lzw. compress decompression " "will be ignored !"
+                        "compress decompression is disabled because it cannot be "
+                        "capped; set conf.contribs['http']['unsafe_decompression'] "
+                        "to True to enable it"
                     )
             elif "br" in encodings:
-                if _is_brotli_available:
-                    s = brotli.decompress(s)
+                if conf.contribs["http"]["unsafe_decompression"]:
+                    if _is_brotli_available:
+                        s = brotli.decompress(s)
+                    else:
+                        log_loading.info(
+                            "Can't import brotli. brotli decompression "
+                            "will be ignored !"
+                        )
                 else:
                     log_loading.info(
-                        "Can't import brotli. brotli decompression " "will be ignored !"
+                        "brotli decompression is disabled because it cannot be "
+                        "capped; set conf.contribs['http']['unsafe_decompression'] "
+                        "to True to enable it"
                     )
             elif "zstd" in encodings:
                 if _is_zstd_available:
@@ -378,8 +428,14 @@ class _HTTPContent(Packet):
                     # only cases where there is content size data embedded in
                     # the frame
                     bio = io.BytesIO(s)
-                    reader = zstandard.ZstdDecompressor().stream_reader(bio)
-                    s = reader.read()
+                    with zstandard.ZstdDecompressor().stream_reader(bio) as reader:
+                        decompressed = reader.read(max_decompression + 1)
+                    if len(decompressed) > max_decompression:
+                        log_runtime.warning(
+                            'conf.contribs["http"]["max_decompression"] reached.'
+                        )
+                    else:
+                        s = decompressed
                 else:
                     log_loading.info(
                         "Can't import zstandard. zstd decompression "
@@ -397,8 +453,6 @@ class _HTTPContent(Packet):
         if conf.contribs["http"]["auto_compression"]:
             # Compress
             if "deflate" in encodings:
-                import zlib
-
                 pay = zlib.compress(pay)
             elif "gzip" in encodings:
                 pay = gzip.compress(pay)
@@ -675,7 +729,7 @@ class HTTP(Packet):
                 return http_packet
             is_response = isinstance(http_packet.payload, cls.clsresp)
             # Packets may have a Content-Length we must honnor
-            length = http_packet.Content_Length
+            length = getattr(http_packet, "Content_Length", None)
             if length:
                 # Parse the length as an integer
                 try:
@@ -694,7 +748,8 @@ class HTTP(Packet):
                 # Subtract the length of the "HTTP*" layer
                 elif http_packet.payload.payload or length == 0:
                     http_length = len(data) - http_packet.payload._original_len
-                    detect_end = lambda dat: len(dat) - http_length >= length
+                    metadata["http_end"] = http_end = http_length + length
+                    detect_end = lambda dat: len(dat) >= http_end
                 else:
                     # The HTTP layer isn't fully received.
                     if metadata.get("tcp_end", False):
@@ -738,9 +793,15 @@ class HTTP(Packet):
                     metadata["detect_unknown"] = True
             metadata["detect_end"] = detect_end
             if detect_end(data):
+                http_end = metadata.get("http_end")
+                if http_end is not None and len(data) > http_end:
+                    return cls(data[:http_end]) / conf.padding_layer(data[http_end:])
                 return http_packet
         else:
             if detect_end(data):
+                http_end = metadata.get("http_end")
+                if http_end is not None and len(data) > http_end:
+                    return cls(data[:http_end]) / conf.padding_layer(data[http_end:])
                 http_packet = cls(data)
                 return http_packet
 
@@ -816,7 +877,7 @@ class HTTP_Client(object):
         if port is None:
             port = 443 if tls else 80
         # If the current socket matches, keep it.
-        if self._sockinfo == (host, port):
+        if self._sockinfo == (host, port, tls):
             return
         # A new socket is needed
         if self._sockinfo:
@@ -861,7 +922,7 @@ class HTTP_Client(object):
         else:
             self.sock = StreamSocket(sock, HTTP)
         # Store information regarding the current socket
-        self._sockinfo = (host, port)
+        self._sockinfo = (host, port, tls)
 
     def sr1(self, req, **kwargs):
         if self.verb:
@@ -897,26 +958,33 @@ class HTTP_Client(object):
             e.g. Method="POST"
         """
         # Parse request url
-        m = re.match(r"(https?)://([^/:]+)(?:\:(\d+))?(/.*)?", url)
-        if not m:
+        try:
+            parsed = urlsplit(url)
+            transport = parsed.scheme
+            host = parsed.hostname
+            port = parsed.port
+        except ValueError:
+            raise ValueError("Bad URL !") from None
+        if transport not in ["http", "https"] or not host:
             raise ValueError("Bad URL !")
-        transport, host, port, path = m.groups()
         if transport == "https":
             tls = True
         else:
             tls = False
 
-        path = path or "/"
-        port = port and int(port)
+        path = parsed.path or "/"
+        if parsed.query:
+            path += "?" + parsed.query
+        if port is None:
+            port = 443 if tls else 80
 
         # Connect (or reuse) socket
         self._connect_or_reuse(host, port=port, tls=tls, timeout=timeout)
 
         # Build request
+        host_hdr = "[%s]" % host if ":" in host else host
         if (tls and port != 443) or (not tls and port != 80):
-            host_hdr = "%s:%d" % (host, port)
-        else:
-            host_hdr = host
+            host_hdr = "%s:%d" % (host_hdr, port)
 
         headers.setdefault("Host", host_hdr)
         headers.setdefault("Path", path)
@@ -945,6 +1013,8 @@ class HTTP_Client(object):
                 self._connect_or_reuse(host, port=port, tls=tls, timeout=timeout)
                 continue
             if not resp:
+                self.close()
+                self._sockinfo = None
                 break
             # First case: auth was required. Handle that
             if resp.Status_Code in [b"401", b"407"]:

@@ -1590,9 +1590,11 @@ class _PacketFieldSingle(_PacketField[K]):
         # type: (...) -> Tuple[bytes, K]
         i = self.m2i(pkt, s)
         remain = b""
-        if conf.padding_layer in i:
-            r = i[conf.padding_layer]
-            del r.underlayer.payload
+        # Dissection always appends Padding last, so checking the topmost
+        # layer avoids a full recursive haslayer()+getlayer() lookup.
+        r = i.lastlayer()
+        if isinstance(r, conf.padding_layer):
+            del r.underlayer.payload  # type: ignore
             remain = r.load
         return remain, i  # type: ignore
 
@@ -1835,10 +1837,10 @@ class PacketListField(_PacketField[List[BasePacket]]):
                 p = conf.raw_layer(load=remain)
                 remain = b""
             else:
-                if conf.padding_layer in p:
-                    pad = p[conf.padding_layer]
+                pad = p.lastlayer()
+                if isinstance(pad, conf.padding_layer):
                     remain = pad.load
-                    del pad.underlayer.payload
+                    del pad.underlayer.payload  # type: ignore
                     if self.next_cls_cb is not None:
                         cls = self.next_cls_cb(pkt, lst, p, remain)
                         if cls is not None:
@@ -2556,7 +2558,7 @@ class _EnumField(Field[Union[List[I], I], I]):
             cast(ObservableDict, enum).observe(self)
 
         if isinstance(enum, tuple):
-            self.i2s_cb = enum[0]  # type: Optional[Callable[[I], str]]
+            self.i2s_cb = enum[0]  # type: Optional[Callable[[I], Optional[str]]]
             self.s2i_cb = enum[1]  # type: Optional[Callable[[str], I]]
             self.i2s = None  # type: Optional[Dict[I, str]]
             self.s2i = None  # type: Optional[Dict[str, I]]
@@ -2571,6 +2573,11 @@ class _EnumField(Field[Union[List[I], I], I]):
                 value = enum[n].value
                 i2s[value] = n
                 s2i[n] = value
+        elif isinstance(enum, DADict):
+            self.i2s = None
+            self.s2i = None
+            self.i2s_cb = lambda x: enum.d.get(x)
+            self.s2i_cb = lambda x: {v: k for k, v in enum.d.items()}[x]
         else:
             i2s = self.i2s = {}
             s2i = self.s2i = {}
@@ -2579,8 +2586,6 @@ class _EnumField(Field[Union[List[I], I], I]):
             keys = []  # type: List[I]
             if isinstance(enum, list):
                 keys = list(range(len(enum)))  # type: ignore
-            elif isinstance(enum, DADict):
-                keys = enum.keys()
             else:
                 keys = list(enum)  # type: ignore
                 if any(isinstance(x, str) for x in keys):
@@ -3591,10 +3596,14 @@ class UTCTimeField(Field[float, int]):
         x += self.delta
         # To make negative timestamps work on all plateforms (e.g. Windows),
         # we need a trick.
-        t = (
-            datetime.datetime(1970, 1, 1) +
-            datetime.timedelta(seconds=x)
-        ).strftime(self.strf)
+        try:
+            t = (
+                datetime.datetime(1970, 1, 1) +
+                datetime.timedelta(seconds=x)
+            ).strftime(self.strf)
+        except OverflowError:
+            # Outside of the years datetime supports (1 to 9999)
+            return "%d" % x
         return "%s (%d)" % (t, int(x))
 
     def i2m(self, pkt, x):

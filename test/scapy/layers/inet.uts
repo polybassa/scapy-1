@@ -92,6 +92,18 @@ pkts = sniff(offline=pkts, session=IPSession)
 assert len(pkts) == 2
 assert pkts[1].load == b"X" * 1500
 
+= IPSession - overlapping fragments do not stop later packets
+
+datagram = b"A" * 32
+first = IP(src="10.0.0.1", dst="10.0.0.2", id=99, proto=253, flags="MF")
+first /= Raw(datagram[:16])
+overlap = IP(src="10.0.0.1", dst="10.0.0.2", id=99, proto=253, frag=1)
+overlap /= Raw(datagram[16:])
+trailing = IP(src="10.0.0.3", dst="10.0.0.4", proto=253) / Raw(b"ok")
+pkts = sniff(offline=[first, overlap, trailing], session=IPSession)
+assert len(pkts) == 1
+assert pkts[0][IP].src == "10.0.0.3"
+
 = IPSession - summary with RandIP() does not crash
 
 pkt = IP(dst=RandIP())
@@ -131,7 +143,14 @@ buffer.append(b"A", 1)
 buffer.append(b"B", MTU + 3)
 assert bytes(buffer) == b"A"
 
+buffer = StringBuffer()
+buffer.append(b"A", 1)
 buffer.append(b"C", -MTU)
+assert bytes(buffer) == b"C" + b"\x00" * MTU + b"A"
+
+buffer = StringBuffer()
+buffer.append(b"A", 1)
+buffer.append(b"C", -MTU - 1)
 assert bytes(buffer) == b"A"
 
 = StringBuffer max_gap is configurable
@@ -255,6 +274,25 @@ assert defrags[0].time == last_time
 pkts = fragment(IP(dst="10.0.0.5")/ICMP()/("X"*1500))
 assert len(defragment(pkts[1:])) == 1
 
+= defrag() / defragment() - Disordered fragments
+
+from random import shuffle
+
+frags1 = fragment(IP(id=1) / ("A" * payloadlen), fragsize)
+frags2 = fragment(IP(id=2) / ("B" * payloadlen), fragsize)
+frags3 = fragment(IP(id=3) / ("C" * payloadlen), fragsize)
+
+allfrags = frags1 + frags2 + frags3[:3]
+shuffle(allfrags)
+
+nonfrag, unfrag, badfrag = defrag(allfrags)
+assert len(nonfrag) == 0
+assert len(unfrag) == 2
+assert len(badfrag) == 3
+
+defrags = defragment(allfrags)
+assert len(defrags) == 5
+
 = defrag() / defragment() - Real DNS packets
 
 import base64
@@ -369,8 +407,18 @@ raw(TCP(options=[(30, b"\x10\x03\xc1\x1c\x95\x9b\x81R_1")])) == b"\x00\x14\x00P\
 md5sig = b"0123456789abcdef"
 p = IP() / TCP(options=[('MD5', md5sig)])
 md5opt = IP(raw(p))[TCP].options[0]
-md5opt[0] == 'MD5'
-md5opt[1] == md5sig
+assert md5opt[0] == 'MD5'
+assert md5opt[1] == md5sig
+
+= TCP Options: MD5 - options matter but values ignored
+p0 = IP() / TCP()
+p1 = IP() / TCP(options=[("MSS", 100)])
+p2 = IP() / TCP(options=[("MSS", 200)])
+mac0 = calc_tcp_md5_hash(p0[TCP], b"12345")
+mac1 = calc_tcp_md5_hash(p1[TCP], b"12345")
+mac2 = calc_tcp_md5_hash(p2[TCP], b"12345")
+assert mac0 != mac1
+assert mac1 == mac2
 
 = TCP options: MD5 IPv4 (depends on default values)
 p = IP() / TCP()
@@ -385,9 +433,28 @@ assert mac == bytearray.fromhex("3711309b0305a4269ec5dbc27183e9a0")
 = TCP options: MD5 sign (depends on default values)
 p = IP() / TCP()
 sign_tcp_md5(p[TCP], b"12345")
-raw(p[TCP]) == bytearray.fromhex("001400500000000000000000a0022000fec200001312797e69f8dbe44a8b84f687a2832595ed0000")
+raw(p[TCP]) == bytearray.fromhex("001400500000000000000000a00220002311000013128f95eb4e2946538becb6fe364731e16f0000")
 md5opt = IP(raw(p))[TCP].options[0]
-md5opt[1] == bytearray.fromhex("797e69f8dbe44a8b84f687a2832595ed")
+assert md5opt[1] == bytearray.fromhex("8f95eb4e2946538becb6fe364731e16f")
+
+= TCP options: MD5 error handling for non-TCP layers
+try:
+    calc_tcp_md5_hash(IP() / UDP(), b"12345")
+    assert False, "Should have raised TypeError"
+except TypeError:
+    pass
+
+try:
+    calc_tcp_md5_hash(UDP(), b"12345")
+    assert False, "Should have raised TypeError"
+except TypeError:
+    pass
+
+try:
+    calc_tcp_md5_hash(b"invalid_layer", b"12345")
+    assert False, "Should have raised TypeError"
+except TypeError:
+    pass
 
 = TCP Authentication Option: build
 opt = TCPAOValue(keyid=1, rnextkeyid=2, mac=b"FAKE")
@@ -714,6 +781,27 @@ value = test.any2i("", "07:28:28.07")
 value == 26908070
 test.i2repr("", value) == '7:28:28.70'
 
+= ICMP timestamp defaults are computed during building
+~ icmp_timestamp
+from unittest import mock
+field = ICMPTimeStampField("timestamp", None)
+assert field.default is None
+packet = ICMP(type=13)
+with mock.patch("scapy.layers.inet.time.time", return_value=123.456):
+    decoded = ICMP(bytes(packet))
+
+assert decoded.ts_ori == 123456
+assert decoded.ts_rx == 123456
+assert decoded.ts_tx == 123456
+
+= ICMP timestamp explicit values are preserved
+~ icmp_timestamp
+packet = ICMP(type=13, ts_ori=42, ts_rx=0, ts_tx="1:2:3.004")
+decoded = ICMP(bytes(packet))
+assert decoded.ts_ori == 42
+assert decoded.ts_rx == 0
+assert decoded.ts_tx == 3723004
+
 = IPv4 - UDP null checksum
 with no_debug_dissector():
     IP(raw(IP()/UDP()/Raw(b"\xff\xff\x01\x6a")))[UDP].chksum == 0xFFFF
@@ -826,6 +914,13 @@ assert len(tr.graphdef) == 491
 tr.graphdef.startswith("digraph trace {") == True
 assert ('"192.168.0.9" ->' in tr.graphdef) == True
 conf.AS_resolver = conf.AS_resolver
+
+class InjectedDescriptionResolver:
+    def resolve(self, *ips):
+        return [(ip, 64500, 'ok"; injected [image="secret.eps"]; //') for ip in ips]
+
+tr.make_graph(InjectedDescriptionResolver())
+assert 'ok\\"; injected [image=\\"secret.eps\\"]' in tr.graphdef
 
 pl = PacketList(list([Ether()/x for x in itertools.chain(*tr_packets)]))
 srl, ul = pl.sr()

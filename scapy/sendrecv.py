@@ -33,7 +33,8 @@ from scapy.plist import (
     QueryAnswer,
     SndRcvList,
 )
-from scapy.error import log_runtime, log_interactive, Scapy_Exception
+from scapy.error import log_runtime, log_interactive, \
+    Scapy_Exception, ScapyNotRunningException
 from scapy.base_classes import Gen, SetGen, ScopedIP
 from scapy.sessions import DefaultSession
 from scapy.supersocket import SuperSocket, IterSocket
@@ -580,6 +581,7 @@ def sendpfast(x: _PacketIterable,
     argv.append(f)
     wrpcap(f, x)
     results = None
+    cmd = None
     with ContextManagerSubprocess(conf.prog.tcpreplay):
         try:
             cmd = subprocess.Popen(argv, stdout=subprocess.PIPE,
@@ -593,13 +595,14 @@ def sendpfast(x: _PacketIterable,
             os.unlink(f)
             raise
         finally:
-            stdout, stderr = cmd.communicate()
-            if stderr:
-                log_runtime.warning(stderr.decode())
-            if parse_results:
-                results = _parse_tcpreplay_result(stdout, stderr, argv)
-            elif conf.verb > 2:
-                log_runtime.info(stdout.decode())
+            if cmd is not None:
+                stdout, stderr = cmd.communicate()
+                if stderr:
+                    log_runtime.warning(stderr.decode())
+                if parse_results:
+                    results = _parse_tcpreplay_result(stdout, stderr, argv)
+                elif conf.verb > 2:
+                    log_runtime.info(stdout.decode())
     if os.path.exists(f):
         os.unlink(f)
     return results
@@ -1315,9 +1318,9 @@ class AsyncSniffer(object):
                         packets = session.recv(s)
                         # A session can return multiple objects
                         for p in packets:
+                            p.sniffed_on = sniff_sockets.get(s, None)
                             if lfilter and not lfilter(p):
                                 continue
-                            p.sniffed_on = sniff_sockets.get(s, None)
                             # post-processing
                             self.count += 1
                             if store:
@@ -1397,7 +1400,7 @@ class AsyncSniffer(object):
                 return self.results
             return None
         else:
-            raise Scapy_Exception("Not running ! (check .running attr)")
+            raise ScapyNotRunningException("Not running ! (check .running attr)")
 
     def join(self, *args, **kwargs):
         # type: (*Any, **Any) -> None

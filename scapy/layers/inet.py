@@ -15,7 +15,7 @@ import select
 import socket
 from collections import defaultdict
 
-from scapy.utils import checksum, do_graph, incremental_label, \
+from scapy.utils import checksum, do_graph, graphviz_escape, incremental_label, \
     linehexdump, strxor, whois, colgen
 from scapy.ansmachine import AnsweringMachine
 from scapy.base_classes import Gen, Net, _ScopedIP
@@ -516,9 +516,12 @@ class ICMPTimeStampField(IntField):
                 val = ((int(h) * 60 + int(m or 0)) * 60 + int(s or 0)) * 1000 + ms  # noqa: E501
             else:
                 val = 0
-        elif val is None:
-            val = int((time.time() % (24 * 60 * 60)) * 1000)
         return val
+
+    def i2m(self, pkt, x):
+        if x is None:
+            x = int((time.time() % (24 * 60 * 60)) * 1000)
+        return super(ICMPTimeStampField, self).i2m(pkt, x)
 
 
 class DestIPField(IPField, DestField):
@@ -727,12 +730,19 @@ def calc_tcp_md5_hash(tcp, key):
     """Calculate TCP-MD5 hash from packet and return a 16-byte string"""
     import hashlib
 
-    h = hashlib.md5()  # nosec
+    if not isinstance(tcp, TCP):
+        raise TypeError("calc_tcp_md5_hash requires a TCP layer")
+
     tcp_bytes = bytes(tcp)
+    if len(tcp_bytes) < 20:
+        raise ValueError("Truncated TCP header")
+    doff = tcp_bytes[12] >> 4
+    h = hashlib.md5()  # nosec
     h.update(tcp_pseudoheader(tcp))
     h.update(tcp_bytes[:16])
     h.update(b"\x00\x00")
-    h.update(tcp_bytes[18:])
+    h.update(tcp_bytes[18:20])
+    h.update(tcp_bytes[doff << 2:])
     h.update(key)
 
     return h.digest()
@@ -741,8 +751,9 @@ def calc_tcp_md5_hash(tcp, key):
 def sign_tcp_md5(tcp, key):
     # type: (TCP, bytes) -> None
     """Append TCP-MD5 signature to tcp packet"""
+    tcp.options = tcp.options + [('MD5', b'')]
     sig = calc_tcp_md5_hash(tcp, key)
-    tcp.options = tcp.options + [('MD5', sig)]
+    tcp.options[-1] = ('MD5', sig)
 
 
 class TCP(Packet):
@@ -1441,6 +1452,10 @@ overlap_fragsize: the fragment size of the overlapping packet"""
     return qfrag + fragment(p, fragsize)
 
 
+class MissingFragments(Exception):
+    pass
+
+
 class BadFragments(ValueError):
     def __init__(self, *args, **kwargs):
         self.frags = kwargs.pop("frags", None)
@@ -1452,13 +1467,11 @@ def _defrag_iter_and_check_offsets(frags):
     Internal generator used in _defrag_ip_pkt
     """
     offset = 0
-    for pkt, o, length in frags:
-        if offset != o:
-            if offset > o:
-                op = ">"
-            else:
-                op = "<"
-            warning("Fragment overlap (%i %s %i) on %r" % (offset, op, o, pkt))
+    for pkt, o, length, mf in frags:
+        if offset < o:
+            raise MissingFragments
+        elif offset > o:
+            warning("Fragment overlap (%i > %i) on %r" % (offset, o, pkt))
             raise BadFragments
         offset += length
         yield bytes(pkt[IP].payload)
@@ -1480,17 +1493,20 @@ def _defrag_ip_pkt(pkt, frags):
             fraglen = len(ip.payload)
         else:
             fraglen = ip.len - (ip.ihl << 2)
-        # (pkt, frag offset, frag len)
-        frags[uid].append((pkt, ip.frag << 3, fraglen))
-        if not ip.flags.MF:  # no more fragments = last fragment
-            curfrags = sorted(frags[uid], key=lambda x: x[1])  # sort by offset
+        # (pkt, frag offset, frag len, LF)
+        curfrags = frags[uid]
+        lf = (curfrags and curfrags[-1][3]) or not ip.flags.MF
+        curfrags.append((pkt, ip.frag << 3, fraglen, not ip.flags.MF))
+        if lf:  # last fragment
+            curfrags.sort(key=lambda x: x[1])  # sort by offset
             try:
                 data = b"".join(_defrag_iter_and_check_offsets(curfrags))
+            except MissingFragments:
+                return True, None
             except ValueError:
                 # bad fragment
-                badfrags = frags[uid]
                 del frags[uid]
-                raise BadFragments(frags=badfrags)
+                raise BadFragments(frags=curfrags)
             # re-build initial packet without fragmentation
             p = curfrags[0][0].copy()
             pay_class = p[IP].payload.__class__
@@ -1530,9 +1546,9 @@ def _defrag_logic(plist, complete=False):
             )
         except BadFragments as ex:
             if complete:
-                final.extend(ex.frags)
+                final.extend(t[0] for t in ex.frags)
             else:
-                badfrag.extend(ex.frags)
+                badfrag.extend(t[0] for t in ex.frags)
             continue
         if complete and defragmented_value:
             final.append(defragmented_value)
@@ -1541,6 +1557,12 @@ def _defrag_logic(plist, complete=False):
                 final.append(defragmented_value)
             else:
                 notfrag.append(defragmented_value)
+    # Missing fragments
+    for lst in frags.values():
+        if complete:
+            final.extend(t[0] for t in lst)
+        else:
+            badfrag.extend(t[0] for t in lst)
     # Return
     if complete:
         if hasattr(plist, "listname"):
@@ -2057,7 +2079,10 @@ Touch screen: pinch/extend to zoom, swipe or two-finger rotate."""
             s += '\t\tcolor="#%s%s%s";' % col
             s += '\t\tnode [fillcolor="#%s%s%s",style=filled];' % col
             s += '\t\tfontsize = 10;'
-            s += '\t\tlabel = "%s\\n[%s]"\n' % (asn, ASDs[asn])
+            s += '\t\tlabel = "%s\\n[%s]"\n' % (
+                graphviz_escape(asn),
+                graphviz_escape(ASDs[asn]),
+            )
             for ip in ASNs[asn]:
 
                 s += '\t\t"%s";\n' % ip

@@ -7,7 +7,7 @@ Download and Installation
 Overview
 ========
 
- 0. Install `Python 3.7+ <https://www.python.org/downloads/>`_.
+ 0. Install `Python 3.9+ <https://www.python.org/downloads/>`_.
  1. `Download and install Scapy. <#installing-scapy-v2-x>`_
  2. `Follow the platform-specific instructions (dependencies) <#platform-specific-instructions>`_.
  3. (Optional): `Install additional software for special features <#optional-software-for-special-features>`_.
@@ -20,24 +20,26 @@ Scapy versions
 
 .. note:: Scapy 2.5.0 was the last version to support Python 2.7 !
 
-+------------------+-------+-------+--------+
-| Scapy version    | 2.3.3 | 2.5.0 | >2.5.0 |
-+==================+=======+=======+========+
-| Python 2.2-2.6   | ✅    | ❌    | ❌     |
-+------------------+-------+-------+--------+
-| Python 2.7       | ✅    | ✅    | ❌     |
-+------------------+-------+-------+--------+
-| Python 3.4-3.6   | ❌    | ✅    | ❌     |
-+------------------+-------+-------+--------+
-| Python 3.7-3.14  | ❌    | ✅    | ✅     |
-+------------------+-------+-------+--------+
++------------------+-------+-------+--------+--------+
+| Scapy version    | 2.3.3 | 2.5.0 | >2.5.0 | >2.8.0 |
++==================+=======+=======+========+========+
+| Python 2.2-2.6   | ✅    | ❌    | ❌     | ❌     |
++------------------+-------+-------+--------+--------+
+| Python 2.7       | ✅    | ✅    | ❌     | ❌     |
++------------------+-------+-------+--------+--------+
+| Python 3.4-3.6   | ❌    | ✅    | ❌     | ❌     |
++------------------+-------+-------+--------+--------+
+| Python 3.7-3.8   | ❌    | ✅    | ✅     | ❌     |
++------------------+-------+-------+--------+--------+
+| Python 3.9-3.14  | ❌    | ✅    | ✅     |  ✅    |
++------------------+-------+-------+--------+--------+
 
 Installing Scapy v2.x
 =====================
 
 The following steps describe how to install (or update) Scapy itself.
 Dependent on your platform, some additional libraries might have to be installed to make it actually work. 
-So please also have a look at the platform specific chapters on how to install those requirements.
+So please also have a look at the platform-specific chapters on how to install those requirements.
 
 .. note::
 
@@ -77,7 +79,7 @@ Current development version
 .. index::
    single: Git, repository
 
-If you always want the latest version of Scapy with all new the features and bugfixes (but slightly less stable), you can install Scapy from its Git repository.
+If you always want the latest version of Scapy with all the new features and bugfixes (but slightly less stable), you can install Scapy from its Git repository.
 
 .. note:: If you don't want to clone Scapy, you can install the development version in one line using::
 
@@ -105,7 +107,7 @@ Optional Dependencies
 =====================
 
 For some special features, Scapy will need some dependencies to be installed.
-Most of those software are installable via ``pip``.
+Most of those software packages are installable via ``pip``.
 Here are the topics involved and some examples that you can use to try if your installation was successful.
 
 .. index::
@@ -242,7 +244,7 @@ Install using Homebrew
 
    $ brew install libpcap
 
-Enable it In Scapy::
+Enable it in Scapy::
 
     conf.use_pcap = True
 
@@ -257,7 +259,7 @@ Install using MacPorts
 
    $ sudo port install libpcap
 
-Enable it In Scapy::
+Enable it in Scapy::
 
     conf.use_pcap = True
 
@@ -313,7 +315,7 @@ Build the documentation offline
 ===============================
 
 The Scapy project's documentation is written using reStructuredText (files \*.rst) and can be built using
-the `Sphinx <http://www.sphinx-doc.org/>`_ python library. The official online version is available
+the `Sphinx <http://www.sphinx-doc.org/>`_ Python library. The official online version is available
 on `readthedocs <http://scapy.readthedocs.io/>`_.
 
 HTML version
@@ -348,4 +350,4 @@ To see the dependencies between the DHCP layer and the ansmachine module, you ca
 
    pyreverse -o png -p dhcp_ans scapy/ansmachine.py scapy/layers/dhcp.py scapy/packet.py
 
-In this case, Pyreverse will also generate a ``packages_dhcp_ans.png`` showing the link between the different python modules provided.
+In this case, Pyreverse will also generate a ``packages_dhcp_ans.png`` showing the link between the different Python modules provided.
